@@ -103,13 +103,16 @@ function normalizedIdentifierSet(finding: Finding): string[] {
 function strongVulnerabilityIdentifiers(finding: Finding): string[] {
   const ids = finding.identifiers;
   if (!ids) return [];
-  // CWE is a vulnerability class, not a unique advisory, so it is deliberately
-  // excluded from the strongest dependency correlation key.
-  return normalizedValues([
-    ...(ids.cve ?? []),
-    ...(ids.osv ?? []),
-    ...(ids.ghsa ?? []),
-  ]);
+
+  // Prefer globally interoperable aliases when a scanner gives us several
+  // names for the same advisory. This lets an OSV/GHSA-centric scanner and a
+  // CVE-centric scanner converge on the same SynSec key instead of diverging
+  // merely because one result contains more aliases.
+  const cve = normalizedValues(ids.cve ?? []);
+  if (cve.length > 0) return cve;
+  const ghsa = normalizedValues(ids.ghsa ?? []);
+  if (ghsa.length > 0) return ghsa;
+  return normalizedValues(ids.osv ?? []);
 }
 
 function normalizedPath(finding: Finding): string {
