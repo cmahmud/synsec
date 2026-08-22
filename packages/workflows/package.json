@@ -6,7 +6,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./routing": "./dist/routing.js",
-    "./user-defined": "./dist/user-defined.js"
+    "./user-defined": "./dist/user-defined.js",
+    "./remediation": "./dist/remediation.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
