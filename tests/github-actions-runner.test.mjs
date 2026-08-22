@@ -70,6 +70,7 @@ test("PR Actions runner defaults to changed-file scanning and publishes the scan
   assert.equal(result.publication.check.headSha, "abcdef1234567890");
   assert.equal(result.publication.publication.id, 444);
   assert.equal(request.url, "https://api.github.com/repos/cmahmud/synsec/check-runs");
+  assert.equal(result.sarifPublication, undefined);
 });
 
 test("push Actions runner defaults to a full repository scan", async () => {
@@ -92,6 +93,39 @@ test("push Actions runner defaults to a full repository scan", async () => {
 
   assert.equal(scanInput.changedOnly, false);
   assert.equal(scanInput.changedBase, undefined);
+});
+
+test("Actions runner can publish the same commit-bound report to checks and code scanning", async () => {
+  const urls = [];
+  const result = await runGitHubActionsRepositoryScan("token", {
+    config,
+    publishSarif: true,
+    env: {
+      GITHUB_REPOSITORY: "cmahmud/synsec",
+      GITHUB_SHA: "abcdef1234567890",
+      GITHUB_REF: "refs/pull/2/head",
+      GITHUB_BASE_REF: "main",
+      GITHUB_HEAD_REF: "feature/multi-scanner-mvp",
+    },
+    scan: async () => outcome(),
+    fetch: async (url) => {
+      urls.push(url);
+      if (url.endsWith("/check-runs")) {
+        return new Response(JSON.stringify({ id: 446, status: "completed", conclusion: "success" }), { status: 201 });
+      }
+      if (url.endsWith("/code-scanning/sarifs")) {
+        return new Response(JSON.stringify({ id: "sarif-446" }), { status: 202 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.deepEqual(urls, [
+    "https://api.github.com/repos/cmahmud/synsec/check-runs",
+    "https://api.github.com/repos/cmahmud/synsec/code-scanning/sarifs",
+  ]);
+  assert.equal(result.sarifPublication.id, "sarif-446");
+  assert.equal(result.sarifPublication.ref, "refs/pull/2/head");
 });
 
 test("Actions runner refuses publication when the scan cannot prove its commit", async () => {
