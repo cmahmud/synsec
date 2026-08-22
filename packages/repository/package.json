@@ -11,7 +11,8 @@
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-sink-context": "./dist/route-sink-context.js",
-    "./posture": "./dist/posture.js"
+    "./posture": "./dist/posture.js",
+    "./test-ownership": "./dist/test-ownership.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
