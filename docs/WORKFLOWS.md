@@ -11,7 +11,7 @@ The built-in workflow registry is implemented in `@synsec/workflows`. The defini
 
 ## Workflow contract
 
-Each built-in workflow declares:
+Each workflow declares:
 
 - a stable ID and version;
 - the finding categories it accepts;
@@ -21,6 +21,35 @@ Each built-in workflow declares:
 - an explicit prohibition on external network assessment.
 
 The important part is that capabilities are explicit and machine-enforced rather than implied by a prompt.
+
+## User-defined workflow format
+
+SynSec accepts version 1 user workflows as bounded JSON definitions through `@synsec/workflows/user-defined`. User workflow files are limited to 64 KiB and are parsed into the same `WorkflowDefinition` contract used by built-ins.
+
+A minimal definition looks like:
+
+```json
+{
+  "id": "custom-dependency-review",
+  "version": 1,
+  "displayName": "Custom Dependency Review",
+  "description": "Review dependency evidence for this repository.",
+  "reviewInstructions": "Prefer deterministic package and import evidence. Preserve uncertainty.",
+  "categories": ["dependency"],
+  "capabilities": [
+    "read-normalized-findings",
+    "read-dependency-metadata",
+    "propose-remediation"
+  ],
+  "sourceContextAllowed": false,
+  "repositoryWriteRequiresApproval": true,
+  "externalNetworkAssessment": "forbidden"
+}
+```
+
+The parser rejects unknown capabilities and categories. Source context can only be enabled when `read-bounded-source-context` is explicitly declared. The two repository safety boundaries are intentionally not extensible: user-defined repository workflows must require approval for writes and must forbid external network assessment.
+
+`reviewInstructions` are workflow guidance, not an authorization mechanism. They cannot grant capabilities that the workflow does not declare.
 
 ## Built-in workflow set
 
