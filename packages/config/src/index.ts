@@ -8,7 +8,10 @@ export interface AiConfig {
   enabled: boolean;
   provider: "openai-compatible";
   baseUrl?: string;
+  /** Default model when no workflow-specific route is configured. */
   model?: string;
+  /** Optional model route keyed by workflow id, e.g. dependency-review. */
+  workflowModels?: Record<string, string>;
   sendSourceContext: boolean;
 }
 
@@ -69,6 +72,16 @@ function stringArray(value: unknown): string[] | undefined {
   return value;
 }
 
+function stringMap(value: unknown): Record<string, string> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const entries = Object.entries(record)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
+    .map(([key, model]) => [key.trim(), model.trim()] as const)
+    .filter(([key]) => key.length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function severity(value: unknown): SynSecConfig["failOn"] | undefined {
   if (
     value === "critical" ||
@@ -113,6 +126,8 @@ export function parseConfig(value: unknown): SynSecConfig {
   };
   if (typeof aiValue?.baseUrl === "string") ai.baseUrl = aiValue.baseUrl;
   if (typeof aiValue?.model === "string") ai.model = aiValue.model;
+  const workflowModels = stringMap(aiValue?.workflowModels);
+  if (workflowModels) ai.workflowModels = workflowModels;
 
   const config: SynSecConfig = {
     schemaVersion: 1,
@@ -125,6 +140,22 @@ export function parseConfig(value: unknown): SynSecConfig {
   };
   if (typeof root.baseline === "string") config.baseline = root.baseline;
   return config;
+}
+
+export function resolveAiModel(
+  config: AiConfig,
+  options: { workflowId?: string; overrideModel?: string; environmentModel?: string } = {},
+): string | undefined {
+  const override = options.overrideModel?.trim();
+  if (override) return override;
+  if (options.workflowId) {
+    const routed = config.workflowModels?.[options.workflowId]?.trim();
+    if (routed) return routed;
+  }
+  const configured = config.model?.trim();
+  if (configured) return configured;
+  const environment = options.environmentModel?.trim();
+  return environment || undefined;
 }
 
 export async function findConfig(startPath: string): Promise<string | undefined> {
