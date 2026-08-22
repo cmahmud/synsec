@@ -16,6 +16,7 @@
     "./app-dispatch": "./dist/app-dispatch.js",
     "./replay-store": "./dist/replay-store.js",
     "./installation-store": "./dist/installation-store.js",
+    "./installation-sync": "./dist/installation-sync.js",
     "./scan-queue": "./dist/scan-queue.js",
     "./repository-acquisition": "./dist/repository-acquisition.js"
   },
