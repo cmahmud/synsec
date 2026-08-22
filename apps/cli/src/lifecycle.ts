@@ -6,9 +6,12 @@ import {
   readLifecycleStore,
   reconcileLifecycle,
   setFindingState,
+  verifyRemediation,
   writeLifecycleStore,
+  writeRemediationVerification,
   type FindingLifecycleStore,
   type LifecycleSummary,
+  type RemediationVerification,
 } from "@synsec/lifecycle";
 import { readReport, type SynSecReport } from "@synsec/report";
 
@@ -70,4 +73,36 @@ export async function runTriage(input: {
     `Updated ${input.fingerprint} -> ${input.state}`,
     `Lifecycle store: ${storePath}`,
   ];
+}
+
+export async function runVerification(input: {
+  beforeReportPath: string;
+  afterReportPath: string;
+  fingerprints?: string[];
+  outputPath?: string;
+}): Promise<{ verification: RemediationVerification; lines: string[]; outputPath?: string }> {
+  const beforePath = resolve(input.beforeReportPath);
+  const afterPath = resolve(input.afterReportPath);
+  const [before, after] = await Promise.all([readReport(beforePath), readReport(afterPath)]);
+  const verification = verifyRemediation(before, after, input.fingerprints);
+  const lines = [
+    `Verification: ${verification.summary.fixed} fixed, ${verification.summary.persisting} persisting, ${verification.summary.inconclusive} inconclusive, ${verification.summary.newFindings} new finding(s)`,
+  ];
+
+  for (const item of verification.items) {
+    lines.push(`[${item.status.toUpperCase()}] ${item.title ?? item.fingerprint}`);
+    for (const reason of item.reasons) lines.push(`  ${reason}`);
+  }
+  if (verification.newFindings.length > 0) {
+    lines.push("New finding fingerprints:");
+    for (const fingerprint of verification.newFindings) lines.push(`  ${fingerprint}`);
+  }
+
+  let outputPath: string | undefined;
+  if (input.outputPath) {
+    outputPath = resolve(input.outputPath);
+    await writeRemediationVerification(outputPath, verification);
+    lines.push(`Verification JSON: ${outputPath}`);
+  }
+  return outputPath ? { verification, lines, outputPath } : { verification, lines };
 }
