@@ -16,6 +16,7 @@ export interface ReportConfig {
   json: string;
   html: string;
   sarif: string;
+  markdown: string;
 }
 
 export interface SynSecConfig {
@@ -48,6 +49,7 @@ export const defaultConfig: SynSecConfig = {
     json: ".synsec/report.json",
     html: ".synsec/report.html",
     sarif: ".synsec/report.sarif",
+    markdown: ".synsec/report.md",
   },
   ai: {
     enabled: false,
@@ -98,6 +100,7 @@ export function parseConfig(value: unknown): SynSecConfig {
     json: typeof reportsValue?.json === "string" ? reportsValue.json : defaultConfig.reports.json,
     html: typeof reportsValue?.html === "string" ? reportsValue.html : defaultConfig.reports.html,
     sarif: typeof reportsValue?.sarif === "string" ? reportsValue.sarif : defaultConfig.reports.sarif,
+    markdown: typeof reportsValue?.markdown === "string" ? reportsValue.markdown : defaultConfig.reports.markdown,
   };
 
   const ai: AiConfig = {
@@ -145,5 +148,6 @@ export function resolveReportPaths(rootPath: string, config: SynSecConfig): Repo
     json: resolve(rootPath, config.reports.json),
     html: resolve(rootPath, config.reports.html),
     sarif: resolve(rootPath, config.reports.sarif),
+    markdown: resolve(rootPath, config.reports.markdown),
   };
 }
