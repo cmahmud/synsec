@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
-import { asArray, asRecord, asString, commandAvailability, identifiersFrom, normalizeSeverity, safeJson, strings } from "./utils.js";
+import { asArray, asRecord, asString, commandAvailability, identifiersFrom, normalizeSeverity, relativeLike, safeJson, strings } from "./utils.js";
 
 function metadataIdentifiers(metadata: Record<string, unknown> | undefined): string[] {
   if (!metadata) return [];
@@ -16,7 +16,7 @@ function metadataIdentifiers(metadata: Record<string, unknown> | undefined): str
   return values.flatMap((value) => value.split(/[,;]\s*/)).map((value) => value.trim()).filter(Boolean);
 }
 
-export function parseOpengrepJson(raw: string): Finding[] {
+export function parseOpengrepJson(raw: string, root = ""): Finding[] {
   const parsed = asRecord(safeJson(raw));
   if (!parsed) return [];
   const findings: Finding[] = [];
@@ -29,7 +29,7 @@ export function parseOpengrepJson(raw: string): Finding[] {
     const metadata = asRecord(extra?.metadata);
     const ruleId = asString(result.check_id);
     const message = asString(extra?.message) ?? ruleId ?? "Static analysis finding";
-    const path = asString(result.path);
+    const path = relativeLike(asString(result.path), root);
     const fingerprint = asString(extra?.fingerprint);
     const fix = asString(extra?.fix);
     findings.push({
@@ -100,7 +100,7 @@ export class OpengrepAdapter implements ScannerAdapter {
       startedAt,
       completedAt: new Date().toISOString(),
       target: context.target,
-      findings: parseOpengrepJson(output.stdout),
+      findings: parseOpengrepJson(output.stdout, context.target.path),
       diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
     };
   }
