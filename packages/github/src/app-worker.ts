@@ -7,11 +7,13 @@ import {
 import type { GitHubScanJob } from "./scan-queue.js";
 
 export interface GitHubAppWorkerQueue {
+  leaseMs?: number;
   claimNext(): Promise<GitHubScanJob | undefined>;
-  assertLease(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
-  release(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
-  fail(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
-  complete(jobId: string, expectedAttempts: number): Promise<boolean>;
+  assertLease(jobId: string, expectedLeaseId: string): Promise<GitHubScanJob>;
+  renew?(jobId: string, expectedLeaseId: string): Promise<GitHubScanJob>;
+  release(jobId: string, expectedLeaseId: string): Promise<GitHubScanJob>;
+  fail(jobId: string, expectedLeaseId: string): Promise<GitHubScanJob>;
+  complete(jobId: string, expectedLeaseId: string): Promise<boolean>;
 }
 
 export interface GitHubAppWorkerAuthorizer {
@@ -44,6 +46,52 @@ function safeError(error: unknown): string {
   return message.replace(/[\r\n]+/g, " ").trim().slice(0, 1000) || "GitHub App worker failed.";
 }
 
+interface LeaseHeartbeat {
+  stop(): Promise<void>;
+  assertHealthy(): void;
+}
+
+function startLeaseHeartbeat(queue: GitHubAppWorkerQueue, job: GitHubScanJob): LeaseHeartbeat {
+  if (!queue.renew || !queue.leaseMs || !job.leaseId) {
+    return { stop: async () => {}, assertHealthy: () => {} };
+  }
+
+  const intervalMs = Math.max(1_000, Math.floor(queue.leaseMs / 3));
+  let stopped = false;
+  let failure: unknown;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight: Promise<void> | undefined;
+
+  const schedule = (): void => {
+    if (stopped || failure) return;
+    timer = setTimeout(() => {
+      inFlight = (async () => {
+        try {
+          await queue.renew?.(job.jobId, job.leaseId as string);
+        } catch (error) {
+          failure = error;
+        } finally {
+          inFlight = undefined;
+          schedule();
+        }
+      })();
+    }, intervalMs);
+    timer.unref?.();
+  };
+  schedule();
+
+  return {
+    stop: async () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      if (inFlight) await inFlight;
+    },
+    assertHealthy: () => {
+      if (failure) throw new Error(`GitHub scan job lease renewal failed: ${safeError(failure)}`);
+    },
+  };
+}
+
 /**
  * Consume at most one durable GitHub App scan job.
  *
@@ -51,20 +99,25 @@ function safeError(error: unknown): string {
  * after webhook queueing is never scanned from stale authorization. Installation credentials are
  * obtained only in the transport layer: one short-lived token for exact-commit acquisition and a
  * fresh token for publication. For PR jobs, acquisition can also materialize the exact queued base
- * commit in a second isolated workspace without exposing credentials to the scanner. Reports must
- * bind to the exact queued head SHA before publication or completion. The queue lease generation is
- * revalidated immediately before publication and on every retry/terminal mutation so an expired,
- * reclaimed worker cannot publish or mutate a newer worker's lease.
+ * commit in a second isolated workspace without exposing credentials to the scanner. New leases use
+ * a random durable lease id as a fencing token. The local queue renews that exact lease while work is
+ * active, revalidates it immediately before publication, and requires the same id for retry/terminal
+ * mutations so an expired or concurrently superseded worker cannot publish or mutate newer work.
  */
 export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): Promise<GitHubAppWorkerResult> {
   const job = await options.queue.claimNext();
   if (!job) return { status: "idle" };
+  const leaseId = job.leaseId?.trim();
+  if (!leaseId) throw new Error("Claimed GitHub scan job is missing its lease fencing identity.");
 
   let acquired: AcquiredGitHubScanTarget | undefined;
+  const heartbeat = startLeaseHeartbeat(options.queue, job);
   try {
     const allowed = await options.installationStore.isRepositoryAllowed(job.installationId, job.repository);
     if (!allowed) {
-      await options.queue.fail(job.jobId, job.attempts);
+      await heartbeat.stop();
+      heartbeat.assertHealthy();
+      await options.queue.fail(job.jobId, leaseId);
       return { status: "revoked", job };
     }
 
@@ -93,21 +146,32 @@ export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): 
       throw new Error("GitHub App worker report commit does not match the leased scan job head SHA.");
     }
 
-    await options.queue.assertLease(job.jobId, job.attempts);
+    heartbeat.assertHealthy();
+    await options.queue.assertLease(job.jobId, leaseId);
     const publicationToken = await options.getInstallationToken(job.installationId, "publish");
     await options.publish(job, report, publicationToken);
-    if (!await options.queue.complete(job.jobId, job.attempts)) {
+    await heartbeat.stop();
+    heartbeat.assertHealthy();
+    if (!await options.queue.complete(job.jobId, leaseId)) {
       throw new Error("Completed GitHub App scan job disappeared before queue acknowledgement.");
     }
     return { status: "completed", job, reportId: report.reportId };
   } catch (error) {
+    await heartbeat.stop();
+    let effectiveError: unknown = error;
     try {
-      await options.queue.release(job.jobId, job.attempts);
-    } catch (releaseError) {
-      throw new Error(`${safeError(error)} Queue release also failed: ${safeError(releaseError)}`);
+      heartbeat.assertHealthy();
+    } catch (heartbeatError) {
+      effectiveError = new Error(`${safeError(error)} ${safeError(heartbeatError)}`);
     }
-    return { status: "retry_scheduled", job, error: safeError(error) };
+    try {
+      await options.queue.release(job.jobId, leaseId);
+    } catch (releaseError) {
+      throw new Error(`${safeError(effectiveError)} Queue release also failed: ${safeError(releaseError)}`);
+    }
+    return { status: "retry_scheduled", job, error: safeError(effectiveError) };
   } finally {
+    await heartbeat.stop();
     if (acquired) await acquired.cleanup();
   }
 }
