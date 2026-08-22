@@ -9,7 +9,8 @@
     "./orchestrator": "./dist/orchestrator.js",
     "./actions-runner": "./dist/actions-runner.js",
     "./sarif-publisher": "./dist/sarif-publisher.js",
-    "./baseline": "./dist/baseline.js"
+    "./baseline": "./dist/baseline.js",
+    "./base-scan": "./dist/base-scan.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
