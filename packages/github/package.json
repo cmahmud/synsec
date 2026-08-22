@@ -16,6 +16,7 @@
     "./app-dispatch": "./dist/app-dispatch.js",
     "./app-handler": "./dist/app-handler.js",
     "./app-worker": "./dist/app-worker.js",
+    "./app-worker-runner": "./dist/app-worker-runner.js",
     "./replay-store": "./dist/replay-store.js",
     "./installation-store": "./dist/installation-store.js",
     "./installation-sync": "./dist/installation-sync.js",
