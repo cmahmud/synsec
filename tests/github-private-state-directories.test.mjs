@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -92,6 +93,43 @@ test("durable stores validate a symlink directory even when the first operation 
     await assert.rejects(() => queue.deleteFailed("a".repeat(32)), symlinkError);
 
     assert.equal((await stat(realDirectory)).mode & 0o777, 0o755);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("durable stores refuse symlink-shaped record files", async () => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "synsec-private-record-symlink-"));
+  const installationDirectory = join(root, "installations");
+  const replayDirectory = join(root, "replay");
+  const queueDirectory = join(root, "queue");
+  const target = join(root, "target.json");
+  const deliveryId = "delivery-record-symlink";
+  const replayName = `${createHash("sha256").update(deliveryId).digest("hex")}.json`;
+  const queueId = "a".repeat(32);
+
+  try {
+    await writeFile(target, "{}\n", "utf8");
+    for (const directory of [installationDirectory, replayDirectory, queueDirectory]) {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+    }
+    await symlink(target, join(installationDirectory, "1.json"));
+    await symlink(target, join(replayDirectory, replayName));
+    await symlink(target, join(queueDirectory, `${queueId}.json`));
+
+    const installations = new FileGitHubInstallationStore(installationDirectory);
+    await assert.rejects(() => installations.get(1), /symlinked/);
+    await assert.rejects(() => installations.remove(1), /symlinked/);
+
+    const replay = new FileGitHubWebhookReplayStore(replayDirectory);
+    await assert.rejects(
+      () => replay.release(deliveryId, "2026-08-22T21:00:00.000Z"),
+      /symlinked/,
+    );
+
+    const queue = new FileGitHubScanQueue(queueDirectory);
+    await assert.rejects(() => queue.deleteFailed(queueId), /symlinked/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
