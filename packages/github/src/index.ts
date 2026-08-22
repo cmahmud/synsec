@@ -10,6 +10,7 @@ export interface GitHubPullRequestContext {
   sha: string;
   ref?: string;
   baseRef?: string;
+  baseSha?: string;
   headRef?: string;
   pullRequestNumber?: number;
 }
@@ -41,7 +42,7 @@ export interface GitHubCheckResult {
 interface GitHubEventPullRequest {
   number?: unknown;
   head?: { sha?: unknown; ref?: unknown };
-  base?: { ref?: unknown };
+  base?: { sha?: unknown; ref?: unknown };
 }
 
 interface GitHubEventPayload {
@@ -111,6 +112,7 @@ export function detectGitHubContext(
   if (!repository || !sha) return undefined;
 
   const baseRef = nonEmptyString(pullRequest?.base?.ref) ?? nonEmptyString(env.GITHUB_BASE_REF);
+  const baseSha = nonEmptyString(pullRequest?.base?.sha);
   const headRef = nonEmptyString(pullRequest?.head?.ref) ?? nonEmptyString(env.GITHUB_HEAD_REF);
   const pullRequestNumber = positiveInteger(pullRequest?.number) ?? parsePullRequestNumber(ref);
 
@@ -119,6 +121,7 @@ export function detectGitHubContext(
     sha,
     ...(ref ? { ref } : {}),
     ...(baseRef ? { baseRef } : {}),
+    ...(baseSha ? { baseSha } : {}),
     ...(headRef ? { headRef } : {}),
     ...(pullRequestNumber ? { pullRequestNumber } : {}),
   };
