@@ -21,8 +21,11 @@ This keeps GitHub credentials out of scanners and prevents repository analysis f
 - Baseline-aware annotation filtering so PR checks can focus on new findings.
 - A hard 50-annotation cap per generated payload, matching GitHub's check-run annotation request limit.
 - CI threshold evaluation independent of scanner exit-code quirks.
+- A narrow Checks API publisher with an injectable transport for testing.
 
-The package does **not** currently make authenticated GitHub API calls. A future GitHub App or Actions adapter should own credential use and transport while reusing these deterministic primitives.
+`@synsec/github/publisher` posts completed check runs only to `https://api.github.com/repos/<owner>/<repo>/check-runs`. The repository comes from validated GitHub context, scanner output cannot control the request URL, redirects are rejected, and bearer tokens are never copied into returned errors.
+
+A future GitHub App or Actions adapter should own token acquisition and installation authorization while reusing these deterministic publication primitives.
 
 ## Pull-request SHA handling
 
@@ -54,12 +57,26 @@ Only findings with a concrete repository path and start line can become GitHub a
 
 When a report includes a baseline, `buildGitHubCheck()` defaults to annotating only newly introduced findings. Persisting findings remain represented in the report summary without repeatedly flooding pull-request annotations.
 
+## Checks API publication
+
+`publishGitHubCheck()` accepts a completed check result, validated GitHub context, and a caller-supplied token. The publisher:
+
+- sends one `POST` to the repository Checks API endpoint;
+- uses GitHub API version `2022-11-28` by default;
+- sends the token only in the `Authorization` header;
+- rejects redirects;
+- validates the returned check-run id;
+- returns only publication metadata such as id, URL, status, and conclusion.
+
+Token acquisition is intentionally outside this function. GitHub App installation tokens, Actions `GITHUB_TOKEN`, and any future enterprise-hosting transport should remain separate concerns so credentials never enter scanners or normalized reports.
+
 ## Security boundaries
 
 GitHub integration must preserve the repository-first defensive model:
 
 - Tokens belong to the GitHub transport layer, never scanner input.
 - Report and annotation generation must not require network access.
+- Scanner output must never choose the GitHub API host or arbitrary publication URL.
 - Source excerpts are not added to GitHub annotations unless already present in normalized deterministic finding fields.
 - Secret values must remain redacted before publication.
 - A future remediation pull-request flow must require explicit approval before repository writes.
@@ -67,11 +84,11 @@ GitHub integration must preserve the repository-first defensive model:
 
 ## Next implementation steps
 
-The remaining Phase 5 work is transport and product integration rather than report semantics:
+The remaining Phase 5 work is product orchestration and installation/authentication:
 
 1. Add a GitHub App installation/authentication layer.
-2. Publish generated check results through the Checks API.
-3. Wire PR events to changed-file scans and baseline selection.
+2. Wire PR events to changed-file scans and baseline selection.
+3. Invoke check publication from the PR orchestration path.
 4. Upload SARIF to GitHub code scanning where repository permissions allow it.
 5. Add scheduled repository scans.
 6. Add explicitly approved remediation pull requests.
