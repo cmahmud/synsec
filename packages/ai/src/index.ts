@@ -100,6 +100,28 @@ function normalizeReview(value: unknown, finding: Finding, model: string): AiFin
   return review;
 }
 
+function safeMetadataForModel(finding: Finding): Record<string, unknown> | undefined {
+  if (!finding.metadata) return undefined;
+  if (finding.category !== "secret") return finding.metadata;
+
+  // Keep the model boundary resilient even if a future secret-scanner adapter
+  // accidentally adds richer metadata. Only a deliberately narrow allowlist
+  // can cross the boundary for secret findings.
+  const allowed = new Set([
+    "validationStatus",
+    "validationReason",
+    "commit",
+    "author",
+    "date",
+    "tags",
+  ]);
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(finding.metadata)) {
+    if (allowed.has(key)) safe[key] = value;
+  }
+  return safe;
+}
+
 function buildPrompt(finding: Finding, context?: FindingContext, reviewInstructions?: string): string {
   const safeFinding = {
     title: finding.title,
@@ -111,7 +133,7 @@ function buildPrompt(finding: Finding, context?: FindingContext, reviewInstructi
     location: finding.location,
     identifiers: finding.identifiers,
     remediation: finding.remediation,
-    metadata: finding.metadata,
+    metadata: safeMetadataForModel(finding),
   };
 
   const contextBlock = context
@@ -130,6 +152,10 @@ export async function reviewFinding(
   context?: FindingContext,
   reviewInstructions?: string,
 ): Promise<AiFindingReview> {
+  if (finding.category === "secret" && context) {
+    throw new Error("Source context is prohibited for secret findings at the AI provider boundary.");
+  }
+
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs ?? 90_000);
