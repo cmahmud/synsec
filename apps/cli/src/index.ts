@@ -3,6 +3,7 @@
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { reviewFinding, type AiFindingReview } from "@synsec/ai";
+import { reviewFindingWithConsensus, type MultiReviewConsensusResult } from "@synsec/ai/consensus";
 import {
   loadConfig,
   resolveReportPaths,
@@ -33,11 +34,20 @@ import {
   workflowFindings,
   type WorkflowDefinition,
 } from "@synsec/workflows";
+import { resolveAiReviewSelection } from "./ai-options.js";
 import { reconcileLifecycleFile, runTriage, runVerification } from "./lifecycle.js";
 
 const VERSION = "0.2.0";
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
+
+type AiReviewValue = AiFindingReview | MultiReviewConsensusResult;
+
+interface AiReviewBundle {
+  mode: "single" | "consensus";
+  models: string[];
+  reviews: Record<string, AiReviewValue>;
+}
 
 function option(name: string): string | undefined {
   const index = args.indexOf(name);
@@ -119,7 +129,10 @@ Scan options:
   --ai-source              Allow source excerpts when the selected workflow permits it.
   --ai-limit <n>           Maximum findings to review (default: 10).
   --ai-base-url <url>      OpenAI-compatible API base URL.
-  --ai-model <model>       Model ID for AI triage.
+  --ai-model <model>       Single model ID for AI triage.
+  --ai-models <a,b,c>      Two to ten unique model IDs for consensus review.
+  --ai-min-reviewers <n>   Minimum successful reviewers required for consensus (default: 2).
+  --ai-review-concurrency <n>  Concurrent model reviews, maximum 4 (default: 2).
 
 Review options:
   --root <path>            Repository root when it differs from the saved report path.
@@ -128,7 +141,10 @@ Review options:
   --ai-source              Allow bounded source excerpts when the workflow permits it.
   --ai-limit <n>           Maximum findings to review.
   --ai-base-url <url>      OpenAI-compatible API base URL.
-  --ai-model <model>       Model ID.
+  --ai-model <model>       Single model ID.
+  --ai-models <a,b,c>      Two to ten unique model IDs for consensus review.
+  --ai-min-reviewers <n>   Minimum successful reviewers required for consensus (default: 2).
+  --ai-review-concurrency <n>  Concurrent model reviews, maximum 4 (default: 2).
 
 Triage states:
   new, confirmed, false-positive, accepted-risk, fixed, regressed
@@ -151,7 +167,8 @@ AI environment variables:
 
 SynSec never enables AI review by default. Source excerpts are only sent when
 sendSourceContext is enabled in config or --ai-source is explicitly supplied.
-Workflow capability rules can further prohibit source context.
+Workflow capability rules can further prohibit source context. Multi-model consensus
+is model inference only and is never promoted to deterministic scanner evidence.
 `);
 }
 
@@ -244,65 +261,91 @@ function printFinding(group: CorrelatedFinding): void {
   console.log("");
 }
 
-function aiProvider(config: SynSecConfig): { baseUrl: string; apiKey?: string; model: string } {
-  const baseUrl = config.ai.baseUrl ?? process.env.SYNSEC_AI_BASE_URL;
-  const model = config.ai.model ?? process.env.SYNSEC_AI_MODEL;
-  const apiKey = process.env.SYNSEC_AI_API_KEY;
-  if (!baseUrl) throw new Error("AI review is enabled but no base URL is configured. Set SYNSEC_AI_BASE_URL or --ai-base-url.");
-  if (!model) throw new Error("AI review is enabled but no model is configured. Set SYNSEC_AI_MODEL or --ai-model.");
-  return apiKey ? { baseUrl, model, apiKey } : { baseUrl, model };
-}
-
 async function reviewGroups(
   report: SynSecReport,
   root: string,
   config: SynSecConfig,
   limit: number,
   workflow?: WorkflowDefinition,
-): Promise<Record<string, AiFindingReview>> {
+): Promise<AiReviewBundle> {
   if (workflow) assertWorkflowSourceContextAllowed(workflow, config.ai.sendSourceContext);
-  const reviews: Record<string, AiFindingReview> = {};
+  const reviews: Record<string, AiReviewValue> = {};
   const eligible = workflow ? workflowFindings(report.findings, workflow) : report.findings;
   const candidates = eligible.slice(0, limit);
-  if (candidates.length === 0) return reviews;
-  const provider = aiProvider(config);
+  if (candidates.length === 0) return { mode: "single", models: [], reviews };
+
+  const selection = resolveAiReviewSelection({
+    singleModel: option("--ai-model"),
+    multipleModels: option("--ai-models"),
+    configuredModel: config.ai.model,
+    environmentModel: process.env.SYNSEC_AI_MODEL,
+    baseUrl: config.ai.baseUrl ?? process.env.SYNSEC_AI_BASE_URL,
+    apiKey: process.env.SYNSEC_AI_API_KEY,
+    minimumReviewers: integerOption("--ai-min-reviewers"),
+    concurrency: integerOption("--ai-review-concurrency"),
+  });
+  const singleProvider = selection.mode === "single" ? selection.providers[0] : undefined;
+  if (selection.mode === "single" && !singleProvider) throw new Error("AI review model selection produced no provider.");
 
   for (let index = 0; index < candidates.length; index += 1) {
     const group = candidates[index];
     if (!group) continue;
     const workflowLabel = workflow ? ` [${workflow.id}]` : "";
-    console.error(`AI review${workflowLabel} ${index + 1}/${candidates.length}: ${group.primary.title}`);
+    const modeLabel = selection.mode === "consensus" ? ` consensus (${selection.models.length} models)` : "";
+    console.error(`AI${modeLabel} review${workflowLabel} ${index + 1}/${candidates.length}: ${group.primary.title}`);
     const context = config.ai.sendSourceContext
       ? await getFindingContext(root, group.primary)
       : undefined;
-    reviews[group.fingerprint] = await reviewFinding(
-      group.primary,
-      provider,
-      context,
-      workflow?.reviewInstructions,
-    );
+    if (selection.mode === "single") {
+      reviews[group.fingerprint] = await reviewFinding(
+        group.primary,
+        singleProvider as NonNullable<typeof singleProvider>,
+        context,
+        workflow?.reviewInstructions,
+      );
+    } else {
+      reviews[group.fingerprint] = await reviewFindingWithConsensus(
+        group.primary,
+        selection.providers,
+        context,
+        workflow?.reviewInstructions,
+        {
+          minimumReviewers: selection.minimumReviewers,
+          concurrency: selection.concurrency,
+        },
+      );
+    }
   }
-  return reviews;
+  return { mode: selection.mode, models: selection.models, reviews };
 }
 
 async function writeAiReviews(
   path: string,
   report: SynSecReport,
-  reviews: Record<string, AiFindingReview>,
+  bundle: AiReviewBundle,
   workflow?: WorkflowDefinition,
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(
-    path,
-    `${JSON.stringify({
-      schemaVersion: 1,
-      reportId: report.reportId,
-      generatedAt: new Date().toISOString(),
-      workflow: workflow ? { id: workflow.id, version: workflow.version } : null,
-      reviews,
-    }, null, 2)}\n`,
-    "utf8",
-  );
+  const base = {
+    reportId: report.reportId,
+    generatedAt: new Date().toISOString(),
+    workflow: workflow ? { id: workflow.id, version: workflow.version } : null,
+  };
+  const payload = bundle.mode === "consensus"
+    ? {
+        schemaVersion: 2,
+        ...base,
+        reviewMode: "consensus",
+        models: bundle.models,
+        interpretation: "model-consensus-not-scanner-evidence",
+        reviews: bundle.reviews,
+      }
+    : {
+        schemaVersion: 1,
+        ...base,
+        reviews: bundle.reviews,
+      };
+  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 async function scan(): Promise<void> {
@@ -348,9 +391,9 @@ async function scan(): Promise<void> {
   if (config.ai.enabled) {
     const limit = integerOption("--ai-limit") ?? 10;
     const workflow = workflowOption();
-    const reviews = await reviewGroups(outcome.report, root, config, limit, workflow);
+    const reviewBundle = await reviewGroups(outcome.report, root, config, limit, workflow);
     const aiPath = resolve(root, ".synsec/ai-review.json");
-    await writeAiReviews(aiPath, outcome.report, reviews, workflow);
+    await writeAiReviews(aiPath, outcome.report, reviewBundle, workflow);
     if (!flag("--json")) console.error(`AI reviews: ${aiPath}`);
   } else if (option("--workflow")) {
     throw new Error("--workflow is an AI review option. Enable review with --ai or in synsec.config.json.");
@@ -427,11 +470,12 @@ async function review(): Promise<void> {
   if (model) config.ai.model = model;
   const workflow = workflowOption();
   const limit = integerOption("--ai-limit") ?? report.findings.length;
-  const reviews = await reviewGroups(report, root, config, limit, workflow);
+  const reviewBundle = await reviewGroups(report, root, config, limit, workflow);
   const explicitOutput = option("--output");
   const outputPath = explicitOutput ? resolve(explicitOutput) : resolve(dirname(reportPath), "ai-review.json");
-  await writeAiReviews(outputPath, report, reviews, workflow);
-  console.log(`Wrote ${Object.keys(reviews).length} AI review(s) to ${outputPath}`);
+  await writeAiReviews(outputPath, report, reviewBundle, workflow);
+  const label = reviewBundle.mode === "consensus" ? "AI consensus review" : "AI review";
+  console.log(`Wrote ${Object.keys(reviewBundle.reviews).length} ${label}(s) to ${outputPath}`);
 }
 
 async function triage(): Promise<void> {
