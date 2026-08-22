@@ -72,14 +72,15 @@ Likely test ownership is also structural evidence only. It prioritizes test file
 - [x] Seven-question evidence gate for model review
 - [x] Source-code context disabled by default and separately opt-in
 - [x] Deterministic multi-review consensus aggregation with disagreement/insufficient-review handling
-- [ ] Multi-model reviewer execution/orchestration
+- [x] Bounded independent multi-reviewer execution API with failure isolation
+- [ ] CLI/configured multi-model review UX
 - [ ] Repository-aware explanation of reachability and impact
 - [ ] Suggested patch generation
 - [ ] Suggested regression/security tests
 - [x] Safe rescan-after-remediation verification primitive
 - [x] Finding lifecycle: new, confirmed, false positive, accepted risk, fixed, regressed
 
-Consensus remains model inference, not scanner evidence. Duplicate model identities do not count as independent reviewers, split verdicts fail closed to `uncertain`, insufficient reviewer sets do not fabricate consensus, and gate answers are aggregated with disagreement preserved.
+Consensus remains model inference, not scanner evidence. Duplicate model identities do not count as independent reviewers, split verdicts fail closed to `uncertain`, insufficient reviewer sets do not fabricate consensus, reviewer execution is concurrency-bounded, and provider failures are isolated with credential redaction. The package API supports multi-review execution; the CLI still exposes the simpler single-model review path and needs explicit multi-model UX before this becomes the default user-facing workflow.
 
 ## Phase 4 — Reusable workflows / skills
 
@@ -121,11 +122,14 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Replay-protected authorization-gated local webhook handler
 - [x] Bounded framework-free webhook HTTP handler for deployment behind HTTPS
 - [x] Installation-scoped exact-commit GitHub repository acquisition primitive
+- [x] Exact queued head/base acquisition and hosted PR baseline comparison
 - [x] Authorization-aware local scan worker with commit-bound report verification
 - [x] Local worker composition through the existing scan engine and Checks/SARIF publishers
-- [ ] Hosted TLS/runtime service and concrete App credential/token wiring
-- [ ] Repository installation/setup UX and permission diagnostics
-- [ ] Exact-base acquisition for hosted changed-file PR scans
+- [x] Memory-only App installation-token provider with purpose-specific permission checks
+- [x] Single-host local runtime composition with separate durable-state/workspace trees
+- [ ] Production TLS/listener deployment, supervision, and operational secret rotation
+- [ ] Repository installation/setup UX and richer permission diagnostics
+- [ ] Native changed-file execution for hosted PR workers using exact provenance
 - [ ] Transactional shared App state/queue for multi-host deployment
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
@@ -136,7 +140,7 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-GitHub App support now has a coherent local hosting path rather than disconnected primitives: a bounded HTTP handler accepts raw deliveries behind HTTPS; verified deliveries are replay-claimed; installation-management events synchronize bounded authorization state; scan-bearing events require authorization before durable queueing; workers recheck authorization at execution time; exact queued commits are acquired through a fixed GitHub transport; and `runScanEngine()` output must bind to that exact head before Checks/SARIF publication. Failed durable webhook processing releases only the exact still-current replay claim so GitHub can retry. This is still not a deployable hosted service: TLS/runtime deployment, concrete App credential configuration, OS/container isolation, setup UX, and shared transactional storage remain open. See [GITHUB_APP.md](./GITHUB_APP.md).
+GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. Hosted PR execution is still full-repository at each commit; native changed-file optimization remains future work. See [GITHUB_APP.md](./GITHUB_APP.md).
 
 See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
@@ -146,6 +150,7 @@ See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and se
 - [x] Bounded local scan-history store with atomic writes and trend-safe snapshots
 - [x] Self-contained trend-safe security-history HTML dashboard renderer
 - [x] History-store → restrictive local dashboard file generation
+- [x] Bounded lifecycle finding-ownership metadata foundation
 - [ ] Project/repository dashboard application
 - [ ] Multi-project/server persistence layer
 - [ ] Interactive security-score history UI
@@ -154,9 +159,9 @@ See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and se
 - [ ] Dependency and SBOM views
 - [ ] Interactive repository posture view
 - [ ] Team triage workflow
-- [ ] Finding comments/ownership
+- [ ] Finding comments and richer collaboration history
 
-The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. The self-contained history dashboard renders only this trend-safe model, escapes titles/content, and can be written with restrictive local permissions. A multi-project database and interactive web application remain future work.
+The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. The self-contained history dashboard renders only this trend-safe model, escapes titles/content, and can be written with restrictive local permissions. Lifecycle ownership is separately bounded triage metadata preserved across state transitions/rescans; it is not scanner evidence and does not make the current local store a multi-user collaboration database.
 
 ## Phase 7 — Isolated scan workers
 
@@ -165,6 +170,7 @@ The local history store retains only report identifiers, timestamps, commit/bran
 - [x] Bounded durable local scan-job queue with leases/retries
 - [x] Commit-pinned temporary checkout workspace acquisition and cleanup
 - [x] Authorization recheck before worker credential/source acquisition
+- [x] Separation of durable App state and repository workspace directory trees
 - [ ] Containerized scanner images
 - [ ] Per-scan process/container workspace isolation
 - [ ] OS/container CPU and memory limits
@@ -173,7 +179,7 @@ The local history store retains only report identifiers, timestamps, commit/bran
 - [ ] Artifact retention policy
 - [ ] Filesystem credential minimization for private-repository scan workspaces
 
-External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. Hosted GitHub acquisition uses a separate short-lived transport credential, keeps it out of scanner inputs and Git argv, disables inherited Git configuration, and removes temporary checkout workspaces after handling. This materially narrows credential exposure but is not a complete sandbox: scanner processes still need container/workspace isolation, OS resource limits, network policy, and stronger filesystem credential separation before a production multi-tenant worker deployment.
+External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. Hosted GitHub acquisition uses a separate short-lived transport credential, keeps it out of scanner inputs and Git argv, disables inherited Git configuration, and removes temporary checkout workspaces after handling. The local runtime also refuses to place repository workspaces inside durable App state. This materially narrows credential/source exposure but is not a complete sandbox: scanner processes still need container isolation, OS resource limits, network policy, and stronger filesystem credential separation before a production multi-tenant worker deployment.
 
 ## Later — explicitly authorized external assessment
 
