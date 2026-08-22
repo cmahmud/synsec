@@ -80,6 +80,18 @@ export interface ScanTarget {
   branch?: string;
 }
 
+export type ScannerExecutionMode =
+  | "repository"
+  | "changed-files-native"
+  | "repository-then-filtered";
+
+export interface ScannerExecutionScope {
+  mode: ScannerExecutionMode;
+  changedFileCount?: number;
+  /** Execution mode is provenance for scanner work, not proof that unselected code is unaffected. */
+  interpretation: "scanner-execution-scope-not-coverage-proof";
+}
+
 export interface ScanResult {
   scanner: string;
   startedAt: string;
@@ -88,6 +100,7 @@ export interface ScanResult {
   findings: Finding[];
   diagnostics: string[];
   artifacts?: ScanArtifact[];
+  executionScope?: ScannerExecutionScope;
 }
 
 export interface CorrelatedFinding {
