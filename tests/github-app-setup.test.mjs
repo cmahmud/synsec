@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSynSecGitHubAppSetupContract } from "@synsec/github/app-setup";
+import {
+  buildSynSecGitHubAppSetupContract,
+  evaluateSynSecGitHubAppSetup,
+} from "@synsec/github/app-setup";
 
 test("default GitHub App setup remains read-only for repository contents", () => {
   const setup = buildSynSecGitHubAppSetupContract();
@@ -42,6 +45,57 @@ test("remediation write permissions are explicit opt-in and contents write subsu
   });
   assert.equal(setup.remediationWriteEnabled, true);
   assert.match(setup.notes.join("\n"), /explicitly approved remediation PR creation/);
+});
+
+test("setup evaluator distinguishes missing capability from least-privilege drift", () => {
+  const evaluation = evaluateSynSecGitHubAppSetup({
+    permissions: {
+      contents: "write",
+      checks: "read",
+      issues: "write",
+    },
+    events: ["push", "pull_request", "issues"],
+  });
+
+  assert.equal(evaluation.ready, false);
+  assert.deepEqual(evaluation.missingPermissions, [{
+    permission: "checks",
+    required: "write",
+    actual: "read",
+  }]);
+  assert.deepEqual(evaluation.excessiveWritePermissions, ["contents", "issues"]);
+  assert.deepEqual(evaluation.missingEvents, ["installation", "installation_repositories"]);
+  assert.deepEqual(evaluation.extraEvents, ["issues"]);
+  assert.equal(evaluation.interpretation, "setup-comparison-not-runtime-authorization");
+});
+
+test("setup evaluator accepts exactly the feature-aware minimum", () => {
+  const setup = buildSynSecGitHubAppSetupContract({ publishSarif: true, enableRemediationPullRequests: true });
+  const evaluation = evaluateSynSecGitHubAppSetup({
+    permissions: setup.permissions,
+    events: setup.events,
+    options: { publishSarif: true, enableRemediationPullRequests: true },
+  });
+  assert.deepEqual(evaluation, {
+    version: 1,
+    ready: true,
+    missingPermissions: [],
+    excessiveWritePermissions: [],
+    missingEvents: [],
+    extraEvents: [],
+    interpretation: "setup-comparison-not-runtime-authorization",
+  });
+});
+
+test("setup evaluator validates bounded permission and event names before comparison", () => {
+  assert.throws(() => evaluateSynSecGitHubAppSetup({
+    permissions: { "contents\nwrite": "write" },
+    events: ["push"],
+  }), /invalid permission name/);
+  assert.throws(() => evaluateSynSecGitHubAppSetup({
+    permissions: { contents: "read" },
+    events: ["pull request"],
+  }), /invalid event name/);
 });
 
 test("setup contract contains no installation, repository-target, credential, or commit identity", () => {
