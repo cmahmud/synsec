@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { markGitHubWorkspaceOwned } from "./workspace-ownership.js";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_TIMEOUT_MS = 10_000;
@@ -34,6 +35,7 @@ export interface GitHubRepositoryAcquisitionOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   gitRunner?: GitCommandRunner;
+  now?: () => number;
 }
 
 export interface AcquiredGitHubRepository {
@@ -217,7 +219,9 @@ async function requireGitSuccess(
  * short-lived installation credential only through its child environment, never argv or persisted
  * repository configuration. System/global git configuration and file:// transport are disabled so
  * local URL rewrite rules cannot silently redirect the fixed GitHub transport. Submodules and LFS
- * objects are not initialized. The caller owns cleanup after a successful acquisition.
+ * objects are not initialized. A restrictive ownership marker is created before Git runs so a later
+ * maintenance pass can distinguish crashed SynSec workspaces from unrelated directories. The caller
+ * owns cleanup after a successful acquisition.
  */
 export async function acquireGitHubRepositoryCommit(input: {
   repository: string;
@@ -232,6 +236,12 @@ export async function acquireGitHubRepositoryCommit(input: {
   const root = resolve(options.workspaceRoot?.trim() || tmpdir());
   await mkdir(root, { recursive: true, mode: 0o700 });
   const workspace = await mkdtemp(join(root, "synsec-github-"));
+  try {
+    await markGitHubWorkspaceOwned(workspace, options.now ?? Date.now);
+  } catch (error) {
+    await rm(workspace, { recursive: true, force: true });
+    throw error;
+  }
   const env = gitEnvironment(token);
   const commandOptions: GitCommandOptions = { cwd: workspace, env, timeoutMs, ...(options.signal ? { signal: options.signal } : {}) };
   const remote = `https://github.com/${repository}.git`;
