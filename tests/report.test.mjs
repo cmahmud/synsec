@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildReport, applyBaseline, renderHtml, toSarif } from "../packages/report/dist/index.js";
-import { renderMarkdown } from "../packages/report/dist/markdown.js";
+import { renderMarkdown, writeMarkdown } from "../packages/report/dist/markdown.js";
 
 function scan(ruleId, severity = "high") {
   return {
@@ -94,4 +97,18 @@ test("SARIF, HTML, and Markdown exports preserve findings", () => {
   assert.match(markdown, /# SynSec Security Report/);
   assert.match(markdown, /\[HIGH\] Finding RULE-1/);
   assert.match(markdown, /Use a safer implementation/);
+});
+
+test("Markdown report writer repairs permissive existing file modes where supported", async () => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "synsec-markdown-mode-"));
+  const path = join(root, "report.md");
+  try {
+    await writeFile(path, "old\n", { encoding: "utf8", mode: 0o644 });
+    await chmod(path, 0o644);
+    await writeMarkdown(path, buildReport({ target: { path: "/repo" }, scans: [scan("RULE-1")] }));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
