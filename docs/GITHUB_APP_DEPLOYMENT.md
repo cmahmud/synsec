@@ -77,3 +77,11 @@ const result = await runtime.runMaintenance();
 Operators may invoke maintenance from their existing supervised process loop or an external scheduler. SynSec deliberately does not create its own background timer because service scheduling and lifecycle belong to the hosting layer.
 
 Repository workspaces use ownership-based cleanup instead of an age sweep: failed acquisition removes its temporary workspace immediately, and workers clean acquired head/base workspaces after processing. SynSec does not recursively delete old `synsec-github-*` directories merely because their modification time is old, because that heuristic could race a legitimately long-running scan. If a process is killed before cleanup completes, orphan-workspace reconciliation remains a hosting/isolated-runtime concern until SynSec has a durable ownership marker that can prove a workspace is no longer active.
+
+## Sanitized runtime status
+
+`runtime.getStatus()` returns an aggregate-only snapshot that a hosting layer can safely adapt into a local health/readiness endpoint. It reports installation totals split by active/suspended and repository-selection mode, plus queue totals split by pending/leased/failed status.
+
+The status contract intentionally excludes installation ids, account logins, repository names, commit SHAs, delivery ids, source paths, scanner output, credentials, and arbitrary durable-record fields. Durable stores are still fully parsed and validated before aggregation; malformed persisted state makes status collection fail rather than silently reporting a healthy snapshot.
+
+This snapshot is diagnostic data, not an authorization decision. A hosting layer should treat successful status collection as evidence that local durable state can be read, while installation authorization and GitHub permission checks remain authoritative at dispatch/worker execution time.
