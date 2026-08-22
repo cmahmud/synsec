@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { link, mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -78,13 +78,19 @@ async function readRecord(path: string, expectedDeliveryId: string): Promise<Rep
   return parseRecord(await readFile(path, "utf8"), expectedDeliveryId);
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return error instanceof Error
+    && Object.prototype.hasOwnProperty.call(error, "code")
+    && (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
 /**
  * Durable replay protection for GitHub webhook delivery ids.
  *
- * Claims are created with exclusive file creation, so concurrent processes sharing
- * the same store cannot both accept the same delivery. Delivery ids are hashed for
- * filenames and never interpreted as paths. Expired claims may be reclaimed after
- * the configured bounded retention window.
+ * Each claim is fully written and fsynced to a private temporary file before an
+ * atomic hard-link creates the canonical marker. Concurrent processes sharing the
+ * same store therefore cannot both accept a delivery or observe a partial record.
+ * Delivery ids are hashed for filenames and never interpreted as paths.
  */
 export class FileGitHubWebhookReplayStore {
   readonly directory: string;
@@ -108,20 +114,21 @@ export class FileGitHubWebhookReplayStore {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const tempPath = join(this.directory, `.claim-${process.pid}-${randomBytes(12).toString("hex")}.tmp`);
+      const handle = await open(tempPath, "wx", 0o600);
       try {
-        const handle = await open(path, "wx", 0o600);
-        try {
-          const record: ReplayRecord = { version: 1, deliveryId, receivedAt };
-          await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        const record: ReplayRecord = { version: 1, deliveryId, receivedAt };
+        await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+
+      try {
+        await link(tempPath, path);
         return { accepted: true, deliveryId, receivedAt };
       } catch (error) {
-        if (!(error instanceof Error) || !Object.prototype.hasOwnProperty.call(error, "code") || (error as NodeJS.ErrnoException).code !== "EEXIST") {
-          throw error;
-        }
+        if (!isAlreadyExists(error)) throw error;
 
         const existing = await readRecord(path, deliveryId);
         const existingAt = Date.parse(existing.receivedAt);
@@ -130,6 +137,8 @@ export class FileGitHubWebhookReplayStore {
         }
 
         await rm(path, { force: true });
+      } finally {
+        await rm(tempPath, { force: true });
       }
     }
 
