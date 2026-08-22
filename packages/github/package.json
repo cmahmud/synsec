@@ -31,6 +31,7 @@
     "./scan-queue": "./dist/scan-queue.js",
     "./retention": "./dist/retention.js",
     "./repository-acquisition": "./dist/repository-acquisition.js",
+    "./workspace-ownership": "./dist/workspace-ownership.js",
     "./remediation-writer": "./dist/remediation-writer.js",
     "./exact-tree-diff": "./dist/exact-tree-diff.js"
   },
