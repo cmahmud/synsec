@@ -115,9 +115,17 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] GitHub App HMAC webhook verification and bounded event normalization
 - [x] GitHub App short-lived JWT and fixed-host installation-token exchange primitives
 - [x] Explicit GitHub App scan-trigger allowlist for push and selected PR lifecycle events
-- [ ] Hosted GitHub App webhook/service orchestration
-- [ ] Repository installation/setup flow and durable installation state
-- [ ] Durable webhook delivery replay protection
+- [x] Durable webhook delivery replay protection with retry-safe claim release
+- [x] Durable local installation authorization state
+- [x] Installation/repository-selection event synchronization into authorization state
+- [x] Replay-protected authorization-gated local webhook handler
+- [x] Installation-scoped exact-commit GitHub repository acquisition primitive
+- [x] Authorization-aware local scan worker with commit-bound report verification
+- [x] Local worker composition through the existing scan engine and Checks/SARIF publishers
+- [ ] Minimal hosted HTTPS service and concrete App credential/token wiring
+- [ ] Repository installation/setup UX and permission diagnostics
+- [ ] Exact-base acquisition for hosted changed-file PR scans
+- [ ] Transactional shared App state/queue for multi-host deployment
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
@@ -127,7 +135,7 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-GitHub App support is currently a hosting foundation, not a complete hosted service. Verified webhooks never derive scanner targets from payload-controlled URLs, installation-management events are not scan triggers, and installation-token exchange is fixed to `api.github.com`. A production service still needs durable installation/delivery state, isolated commit-pinned checkout workers, queueing, and setup UX. See [GITHUB_APP.md](./GITHUB_APP.md).
+GitHub App support now has a coherent local hosting path rather than disconnected primitives: verified deliveries are replay-claimed, installation-management events synchronize bounded authorization state, scan-bearing events require authorization before durable queueing, workers recheck authorization at execution time, exact queued commits are acquired through a fixed GitHub transport, and `runScanEngine()` output must bind to that exact head before Checks/SARIF publication. Failed durable webhook processing releases only the exact still-current replay claim so GitHub can retry. This is still not a deployable hosted service: the HTTPS process, App credential configuration, OS/container isolation, setup UX, and shared transactional storage remain open. See [GITHUB_APP.md](./GITHUB_APP.md).
 
 See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
@@ -153,16 +161,18 @@ The local history store retains only report identifiers, timestamps, commit/bran
 
 - [x] Scanner subprocess timeout, abort, output-memory, and kill-escalation bounds
 - [x] Credential-minimized default scanner subprocess environment
+- [x] Bounded durable local scan-job queue with leases/retries
+- [x] Commit-pinned temporary checkout workspace acquisition and cleanup
+- [x] Authorization recheck before worker credential/source acquisition
 - [ ] Containerized scanner images
-- [ ] Job queue
-- [ ] Per-scan workspace isolation
+- [ ] Per-scan process/container workspace isolation
 - [ ] OS/container CPU and memory limits
 - [ ] Network policy
 - [ ] Horizontal workers
 - [ ] Artifact retention policy
-- [ ] Secrets/credential minimization for private repository clones and filesystem credentials
+- [ ] Filesystem credential minimization for private-repository scan workspaces
 
-External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. This prevents ambient CI/App/cloud tokens and credential-bearing proxy variables from being handed to scanner binaries automatically. It is not a complete filesystem credential sandbox: container/workspace isolation and private-clone credential minimization remain open work.
+External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. Hosted GitHub acquisition uses a separate short-lived transport credential, keeps it out of scanner inputs and Git argv, disables inherited Git configuration, and removes temporary checkout workspaces after handling. This materially narrows credential exposure but is not a complete sandbox: scanner processes still need container/workspace isolation, OS resource limits, network policy, and stronger filesystem credential separation before a production multi-tenant worker deployment.
 
 ## Later — explicitly authorized external assessment
 
