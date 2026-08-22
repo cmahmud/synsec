@@ -80,6 +80,32 @@ test("verified installation creation normalizes only authorization state", async
   assert.equal(JSON.stringify(await store.get(42)).includes("attacker.invalid"), false);
 });
 
+test("new installation creation replaces stale selected repository authorization", async () => {
+  const store = new MemoryInstallationStore();
+  await store.put({
+    installationId: 42,
+    accountLogin: "example-org",
+    accountType: "Organization",
+    repositorySelection: "selected",
+    repositories: ["example-org/stale-repo"],
+  });
+
+  const result = await synchronizeGitHubInstallationState({
+    event: "installation",
+    action: "created",
+    installationId: 42,
+    accountLogin: "example-org",
+    accountType: "Organization",
+    repositorySelection: "selected",
+    repositories: [],
+    repositoriesAdded: [],
+    repositoriesRemoved: [],
+  }, store, Date.UTC(2026, 7, 22, 18, 30));
+
+  assert.equal(result.status, "updated");
+  assert.deepEqual(result.record.repositories, []);
+});
+
 test("repository-selection deltas preserve bounded selected authorization", async () => {
   const store = new MemoryInstallationStore();
   await store.put({
