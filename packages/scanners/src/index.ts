@@ -10,7 +10,7 @@ import { SyftAdapter } from "./syft.js";
 import { TrivyAdapter } from "./trivy.js";
 
 export { BetterleaksAdapter, parseBetterleaksJson } from "./betterleaks.js";
-export { CheckovAdapter, parseCheckovJson } from "./checkov.js";
+export { CheckovAdapter, buildCheckovArguments, parseCheckovJson } from "./checkov.js";
 export { GitleaksAdapter, parseGitleaksJson } from "./gitleaks.js";
 export { GrypeAdapter, parseGrypeJson } from "./grype.js";
 export { OpengrepAdapter, parseOpengrepJson } from "./opengrep.js";
