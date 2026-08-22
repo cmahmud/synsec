@@ -92,10 +92,11 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] GitHub Actions context/event parsing primitives
 - [x] Deterministic GitHub check-result and inline-annotation generation
 - [x] Baseline-aware PR annotation filtering and severity-threshold conclusions
+- [x] Narrow fixed-host Checks API publication primitive
 - [ ] GitHub App
 - [ ] Repository installation flow
 - [ ] Pull-request scanning transport/orchestration
-- [ ] Commit status / checks API publication
+- [ ] End-to-end commit/check publication from scan orchestration
 - [ ] Inline SARIF/code-scanning upload
 - [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
@@ -105,15 +106,18 @@ See [GITHUB.md](./GITHUB.md) for the current integration contract and security b
 
 ## Phase 6 — Persistent web application
 
+- [x] Deterministic report-history aggregation for score, finding count, churn, and finding lifetime
 - [ ] Project/repository dashboard
-- [ ] Scan history
-- [ ] Security-score history
+- [ ] Persisted scan history store
+- [ ] Security-score history UI
 - [ ] New/fixed/regressed views
 - [ ] Finding detail page with source evidence
 - [ ] Dependency and SBOM views
 - [ ] Repository posture view
 - [ ] Team triage workflow
 - [ ] Finding comments/ownership
+
+The history primitive derives trends from existing normalized reports without retaining additional source excerpts or secret material. Persistent storage and the web UI remain future work.
 
 ## Phase 7 — Isolated scan workers
 
