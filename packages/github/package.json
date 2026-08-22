@@ -10,7 +10,8 @@
     "./actions-runner": "./dist/actions-runner.js",
     "./sarif-publisher": "./dist/sarif-publisher.js",
     "./baseline": "./dist/baseline.js",
-    "./base-scan": "./dist/base-scan.js"
+    "./base-scan": "./dist/base-scan.js",
+    "./app": "./dist/app.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
