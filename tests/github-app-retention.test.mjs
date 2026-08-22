@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,15 +11,19 @@ async function setup(now) {
   return new FileGitHubScanQueue(directory, { now: () => now, leaseMs: 10_000 });
 }
 
-async function enqueueFailed(queue, input) {
+async function enqueueFailed(queue, input, modifiedAt) {
   const job = await queue.enqueue(input);
   const leased = await queue.claimNext();
   assert.equal(leased.jobId, job.jobId);
   await queue.fail(job.jobId);
+  if (modifiedAt !== undefined) {
+    const date = new Date(modifiedAt);
+    await utimes(join(queue.directory, `${job.jobId}.json`), date, date);
+  }
   return job;
 }
 
-test("retention deletes only failed jobs older than the configured window", async () => {
+test("retention deletes only failed jobs whose terminal record is old", async () => {
   const now = Date.parse("2026-08-22T20:00:00.000Z");
   const queue = await setup(now);
   const oldFailed = await enqueueFailed(queue, {
@@ -28,23 +32,23 @@ test("retention deletes only failed jobs older than the configured window", asyn
     repository: "o/old",
     headSha: "a".repeat(40),
     event: "push",
-    createdAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
-  });
+    createdAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+  }, now - 2 * 60 * 60 * 1000);
   const recentFailed = await enqueueFailed(queue, {
     deliveryId: "recent-failed",
     installationId: 1,
     repository: "o/recent",
     headSha: "b".repeat(40),
     event: "push",
-    createdAt: new Date(now - 30 * 60 * 1000).toISOString(),
-  });
+    createdAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+  }, now - 30 * 60 * 1000);
   await queue.enqueue({
     deliveryId: "old-pending",
     installationId: 1,
     repository: "o/pending",
     headSha: "c".repeat(40),
     event: "push",
-    createdAt: new Date(now - 4 * 60 * 60 * 1000).toISOString(),
+    createdAt: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
   });
 
   const result = await pruneGitHubAppFailedJobs(queue, {
@@ -69,8 +73,7 @@ test("retention caps deletions per maintenance pass", async () => {
       repository: `o/r${index}`,
       headSha: `${index + 1}`.repeat(40),
       event: "push",
-      createdAt: new Date(now - 3 * 60 * 60 * 1000 - index).toISOString(),
-    });
+    }, now - 3 * 60 * 60 * 1000 - index);
   }
 
   const result = await pruneGitHubAppFailedJobs(queue, {
