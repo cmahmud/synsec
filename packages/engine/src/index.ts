@@ -3,7 +3,12 @@ import type { SynSecConfig } from "@synsec/config";
 import type { Finding, ScanResult, ScanTarget, Severity } from "@synsec/core";
 import { applyBaseline, buildReport, type SynSecReport } from "@synsec/report";
 import { inventoryRepository } from "@synsec/repository";
-import { buildRepositoryIndex, type RepositoryIndex } from "@synsec/repository/analysis";
+import {
+  buildRepositoryIndex,
+  findDependencyUsage,
+  packageNameFromPurl,
+  type RepositoryIndex,
+} from "@synsec/repository/analysis";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
 import { builtInScanners } from "@synsec/scanners";
 
@@ -138,6 +143,34 @@ function scopeScansToChangedFiles(scans: readonly ScanResult[], root: string, fi
   });
 }
 
+function dependencyPackageName(finding: Finding): string | undefined {
+  const direct = finding.metadata?.package;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const purl = finding.metadata?.purl;
+  return typeof purl === "string" ? packageNameFromPurl(purl) : undefined;
+}
+
+function enrichDependencyUsage(scans: readonly ScanResult[], index: RepositoryIndex): ScanResult[] {
+  return scans.map((scan) => ({
+    ...scan,
+    findings: scan.findings.map((finding) => {
+      if (finding.category !== "dependency" && finding.category !== "container" && finding.category !== "supply-chain") {
+        return finding;
+      }
+      const packageName = dependencyPackageName(finding);
+      if (!packageName) return finding;
+      const usage = findDependencyUsage(index, packageName);
+      return {
+        ...finding,
+        metadata: {
+          ...(finding.metadata ?? {}),
+          dependencyUsage: usage,
+        },
+      };
+    }),
+  }));
+}
+
 export async function scannerStatuses(config: SynSecConfig): Promise<ScannerStatus[]> {
   const selectedIds = new Set(config.scanners);
   const scanners = builtInScanners();
@@ -242,7 +275,8 @@ export async function runScanEngine(input: {
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
   const changedScope = input.changedOnly ? await discoverChangedFiles(root, input.changedBase) : undefined;
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
-  const scans = changedScope ? scopeScansToChangedFiles(result.scans, root, changedScope.files) : result.scans;
+  const enrichedScans = enrichDependencyUsage(result.scans, repositoryIndex);
+  const scans = changedScope ? scopeScansToChangedFiles(enrichedScans, root, changedScope.files) : enrichedScans;
   const failures = result.failures;
   if (scans.length === 0) {
     const details = failures.map((failure) => `${failure.scanner}: ${failure.message}`).join("; ");
