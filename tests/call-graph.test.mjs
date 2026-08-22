@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { buildCallGraph, findCallNeighborhood } from "../packages/repository/dist/call-graph.js";
 
@@ -11,7 +11,7 @@ async function fixture(files) {
   const index = [];
   for (const [path, content] of Object.entries(files)) {
     const absolute = join(root, path);
-    await mkdir(join(absolute, ".."), { recursive: true });
+    await mkdir(dirname(absolute), { recursive: true });
     await writeFile(absolute, content, "utf8");
     index.push({ path, size: Buffer.byteLength(content) });
   }
