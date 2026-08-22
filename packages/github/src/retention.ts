@@ -1,4 +1,5 @@
-import type { GitHubScanJob } from "./scan-queue.js";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { FileGitHubScanQueue } from "./scan-queue.js";
 
 const DEFAULT_FAILED_JOB_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -39,18 +40,22 @@ function boundedDeletes(value: number | undefined): number {
   return maxDeletes;
 }
 
-function jobCreatedAt(job: GitHubScanJob): number {
-  const parsed = Date.parse(job.createdAt);
-  if (!Number.isFinite(parsed)) throw new Error("Stored GitHub scan job has an invalid createdAt timestamp.");
-  return parsed;
+async function recordModifiedAt(queue: FileGitHubScanQueue, jobId: string): Promise<number> {
+  const metadata = await stat(join(queue.directory, `${jobId}.json`));
+  if (!metadata.isFile() || !Number.isFinite(metadata.mtimeMs) || metadata.mtimeMs <= 0) {
+    throw new Error("Stored GitHub scan job has invalid retention metadata.");
+  }
+  return metadata.mtimeMs;
 }
 
 /**
  * Delete only terminal failed queue records older than the configured retention window.
  *
- * Pending and leased work is never deleted, even when old. Deletion is capped per invocation so
- * operator maintenance cannot turn into an unbounded filesystem sweep. The queue validates every
- * record before this function sees it, so malformed durable state continues to fail closed.
+ * Age is measured from the durable record's last modification, which is refreshed when the queue
+ * marks a job failed. Pending and leased work is never deleted, even when old. Deletion is capped
+ * per invocation so operator maintenance cannot turn into an unbounded filesystem sweep. The queue
+ * validates every record before this function sees it, so malformed durable state continues to fail
+ * closed.
  */
 export async function pruneGitHubAppFailedJobs(
   queue: FileGitHubScanQueue,
@@ -67,7 +72,7 @@ export async function pruneGitHubAppFailedJobs(
 
   for (const job of jobs) {
     if (job.status !== "failed") continue;
-    const expired = jobCreatedAt(job) <= now - retentionMs;
+    const expired = (await recordModifiedAt(queue, job.jobId)) <= now - retentionMs;
     if (!expired || deleted >= maxDeletes) {
       retainedFailed += 1;
       continue;
