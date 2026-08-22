@@ -14,6 +14,8 @@ export interface ScannerContext {
   target: ScanTarget;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Repository-relative files requested by an incremental scan. Adapters may use this to reduce work. */
+  changedFiles?: string[];
 }
 
 export interface ScannerAvailability {
