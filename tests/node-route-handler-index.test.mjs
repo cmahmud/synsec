@@ -19,12 +19,15 @@ test("repository index records only simple named Node route handlers", async () 
     const index = await buildRepositoryIndex(root, [{ path: "server.ts", size: Buffer.byteLength(source) }]);
 
     assert.equal(index.routes.length, 4);
-    const byRoute = Object.fromEntries(index.routes.map((route) => [route.route, route]));
-    assert.equal(byRoute["/users"].handler, "listUsers");
-    assert.equal(byRoute["/admin"].handler, undefined);
-    assert.equal(byRoute["/users/:id"].handler, undefined);
-    const post = index.routes.find((route) => route.method === "POST");
-    assert.equal(post.handler, undefined);
+    const getUsers = index.routes.find((route) => route.method === "GET" && route.route === "/users");
+    const postUsers = index.routes.find((route) => route.method === "POST" && route.route === "/users");
+    const admin = index.routes.find((route) => route.method === "USE" && route.route === "/admin");
+    const patchUser = index.routes.find((route) => route.method === "PATCH" && route.route === "/users/:id");
+
+    assert.equal(getUsers?.handler, "listUsers");
+    assert.equal(postUsers?.handler, undefined);
+    assert.equal(admin?.handler, undefined);
+    assert.equal(patchUser?.handler, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
