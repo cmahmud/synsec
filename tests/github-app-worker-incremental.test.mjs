@@ -44,9 +44,18 @@ function job() {
 function queueFor(jobValue) {
   return {
     async claimNext() { return jobValue; },
+    async assertLease(id, attempts) {
+      assert.equal(id, jobValue.jobId);
+      assert.equal(attempts, jobValue.attempts);
+      return jobValue;
+    },
     async release() { throw new Error("must not release successful job"); },
     async fail() { throw new Error("must not fail successful job"); },
-    async complete() { return true; },
+    async complete(id, attempts) {
+      assert.equal(id, jobValue.jobId);
+      assert.equal(attempts, jobValue.attempts);
+      return true;
+    },
   };
 }
 
