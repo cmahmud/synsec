@@ -11,6 +11,11 @@ import {
   packageNameFromPurl,
   type RepositoryIndex,
 } from "@synsec/repository/analysis";
+import { buildModuleGraph } from "@synsec/repository/module-graph";
+import {
+  buildIncrementalScanPlan,
+  type IncrementalScanPlan,
+} from "@synsec/repository/incremental-plan";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
 import { builtInScanners } from "@synsec/scanners";
 
@@ -34,6 +39,7 @@ export interface ScanEngineOutcome {
   shouldFail: boolean;
   changedFiles?: string[];
   changedBase?: string;
+  incrementalPlan?: IncrementalScanPlan;
 }
 
 const severityRank: Record<Severity, number> = {
@@ -318,14 +324,24 @@ export async function runScanEngine(input: {
   if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
 
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
-  let changedScope: { base: string; files: string[] } | undefined;
+  let requestedScope: { base: string; files: string[] } | undefined;
   if (input.changedFiles !== undefined) {
     if (!input.changedOnly) throw new Error("Externally supplied changed files require changedOnly=true.");
     const base = input.changedBase?.trim();
     if (!base) throw new Error("Externally supplied changed files require an explicit changedBase provenance identifier.");
-    changedScope = { base, files: normalizeProvidedChangedFiles(input.changedFiles, root) };
+    requestedScope = { base, files: normalizeProvidedChangedFiles(input.changedFiles, root) };
   } else if (input.changedOnly) {
-    changedScope = await discoverChangedFiles(root, input.changedBase);
+    requestedScope = await discoverChangedFiles(root, input.changedBase);
+  }
+
+  let changedScope: { base: string; files: string[] } | undefined;
+  let incrementalPlan: IncrementalScanPlan | undefined;
+  if (requestedScope) {
+    const graph = buildModuleGraph(repositoryIndex, inventory.files);
+    incrementalPlan = buildIncrementalScanPlan(graph, requestedScope.files);
+    if (incrementalPlan.mode === "targeted" && incrementalPlan.selectedFiles.length > 0) {
+      changedScope = { base: requestedScope.base, files: incrementalPlan.selectedFiles };
+    }
   }
 
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
@@ -360,5 +376,6 @@ export async function runScanEngine(input: {
     outcome.changedFiles = changedScope.files;
     outcome.changedBase = changedScope.base;
   }
+  if (incrementalPlan) outcome.incrementalPlan = incrementalPlan;
   return outcome;
 }
