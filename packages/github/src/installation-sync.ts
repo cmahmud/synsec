@@ -1,4 +1,4 @@
-import { verifyGitHubWebhookSignature } from "./app.js";
+import { verifyGitHubWebhookSignature, type GitHubWebhookSecret } from "./app.js";
 import { validateGitHubRepositoryIdentity } from "./repository-acquisition.js";
 import type {
   GitHubInstallationRecord,
@@ -97,7 +97,7 @@ function repositoryList(value: unknown, label: string): string[] {
 export function parseVerifiedGitHubInstallationStateEvent(input: {
   body: string | Uint8Array;
   signatureHeader?: string;
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   eventName: string;
 }): GitHubInstallationStateEvent {
   if (input.eventName !== "installation" && input.eventName !== "installation_repositories") {
@@ -247,7 +247,7 @@ export async function synchronizeGitHubInstallationState(
 export async function synchronizeVerifiedGitHubInstallationWebhook(input: {
   body: string | Uint8Array;
   signatureHeader?: string;
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   eventName: string;
   store: GitHubInstallationStateStore;
   now?: number;
