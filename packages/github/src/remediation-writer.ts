@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import type { ApprovedRemediationExecution, RemediationChange } from "@synsec/workflows/remediation";
+import {
+  authorizeRemediationExecution,
+  type ApprovedRemediationExecution,
+  type RemediationChange,
+} from "@synsec/workflows/remediation";
 import { validateGitHubCommitSha, validateGitHubRepositoryIdentity } from "./repository-acquisition.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -280,10 +284,11 @@ async function createPullRequest(input: {
  * Apply one explicitly approved remediation proposal to an already acquired exact worktree, push a
  * deterministic non-force branch to github.com, and open a pull request through api.github.com.
  *
- * The writer rechecks the remote base ref before any mutation, verifies the local worktree commit,
- * checks the patch before applying it, and requires Git's staged path/status set to exactly equal
- * the approved proposal. Installation credentials are used only for GitHub transport and never
- * written into the repository or passed to scanners.
+ * The writer revalidates proposal/approval integrity immediately before acting, rechecks the remote
+ * base ref before any mutation, verifies the local worktree commit, checks the patch before applying
+ * it, and requires Git's staged path/status set to exactly equal the approved proposal. Installation
+ * credentials are used only for GitHub transport and never written into the repository or passed to
+ * scanners.
  */
 export async function createApprovedGitHubRemediationPullRequest(
   input: GitHubRemediationWriteInput,
@@ -291,12 +296,14 @@ export async function createApprovedGitHubRemediationPullRequest(
 ): Promise<GitHubRemediationPullRequestResult> {
   const repository = validateGitHubRepositoryIdentity(input.repository);
   const baseBranch = branchName(input.baseBranch);
+  authorizeRemediationExecution({
+    proposal: input.execution.proposal,
+    approval: input.execution.approval,
+    currentHeadSha: input.execution.targetCommitSha,
+  });
   const targetCommitSha = validateGitHubCommitSha(input.execution.targetCommitSha);
   if (input.execution.proposal.targetCommitSha !== targetCommitSha) {
     throw new Error("Approved remediation execution target does not match its proposal.");
-  }
-  if (input.execution.approval.proposalId !== input.execution.proposal.proposalId) {
-    throw new Error("Approved remediation execution contains mismatched approval metadata.");
   }
   const token = installationToken(input.installationToken);
   const timeoutMs = boundedTimeout(options.timeoutMs);
