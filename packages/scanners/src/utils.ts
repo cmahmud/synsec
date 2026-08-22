@@ -1,5 +1,5 @@
 import type { FindingIdentifiers, Severity } from "@synsec/core";
-import { runProcess } from "@synsec/scanner-sdk";
+import { runProcess, sanitizeOperationalText } from "@synsec/scanner-sdk";
 import type { ScannerAvailability } from "@synsec/scanner-sdk";
 
 export type UnknownRecord = Record<string, unknown>;
@@ -91,9 +91,18 @@ export function safeJson(raw: string): unknown {
 export async function commandAvailability(command: string, args: string[], displayName: string): Promise<ScannerAvailability> {
   try {
     const output = await runProcess(command, args, { timeoutMs: 10_000 });
-    if (output.exitCode !== 0) return { available: false, reason: output.stderr.trim() || `${displayName} returned a non-zero exit code.` };
-    return { available: true, version: output.stdout.trim() || output.stderr.trim() };
+    if (output.exitCode !== 0) {
+      return {
+        available: false,
+        reason: sanitizeOperationalText(output.stderr.trim() || `${displayName} returned a non-zero exit code.`),
+      };
+    }
+    const version = sanitizeOperationalText(output.stdout.trim() || output.stderr.trim());
+    return { available: true, version: version || undefined };
   } catch (error) {
-    return { available: false, reason: error instanceof Error ? error.message : `${displayName} is not available.` };
+    return {
+      available: false,
+      reason: sanitizeOperationalText(error instanceof Error ? error.message : `${displayName} is not available.`),
+    };
   }
 }
