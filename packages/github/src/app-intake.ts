@@ -12,6 +12,7 @@ export interface GitHubAppWebhookIntakeResult {
   webhook: GitHubAppWebhook;
   duplicate: boolean;
   shouldScan: boolean;
+  replayReceivedAt: string;
 }
 
 /**
@@ -20,6 +21,8 @@ export interface GitHubAppWebhookIntakeResult {
  * Signature verification intentionally happens before the durable replay claim so
  * unauthenticated traffic cannot fill the replay store. A duplicate authenticated
  * delivery is returned for idempotent HTTP handling but is never scan-eligible.
+ * The accepted claim timestamp is retained so a higher-level handler can release
+ * exactly that claim if downstream durable processing fails.
  */
 export async function intakeGitHubAppWebhook(input: {
   body: string | Uint8Array;
@@ -50,5 +53,6 @@ export async function intakeGitHubAppWebhook(input: {
     webhook,
     duplicate,
     shouldScan: !duplicate && shouldScanGitHubAppWebhook(webhook),
+    replayReceivedAt: claim.receivedAt,
   };
 }
