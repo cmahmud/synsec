@@ -100,7 +100,7 @@ function normalizeReview(value: unknown, finding: Finding, model: string): AiFin
   return review;
 }
 
-function buildPrompt(finding: Finding, context?: FindingContext): string {
+function buildPrompt(finding: Finding, context?: FindingContext, reviewInstructions?: string): string {
   const safeFinding = {
     title: finding.title,
     description: finding.description,
@@ -117,14 +117,18 @@ function buildPrompt(finding: Finding, context?: FindingContext): string {
   const contextBlock = context
     ? `\nRepository excerpt (${context.path}, lines ${context.startLine}-${context.endLine}):\n${context.excerpt}`
     : "\nNo source excerpt was provided. Treat reachability and code-flow claims as unknown unless scanner evidence is sufficient.";
+  const workflowBlock = reviewInstructions
+    ? `\nWorkflow-specific review instructions:\n${reviewInstructions}\n`
+    : "";
 
-  return `You are reviewing a repository security scanner finding for defensive software assurance. Do not invent exploit steps, credentials, or evidence. Separate deterministic scanner evidence from inference. If the available context cannot answer a question, answer unknown. Return JSON only.\n\nFinding:\n${JSON.stringify(safeFinding, null, 2)}${contextBlock}\n\nAssess these seven gates:\n${gateQuestions.map(([id, question], index) => `${index + 1}. ${id}: ${question}`).join("\n")}\n\nReturn exactly this shape:\n{\n  "verdict": "confirmed|likely|uncertain|false-positive",\n  "confidence": 0.0,\n  "severity": "critical|high|medium|low|info|unknown",\n  "summary": "short summary",\n  "rationale": "brief evidence-grounded rationale",\n  "gate": [{"id":"concrete","answer":"yes|no|unknown","note":"brief note"}],\n  "remediation": "brief defensive remediation"\n}`;
+  return `You are reviewing a repository security scanner finding for defensive software assurance. Do not invent exploit steps, credentials, or evidence. Separate deterministic scanner evidence from inference. If the available context cannot answer a question, answer unknown. Return JSON only.${workflowBlock}\nFinding:\n${JSON.stringify(safeFinding, null, 2)}${contextBlock}\n\nAssess these seven gates:\n${gateQuestions.map(([id, question], index) => `${index + 1}. ${id}: ${question}`).join("\n")}\n\nReturn exactly this shape:\n{\n  "verdict": "confirmed|likely|uncertain|false-positive",\n  "confidence": 0.0,\n  "severity": "critical|high|medium|low|info|unknown",\n  "summary": "short summary",\n  "rationale": "brief evidence-grounded rationale",\n  "gate": [{"id":"concrete","answer":"yes|no|unknown","note":"brief note"}],\n  "remediation": "brief defensive remediation"\n}`;
 }
 
 export async function reviewFinding(
   finding: Finding,
   config: OpenAiCompatibleConfig,
   context?: FindingContext,
+  reviewInstructions?: string,
 ): Promise<AiFindingReview> {
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const controller = new AbortController();
@@ -146,7 +150,7 @@ export async function reviewFinding(
             role: "system",
             content: "Perform concise defensive repository vulnerability triage. Return valid JSON only.",
           },
-          { role: "user", content: buildPrompt(finding, context) },
+          { role: "user", content: buildPrompt(finding, context, reviewInstructions) },
         ],
       }),
     });
