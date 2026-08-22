@@ -5,6 +5,7 @@ import {
   lifecycleSummary,
   readLifecycleStore,
   reconcileLifecycle,
+  setFindingOwner,
   setFindingState,
   verifyRemediation,
   writeLifecycleStore,
@@ -13,6 +14,12 @@ import {
   type LifecycleSummary,
   type RemediationVerification,
 } from "@synsec/lifecycle";
+import {
+  addFindingReviewComment,
+  commentsForFinding,
+  readFindingReviewCommentStore,
+  writeFindingReviewCommentStore,
+} from "@synsec/lifecycle/review-comments";
 import { readReport, type SynSecReport } from "@synsec/report";
 
 export interface LifecycleFileResult {
@@ -33,6 +40,18 @@ export async function reconcileLifecycleFile(
   return { path, store, summary: lifecycleSummary(store) };
 }
 
+function triagePaths(reportPath: string, requestedStore?: string): { lifecycle: string; comments: string } {
+  const lifecycle = resolve(requestedStore ?? dirname(reportPath), requestedStore ? "." : "lifecycle.json");
+  return {
+    lifecycle,
+    comments: resolve(dirname(lifecycle), "review-comments.json"),
+  };
+}
+
+/**
+ * Triage CLI operations intentionally mutate only bounded human review metadata.
+ * `owner` and `comment` are explicit operator actions, not scanner states and not inferred evidence.
+ */
 export async function runTriage(input: {
   reportPath: string;
   fingerprint?: string;
@@ -43,35 +62,68 @@ export async function runTriage(input: {
 }): Promise<string[]> {
   const reportPath = resolve(input.reportPath);
   const report = await readReport(reportPath);
-  const storePath = resolve(input.storePath ?? dirname(reportPath), input.storePath ? "." : "lifecycle.json");
-  let store = reconcileLifecycle(report, await readLifecycleStore(storePath));
+  const paths = triagePaths(reportPath, input.storePath);
+  let store = reconcileLifecycle(report, await readLifecycleStore(paths.lifecycle));
+  const comments = await readFindingReviewCommentStore(paths.comments);
 
   if (input.listOnly) {
     const records = currentLifecycleRecords(report, store);
     const lines = records.map((record) => {
       const finding = report.findings.find((item) => item.fingerprint === record.fingerprint);
-      return `${record.fingerprint}  ${record.state.padEnd(14)}  ${finding?.primary.title ?? "finding"}`;
+      const owner = record.owner ? `  owner:${record.owner}` : "";
+      const commentCount = commentsForFinding(comments, record.fingerprint).length;
+      const commentSummary = commentCount > 0 ? `  comments:${commentCount}` : "";
+      return `${record.fingerprint}  ${record.state.padEnd(14)}  ${finding?.primary.title ?? "finding"}${owner}${commentSummary}`;
     });
-    return [`Lifecycle store: ${storePath}`, ...lines];
+    return [
+      `Lifecycle store: ${paths.lifecycle}`,
+      `Review comments: ${paths.comments}`,
+      ...lines,
+    ];
   }
 
   if (!input.fingerprint || !input.state) {
-    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>] or synsec triage <report.json> --list");
-  }
-  if (!isFindingState(input.state)) {
-    throw new Error("Triage state must be one of new, confirmed, false-positive, accepted-risk, fixed, regressed.");
+    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state|owner|comment> [--note <text>] [--store <file>] or synsec triage <report.json> --list");
   }
   const exists = report.findings.some((finding) => finding.fingerprint === input.fingerprint);
   if (!exists) throw new Error(`Finding fingerprint is not present in report ${report.reportId}: ${input.fingerprint}`);
+
+  if (input.state === "owner") {
+    if (input.note === undefined) {
+      throw new Error("Ownership triage requires --note <owner>; use an empty --note value to clear ownership.");
+    }
+    store = setFindingOwner(store, input.fingerprint, input.note);
+    await writeLifecycleStore(paths.lifecycle, store);
+    const owner = store.records[input.fingerprint]?.owner;
+    return [
+      owner ? `Assigned ${input.fingerprint} -> ${owner}` : `Cleared owner for ${input.fingerprint}`,
+      `Lifecycle store: ${paths.lifecycle}`,
+    ];
+  }
+
+  if (input.state === "comment") {
+    if (!input.note?.trim()) throw new Error("Comment triage requires --note <comment>.");
+    const updated = addFindingReviewComment(comments, input.fingerprint, input.note);
+    await writeFindingReviewCommentStore(paths.comments, updated);
+    const added = commentsForFinding(updated, input.fingerprint).at(-1);
+    return [
+      `Added review comment to ${input.fingerprint}${added ? ` (${added.id.slice(0, 12)})` : ""}`,
+      `Review comments: ${paths.comments}`,
+    ];
+  }
+
+  if (!isFindingState(input.state)) {
+    throw new Error("Triage state must be one of new, confirmed, false-positive, accepted-risk, fixed, regressed; or use owner/comment actions.");
+  }
 
   store = setFindingState(store, input.fingerprint, input.state, {
     note: input.note,
     reportId: report.reportId,
   });
-  await writeLifecycleStore(storePath, store);
+  await writeLifecycleStore(paths.lifecycle, store);
   return [
     `Updated ${input.fingerprint} -> ${input.state}`,
-    `Lifecycle store: ${storePath}`,
+    `Lifecycle store: ${paths.lifecycle}`,
   ];
 }
 
