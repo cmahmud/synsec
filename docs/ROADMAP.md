@@ -108,16 +108,16 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Completed-report → GitHub check publication orchestration
 - [x] GitHub Actions repository scan → check runner with PR changed-file defaults
 - [x] Report/commit binding before check publication
+- [x] Packaged Actions entrypoint / workflow template
+- [x] Inline SARIF/code-scanning upload
 - [ ] GitHub App
 - [ ] Repository installation flow
-- [ ] Packaged Actions entrypoint / workflow template
 - [ ] Baseline acquisition for pull-request scans
-- [ ] Inline SARIF/code-scanning upload
 - [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
-The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, push contexts default to full repository scans, and publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated.
+The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, push contexts default to full repository scans, and publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated. The packaged Action keeps explicit config/baseline file inputs inside the real checked-out workspace, including symlink resolution, before those files are read.
 
 See [GITHUB.md](./GITHUB.md) for the current integration contract and security boundaries.
 
