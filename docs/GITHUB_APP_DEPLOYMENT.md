@@ -57,3 +57,23 @@ Webhook-secret rotation requires coordination with the GitHub App configuration 
 Durable authorization/replay/queue state and repository workspaces must not be the same tree or ancestors of one another. This prevents checkout cleanup, scanner traversal, or workspace retention policy from reaching durable App authorization state, and prevents durable state from being exposed as repository scan input.
 
 A shared parent is fine. For example, `/var/lib/synsec/state` and `/var/lib/synsec/workspaces` are separate sibling trees. `/var/lib/synsec` and `/var/lib/synsec/workspaces` are not.
+
+## Bounded maintenance and retention
+
+The local runtime exposes `runMaintenance()` for durable state that can be deleted safely without guessing whether a repository scan is active. One maintenance pass prunes expired webhook replay markers according to the replay store's configured retention and removes only terminal `failed` queue records that have remained unchanged past the failed-job retention window.
+
+Failed-job retention defaults to 30 days, accepts only values from 1 hour through 180 days, and deletes at most 100 records per pass unless `retentionMaxDeletes` is explicitly configured. The cap itself is bounded to 1,000. Pending and leased jobs are never deleted by retention, regardless of age. Failed-job age is measured from the durable queue record's last modification time, which is refreshed when the job becomes failed, rather than from the original enqueue timestamp.
+
+```ts
+const runtime = await createLocalGitHubAppRuntime({
+  // ...credentials, config, stateDirectory, workspaceRoot...
+  failedJobRetentionMs: 14 * 24 * 60 * 60 * 1000,
+  retentionMaxDeletes: 100,
+});
+
+const result = await runtime.runMaintenance();
+```
+
+Operators may invoke maintenance from their existing supervised process loop or an external scheduler. SynSec deliberately does not create its own background timer because service scheduling and lifecycle belong to the hosting layer.
+
+Repository workspaces use ownership-based cleanup instead of an age sweep: failed acquisition removes its temporary workspace immediately, and workers clean acquired head/base workspaces after processing. SynSec does not recursively delete old `synsec-github-*` directories merely because their modification time is old, because that heuristic could race a legitimately long-running scan. If a process is killed before cleanup completes, orphan-workspace reconciliation remains a hosting/isolated-runtime concern until SynSec has a durable ownership marker that can prove a workspace is no longer active.
