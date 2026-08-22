@@ -14,7 +14,8 @@
     "./app": "./dist/app.js",
     "./app-intake": "./dist/app-intake.js",
     "./replay-store": "./dist/replay-store.js",
-    "./installation-store": "./dist/installation-store.js"
+    "./installation-store": "./dist/installation-store.js",
+    "./scan-queue": "./dist/scan-queue.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
