@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSynSecGitHubAppSetupContract,
+  buildSynSecGitHubAppSetupRecoveryPlan,
   evaluateSynSecGitHubAppSetup,
 } from "@synsec/github/app-setup";
 
@@ -87,6 +88,45 @@ test("setup evaluator accepts exactly the feature-aware minimum", () => {
   });
 });
 
+test("setup recovery plan separates required fixes from least-privilege review", () => {
+  const plan = buildSynSecGitHubAppSetupRecoveryPlan({
+    permissions: {
+      contents: "write",
+      checks: "read",
+      issues: "write",
+    },
+    events: ["push", "pull_request", "issues"],
+  });
+
+  assert.deepEqual(plan, {
+    version: 1,
+    ready: false,
+    requiredActions: [
+      "Upgrade GitHub App permission checks from read to write.",
+      "Subscribe the GitHub App to the installation event.",
+      "Subscribe the GitHub App to the installation_repositories event.",
+    ],
+    leastPrivilegeReview: [
+      "Review contents:write and remove it if no other operator-approved feature requires it.",
+      "Review issues:write and remove it if no other operator-approved feature requires it.",
+      "Review the issues event subscription and remove it if no other operator-approved feature requires it.",
+    ],
+    interpretation: "operator-guidance-not-runtime-authorization",
+  });
+});
+
+test("setup recovery plan is empty when the feature-aware minimum is satisfied", () => {
+  const setup = buildSynSecGitHubAppSetupContract({ publishSarif: true });
+  const plan = buildSynSecGitHubAppSetupRecoveryPlan({
+    permissions: setup.permissions,
+    events: setup.events,
+    options: { publishSarif: true },
+  });
+  assert.equal(plan.ready, true);
+  assert.deepEqual(plan.requiredActions, []);
+  assert.deepEqual(plan.leastPrivilegeReview, []);
+});
+
 test("setup evaluator validates bounded permission and event names before comparison", () => {
   assert.throws(() => evaluateSynSecGitHubAppSetup({
     permissions: { "contents\nwrite": "write" },
@@ -96,6 +136,14 @@ test("setup evaluator validates bounded permission and event names before compar
     permissions: { contents: "read" },
     events: ["pull request"],
   }), /invalid event name/);
+
+  const tooManyPermissions = Object.fromEntries(
+    Array.from({ length: 101 }, (_, index) => [`permission_${index}`, "read"]),
+  );
+  assert.throws(() => evaluateSynSecGitHubAppSetup({
+    permissions: tooManyPermissions,
+    events: ["push"],
+  }), /permission list exceeds 100 entries/);
 });
 
 test("setup contract contains no installation, repository-target, credential, or commit identity", () => {
