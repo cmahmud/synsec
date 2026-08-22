@@ -44,6 +44,16 @@ test("decorated Python routes resolve to the nearest following function and boun
   assert.equal(entrypoint.interpretation, "structural-route-call-evidence-only");
 });
 
+test("simple named Node router handlers resolve only to one same-file function", () => {
+  const index = emptyIndex([
+    { path: "server.ts", line: 5, method: "GET", route: "/users", frameworkHint: "Node HTTP router", handler: "listUsers" },
+  ]);
+  const [entrypoint] = resolveRouteEntrypoints(index, graph());
+  assert.equal(entrypoint.resolution, "named-function");
+  assert.equal(entrypoint.handler.id, "server.ts:listUsers:30");
+  assert.equal(entrypoint.interpretation, "structural-route-call-evidence-only");
+});
+
 test("generic Node router registrations remain unresolved instead of guessing a handler", () => {
   const index = emptyIndex([
     { path: "server.ts", line: 5, method: "GET", route: "/users", frameworkHint: "Node HTTP router" },
@@ -51,6 +61,21 @@ test("generic Node router registrations remain unresolved instead of guessing a 
   const [entrypoint] = resolveRouteEntrypoints(index, graph());
   assert.equal(entrypoint.resolution, "unresolved");
   assert.equal("handler" in entrypoint, false);
+});
+
+test("ambiguous same-file named handlers remain unresolved", () => {
+  const baseGraph = graph();
+  const ambiguous = {
+    ...baseGraph,
+    nodes: [
+      ...baseGraph.nodes,
+      { id: "server.ts:listUsers:60", path: "server.ts", name: "listUsers", line: 60, endLine: 62, kind: "function" },
+    ],
+  };
+  const [entrypoint] = resolveRouteEntrypoints(emptyIndex([
+    { path: "server.ts", line: 5, method: "GET", route: "/users", frameworkHint: "Node HTTP router", handler: "listUsers" },
+  ]), ambiguous);
+  assert.equal(entrypoint.resolution, "unresolved");
 });
 
 test("routeEntrypointForLocation only maps lines inside a resolved handler body", () => {
