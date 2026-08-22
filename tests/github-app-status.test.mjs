@@ -13,36 +13,17 @@ test("runtime status exposes aggregate installation and queue posture only", asy
   const queue = new FileGitHubScanQueue(join(root, "queue"));
 
   await installationStore.put({
-    installationId: 11,
-    accountLogin: "sensitive-org",
-    accountType: "Organization",
-    repositorySelection: "all",
+    installationId: 11, accountLogin: "sensitive-org", accountType: "Organization", repositorySelection: "all",
   });
   await installationStore.put({
-    installationId: 12,
-    accountLogin: "other-org",
-    accountType: "Organization",
-    repositorySelection: "selected",
-    repositories: ["private/example"],
-    suspendedAt: "2026-08-22T20:00:00.000Z",
+    installationId: 12, accountLogin: "other-org", accountType: "Organization", repositorySelection: "selected",
+    repositories: ["private/example"], suspendedAt: "2026-08-22T20:00:00.000Z",
   });
 
-  await queue.enqueue({
-    deliveryId: "delivery-sensitive",
-    installationId: 11,
-    repository: "private/example",
-    headSha: "a".repeat(40),
-    event: "push",
-  });
-  await queue.enqueue({
-    deliveryId: "delivery-failed",
-    installationId: 11,
-    repository: "private/failed",
-    headSha: "b".repeat(40),
-    event: "push",
-  });
+  await queue.enqueue({ deliveryId: "delivery-sensitive", installationId: 11, repository: "private/example", headSha: "a".repeat(40), event: "push" });
+  await queue.enqueue({ deliveryId: "delivery-failed", installationId: 11, repository: "private/failed", headSha: "b".repeat(40), event: "push" });
   const leased = await queue.claimNext();
-  await queue.fail(leased.jobId, leased.attempts);
+  await queue.fail(leased.jobId, leased.leaseId);
 
   const status = await buildGitHubAppRuntimeStatus({ installationStore, queue });
   assert.deepEqual(status, {
