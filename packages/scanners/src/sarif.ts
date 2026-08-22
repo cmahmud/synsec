@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Finding, FindingCategory, Severity } from "@synsec/core";
-import { asArray, asNumber, asRecord, asString, identifiersFrom, safeJson } from "./utils.js";
+import { asArray, asNumber, asRecord, asString, identifiersFrom, relativeLike, safeJson } from "./utils.js";
 
 const categories = new Set<FindingCategory>([
   "sast",
@@ -45,15 +45,30 @@ function nativeFingerprint(result: Record<string, unknown>): string | undefined 
   return undefined;
 }
 
-function firstLocation(result: Record<string, unknown>): Finding["location"] {
+function sarifRepositoryPath(uri: string | undefined, root: string): string | undefined {
+  if (!uri) return undefined;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(uri)) {
+    if (!uri.toLowerCase().startsWith("file:")) return undefined;
+    try {
+      let pathname = decodeURIComponent(new URL(uri).pathname).replace(/\\/g, "/");
+      if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1);
+      return relativeLike(pathname, root);
+    } catch {
+      return undefined;
+    }
+  }
+  return relativeLike(uri, root);
+}
+
+function firstLocation(result: Record<string, unknown>, root: string): Finding["location"] {
   const location = asRecord(asArray(result.locations)[0]);
   const physical = asRecord(location?.physicalLocation);
   const artifact = asRecord(physical?.artifactLocation);
   const region = asRecord(physical?.region);
-  const path = asString(artifact?.uri);
+  const path = sarifRepositoryPath(asString(artifact?.uri), root);
   if (!path) return undefined;
   return {
-    path: path.replace(/^file:\/\//, ""),
+    path,
     startLine: asNumber(region?.startLine),
     endLine: asNumber(region?.endLine),
     startColumn: asNumber(region?.startColumn),
@@ -73,7 +88,7 @@ function ruleMap(run: Record<string, unknown>): Map<string, Record<string, unkno
   return map;
 }
 
-export function parseSarifJson(raw: string, scannerOverride?: string): Finding[] {
+export function parseSarifJson(raw: string, scannerOverride?: string, root = ""): Finding[] {
   const parsed = asRecord(safeJson(raw));
   if (!parsed || asString(parsed.version) !== "2.1.0") {
     throw new Error("SARIF import requires a SARIF 2.1.0 document.");
@@ -108,7 +123,7 @@ export function parseSarifJson(raw: string, scannerOverride?: string): Finding[]
         severity: severityFrom(properties?.severity ?? result.level ?? ruleProperties?.severity),
         confidence: confidence !== undefined && confidence >= 0 && confidence <= 1 ? confidence : 0.8,
         scanner: { name: scannerName, ruleId },
-        location: firstLocation(result),
+        location: firstLocation(result, root),
         identifiers: identifiersFrom(identifiers),
         remediation: asString(properties?.remediation) ?? text(rule?.help),
         fingerprint: nativeFingerprint(result),
