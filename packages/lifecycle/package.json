@@ -6,7 +6,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./review-comments": "./dist/review-comments.js",
-    "./triage-view": "./dist/triage-view.js"
+    "./triage-view": "./dist/triage-view.js",
+    "./triage-html": "./dist/triage-html.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
