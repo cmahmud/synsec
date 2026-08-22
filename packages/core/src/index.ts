@@ -52,6 +52,27 @@ export interface Finding {
   metadata?: Record<string, unknown>;
 }
 
+export interface SbomPackage {
+  name: string;
+  version?: string;
+  type?: string;
+  purl?: string;
+  licenses?: string[];
+  locations?: string[];
+}
+
+export interface SbomArtifact {
+  type: "sbom";
+  format: "syft-json";
+  producer: string;
+  generatedAt: string;
+  packageCount: number;
+  packages: SbomPackage[];
+  metadata?: Record<string, unknown>;
+}
+
+export type ScanArtifact = SbomArtifact;
+
 export interface ScanTarget {
   path: string;
   repositoryUrl?: string;
@@ -66,6 +87,7 @@ export interface ScanResult {
   target: ScanTarget;
   findings: Finding[];
   diagnostics: string[];
+  artifacts?: ScanArtifact[];
 }
 
 export interface CorrelatedFinding {
