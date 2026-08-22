@@ -6,6 +6,7 @@ import {
   readLifecycleStore,
   reconcileLifecycle,
   setFindingOwner,
+  setFindingReviewAt,
   setFindingState,
   verifyRemediation,
   writeLifecycleStore,
@@ -48,15 +49,23 @@ function triagePaths(reportPath: string, requestedStore?: string): { lifecycle: 
   };
 }
 
+function reviewAtValue(value: string | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  return normalized.toLowerCase() === "clear" ? null : normalized;
+}
+
 /**
  * Triage CLI operations intentionally mutate only bounded human review metadata.
- * `owner` and `comment` are explicit operator actions, not scanner states and not inferred evidence.
+ * `owner`, `comment`, and `review-at` are explicit operator actions, not scanner states or inferred evidence.
  */
 export async function runTriage(input: {
   reportPath: string;
   fingerprint?: string;
   state?: string;
   note?: string;
+  reviewAt?: string;
   storePath?: string;
   listOnly?: boolean;
 }): Promise<string[]> {
@@ -71,9 +80,10 @@ export async function runTriage(input: {
     const lines = records.map((record) => {
       const finding = report.findings.find((item) => item.fingerprint === record.fingerprint);
       const owner = record.owner ? `  owner:${record.owner}` : "";
+      const review = record.reviewAt ? `  review:${record.reviewAt}` : "";
       const commentCount = commentsForFinding(comments, record.fingerprint).length;
       const commentSummary = commentCount > 0 ? `  comments:${commentCount}` : "";
-      return `${record.fingerprint}  ${record.state.padEnd(14)}  ${finding?.primary.title ?? "finding"}${owner}${commentSummary}`;
+      return `${record.fingerprint}  ${record.state.padEnd(14)}  ${finding?.primary.title ?? "finding"}${owner}${review}${commentSummary}`;
     });
     return [
       `Lifecycle store: ${paths.lifecycle}`,
@@ -83,7 +93,7 @@ export async function runTriage(input: {
   }
 
   if (!input.fingerprint || !input.state) {
-    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state|owner|comment> [--note <text>] [--store <file>] or synsec triage <report.json> --list");
+    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state|owner|comment|review-at> [--note <text>] [--review-at <ISO|clear>] [--store <file>] or synsec triage <report.json> --list");
   }
   const exists = report.findings.some((finding) => finding.fingerprint === input.fingerprint);
   if (!exists) throw new Error(`Finding fingerprint is not present in report ${report.reportId}: ${input.fingerprint}`);
@@ -101,6 +111,19 @@ export async function runTriage(input: {
     ];
   }
 
+  if (input.state === "review-at") {
+    if (input.reviewAt === undefined) {
+      throw new Error("Review deadline triage requires --review-at <ISO timestamp|clear>.");
+    }
+    store = setFindingReviewAt(store, input.fingerprint, reviewAtValue(input.reviewAt));
+    await writeLifecycleStore(paths.lifecycle, store);
+    const reviewAt = store.records[input.fingerprint]?.reviewAt;
+    return [
+      reviewAt ? `Review deadline ${input.fingerprint} -> ${reviewAt}` : `Cleared review deadline for ${input.fingerprint}`,
+      `Lifecycle store: ${paths.lifecycle}`,
+    ];
+  }
+
   if (input.state === "comment") {
     if (!input.note?.trim()) throw new Error("Comment triage requires --note <comment>.");
     const updated = addFindingReviewComment(comments, input.fingerprint, input.note);
@@ -113,16 +136,18 @@ export async function runTriage(input: {
   }
 
   if (!isFindingState(input.state)) {
-    throw new Error("Triage state must be one of new, confirmed, false-positive, accepted-risk, fixed, regressed; or use owner/comment actions.");
+    throw new Error("Triage state must be one of new, confirmed, false-positive, accepted-risk, fixed, regressed; or use owner/comment/review-at actions.");
   }
 
   store = setFindingState(store, input.fingerprint, input.state, {
     note: input.note,
     reportId: report.reportId,
+    reviewAt: reviewAtValue(input.reviewAt),
   });
   await writeLifecycleStore(paths.lifecycle, store);
   return [
     `Updated ${input.fingerprint} -> ${input.state}`,
+    ...(store.records[input.fingerprint]?.reviewAt ? [`Review by: ${store.records[input.fingerprint]?.reviewAt}`] : []),
     `Lifecycle store: ${paths.lifecycle}`,
   ];
 }
