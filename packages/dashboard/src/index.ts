@@ -38,7 +38,7 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
   const sbom = buildSbomView(input.report);
   const summary = input.report.summary;
   const historyCard = input.history
-    ? `<a class=card href="history.html"><div class=value>${input.history.points.length}</div><div>historical scans</div><small>score delta ${input.history.scoreDelta >= 0 ? "+" : ""}${input.history.scoreDelta}</small></a>`
+    ? `<a class=card href="history.html" aria-label="${input.history.points.length} historical scans, score delta ${input.history.scoreDelta >= 0 ? "+" : ""}${input.history.scoreDelta}"><div class=value>${input.history.points.length}</div><div>historical scans</div><small>score delta ${input.history.scoreDelta >= 0 ? "+" : ""}${input.history.scoreDelta}</small></a>`
     : "";
   return `<!doctype html>
 <html lang="en">
