@@ -16,6 +16,7 @@
     "./app-permissions": "./dist/app-permissions.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./app-status": "./dist/app-status.js",
+    "./app-server": "./dist/app-server.js",
     "./app-intake": "./dist/app-intake.js",
     "./app-dispatch": "./dist/app-dispatch.js",
     "./app-handler": "./dist/app-handler.js",
