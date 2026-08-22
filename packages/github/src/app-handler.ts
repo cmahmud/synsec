@@ -2,6 +2,7 @@ import {
   intakeGitHubAppWebhook,
   type GitHubWebhookReplayClaimer,
 } from "./app-intake.js";
+import type { GitHubWebhookSecret } from "./app.js";
 import {
   dispatchGitHubAppWebhookScan,
   type GitHubScanJobEnqueuer,
@@ -44,7 +45,7 @@ function safeError(error: unknown): string {
 export async function handleGitHubAppWebhook(input: {
   body: string | Uint8Array;
   signatureHeader?: string;
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   eventName: string;
   deliveryId: string;
   replayStore: GitHubWebhookReplayManager;
