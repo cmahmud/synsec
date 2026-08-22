@@ -53,7 +53,11 @@ test("workflow capability checks reject undeclared access", () => {
   assert.doesNotThrow(() => assertWorkflowCapabilitiesAllowed(workflow, ["read-normalized-findings", "read-lifecycle-state"]));
   assert.throws(
     () => assertWorkflowCapabilitiesAllowed(workflow, ["read-bounded-source-context", "propose-remediation"]),
-    /read-bounded-source-context, propose-remediation/,
+    (error) => {
+      assert.match(error.message, /read-bounded-source-context/);
+      assert.match(error.message, /propose-remediation/);
+      return true;
+    },
   );
 });
 
