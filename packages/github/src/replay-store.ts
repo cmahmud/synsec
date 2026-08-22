@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { link, mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { link, open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_RETENTION_MS = 60 * 60 * 1000;
@@ -128,7 +129,7 @@ export class FileGitHubWebhookReplayStore {
     if (!Number.isFinite(now) || now <= 0) throw new Error("Webhook replay-store clock must be a positive timestamp.");
     const receivedAt = new Date(now).toISOString();
     const path = recordPath(this.directory, deliveryId);
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(this.directory);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const tempPath = join(this.directory, `.claim-${process.pid}-${randomBytes(12).toString("hex")}.tmp`);
@@ -189,7 +190,7 @@ export class FileGitHubWebhookReplayStore {
   async pruneExpired(): Promise<number> {
     const now = this.now();
     if (!Number.isFinite(now) || now <= 0) throw new Error("Webhook replay-store clock must be a positive timestamp.");
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(this.directory);
     const entries = (await readdir(this.directory, { withFileTypes: true }))
       .filter((entry) => entry.isFile() && /^[a-f0-9]{64}\.json$/.test(entry.name))
       .slice(0, MAX_PRUNE_ENTRIES);
