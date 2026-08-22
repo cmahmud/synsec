@@ -1,12 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildReport } from "../packages/report/dist/index.js";
 import {
   emptyLifecycleStore,
+  isLifecycleStore,
   lifecycleSummary,
+  readLifecycleStore,
   reconcileLifecycle,
   setFindingState,
   verifyRemediation,
+  writeLifecycleStore,
 } from "../packages/lifecycle/dist/index.js";
 
 function reportWith(ruleIds, options = {}) {
@@ -48,6 +54,50 @@ test("lifecycle creates new findings and preserves explicit triage state", () =>
   const next = reconcileLifecycle(report, store, "2026-01-03T00:00:00.000Z");
   assert.equal(next.records[fingerprint].state, "confirmed");
   assert.equal(next.records[fingerprint].note, "Reviewed by maintainer");
+});
+
+test("lifecycle store validation rejects malformed record shapes", () => {
+  assert.equal(isLifecycleStore({ schemaVersion: 1, records: {} }), true);
+  assert.equal(isLifecycleStore({
+    schemaVersion: 1,
+    records: {
+      abc: { fingerprint: "different", state: "new", updatedAt: "2026-01-01T00:00:00.000Z" },
+    },
+  }), false);
+  assert.equal(isLifecycleStore({
+    schemaVersion: 1,
+    records: {
+      abc: { fingerprint: "abc", state: "unknown", updatedAt: "2026-01-01T00:00:00.000Z" },
+    },
+  }), false);
+  assert.equal(isLifecycleStore({
+    schemaVersion: 1,
+    records: {
+      abc: { fingerprint: "abc", state: "new", updatedAt: "not-a-date" },
+    },
+  }), false);
+});
+
+test("lifecycle persistence is restrictive, round-trippable, and rejects corrupt stores", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-lifecycle-"));
+  const path = join(root, "state", "lifecycle.json");
+  try {
+    const report = reportWith(["A"]);
+    const store = reconcileLifecycle(report, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
+    await writeLifecycleStore(path, store);
+    assert.deepEqual(await readLifecycleStore(path), store);
+    const serialized = await readFile(path, "utf8");
+    assert.equal(JSON.parse(serialized).schemaVersion, 1);
+    if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
+
+    await writeFile(path, JSON.stringify({
+      schemaVersion: 1,
+      records: { bad: { fingerprint: "mismatch", state: "new", updatedAt: "2026-01-01T00:00:00.000Z" } },
+    }));
+    await assert.rejects(() => readLifecycleStore(path), /Not a supported SynSec lifecycle store/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("lifecycle marks disappeared confirmed findings fixed and returning findings regressed", () => {
