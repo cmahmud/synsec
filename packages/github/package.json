@@ -26,6 +26,7 @@
     "./installation-store": "./dist/installation-store.js",
     "./installation-sync": "./dist/installation-sync.js",
     "./scan-queue": "./dist/scan-queue.js",
+    "./retention": "./dist/retention.js",
     "./repository-acquisition": "./dist/repository-acquisition.js",
     "./exact-tree-diff": "./dist/exact-tree-diff.js"
   },
