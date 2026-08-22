@@ -1,0 +1,19 @@
+{
+  "name": "@synsec/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "synsec": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --enable-source-maps dist/index.js"
+  },
+  "dependencies": {
+    "@synsec/core": "0.1.0",
+    "@synsec/scanner-sdk": "0.1.0",
+    "@synsec/scanners": "0.1.0"
+  }
+}
