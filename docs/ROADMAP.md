@@ -94,10 +94,11 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Deterministic GitHub check-result and inline-annotation generation
 - [x] Baseline-aware PR annotation filtering and severity-threshold conclusions
 - [x] Narrow fixed-host Checks API publication primitive
+- [x] Completed-report → GitHub check publication orchestration
 - [ ] GitHub App
 - [ ] Repository installation flow
 - [ ] Pull-request scanning transport/orchestration
-- [ ] End-to-end commit/check publication from scan orchestration
+- [ ] End-to-end PR event → scan → check publication
 - [ ] Inline SARIF/code-scanning upload
 - [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
