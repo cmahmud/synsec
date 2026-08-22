@@ -46,14 +46,15 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Persistent repository index
 - [x] Import/module graph with bounded dependency/dependent traversal
 - [x] Bounded same-file lexical call-graph primitive for JavaScript/TypeScript and Python
+- [x] Conservative decorator-route to callable-entrypoint mapping
 - [ ] Full function/call graph with reliable cross-module symbol resolution
-- [ ] Routes and externally reachable entry points
+- [ ] Broad routes and externally reachable entry points across supported frameworks
 - [ ] Authentication/authorization context
 - [ ] Database, filesystem, process, and network sinks
 - [ ] Dependency reachability beyond scanner-provided call analysis
 - [ ] Test ownership and coverage context around findings
 
-The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved.
+The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved. Decorator-based route mapping only links a route when one function declaration is structurally close enough to be unambiguous; generic router registrations remain unresolved rather than guessing a handler.
 
 ## Phase 3 — Contextual security review
 
