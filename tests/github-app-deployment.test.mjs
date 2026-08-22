@@ -56,6 +56,19 @@ test("hosted deployment readiness rejects weak credentials without echoing them"
   assert.ok(result.issues.every((issue) => !issue.message.includes(webhookSecret)));
 });
 
+test("hosted deployment readiness rejects mismatched PEM framing and wildcard listener values", () => {
+  const mismatchedPem = validateGitHubAppDeployment({
+    ...validConfig,
+    privateKey: "-----BEGIN RSA PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----",
+  });
+  assert.equal(mismatchedPem.ready, false);
+  assert.ok(mismatchedPem.issues.some((issue) => issue.code === "invalid-private-key"));
+
+  const wildcardHost = validateGitHubAppDeployment({ ...validConfig, listenHost: "*" });
+  assert.equal(wildcardHost.ready, false);
+  assert.ok(wildcardHost.issues.some((issue) => issue.code === "invalid-listen-host"));
+});
+
 test("hosted deployment readiness rejects relative and overlapping runtime directories", () => {
   const relative = validateGitHubAppDeployment({
     ...validConfig,
