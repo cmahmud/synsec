@@ -14,9 +14,13 @@ The planner interpretation is deliberately `coverage-heuristic-not-proof-of-unaf
 
 Adapters may use the planner's final changed-file list to reduce scanner work only when the underlying scanner exposes a file-scoped mode that preserves repository-local target boundaries.
 
-Opengrep and Betterleaks already narrow execution directly to changed files. Checkov now uses its supported repeated `-f/--file` mode for a bounded changed-file scope, runs from the authorized repository working directory, deduplicates paths, and independently rejects absolute or traversal-shaped file names. If no changed-file scope is supplied, Checkov retains its normal directory scan.
+Opengrep and Betterleaks narrow execution directly to changed files. Checkov uses its supported repeated `-f/--file` mode for a bounded changed-file scope, runs from the authorized repository working directory, deduplicates paths, and independently rejects absolute or traversal-shaped file names. If no changed-file scope is supplied, Checkov retains its normal directory scan.
 
-Checkov's adapter-level changed-file list is capped at 500 entries even though the engine normally applies a tighter planner bound. The adapter check is defense in depth for direct SDK use. It does not silently truncate an oversized request; it fails instead.
+Gitleaks now uses one staged temporary directory for targeted scans rather than passing an arbitrary list of positional targets to `gitleaks dir`. The adapter independently validates and deduplicates at most 500 repository-relative paths, copies only changed regular files while preserving their relative directory layout, and copies a regular repository-local `.gitleaks.toml` when present so configuration semantics remain available to the staged scan. Findings are remapped from the temporary root back to repository-relative paths before normalization.
+
+Gitleaks staging deliberately fails closed. If a requested path is missing, a symlink, non-regular, escapes the repository, or the repository-local Gitleaks configuration is ambiguous, the adapter discards the targeted optimization and runs its normal full repository scan instead. It never follows a changed-file symlink into an external path and never silently drops an unsafe changed path.
+
+Checkov and Gitleaks each impose an adapter-level 500-file limit even though the engine normally applies a tighter planner bound. These adapter checks are defense in depth for direct SDK use. Oversized requests are never silently truncated.
 
 Other scanner adapters may still perform their normal repository analysis before SynSec filters file-located findings. A scanner is not described as natively incremental until its adapter explicitly narrows the underlying scanner command safely.
 
