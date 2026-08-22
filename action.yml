@@ -13,6 +13,10 @@ inputs:
     description: Optional local SynSec baseline report, validated against the pull-request base commit.
     required: false
     default: ""
+  auto-baseline:
+    description: For pull requests without baseline-path, scan the exact local base commit in a detached worktree. Requires that commit to be present in the checkout (for example actions/checkout with fetch-depth 0).
+    required: false
+    default: "true"
   changed-only:
     description: auto (PR changed files, push full repo), true, or false.
     required: false
@@ -34,6 +38,9 @@ outputs:
   sarif-upload-id:
     description: GitHub SARIF upload id when publish-sarif is enabled.
     value: ${{ steps.scan.outputs.sarif-upload-id }}
+  baseline-source:
+    description: Baseline provenance used for the scan (base-scan, file, provided, or none).
+    value: ${{ steps.scan.outputs.baseline-source }}
 runs:
   using: composite
   steps:
@@ -55,6 +62,7 @@ runs:
         SYNSEC_GITHUB_TOKEN: ${{ inputs.github-token }}
         SYNSEC_CONFIG_PATH: ${{ inputs.config-path }}
         SYNSEC_BASELINE_PATH: ${{ inputs.baseline-path }}
+        SYNSEC_AUTO_BASELINE: ${{ inputs.auto-baseline }}
         SYNSEC_CHANGED_ONLY: ${{ inputs.changed-only }}
         SYNSEC_PUBLISH_SARIF: ${{ inputs.publish-sarif }}
       run: node "$GITHUB_ACTION_PATH/apps/github-action/dist/index.js"
