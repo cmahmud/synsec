@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { SynSecConfig } from "@synsec/config";
 import { createGitHubAppWebhookHttpHandler } from "./app-http.js";
+import { buildGitHubAppRuntimeStatus, type GitHubAppRuntimeStatus } from "./app-status.js";
 import { createGitHubAppInstallationTokenProvider } from "./app-token-provider.js";
 import { runConfiguredGitHubAppWorkerOnce, type ConfiguredGitHubAppWorkerOptions } from "./app-worker-runner.js";
 import { FileGitHubInstallationStore } from "./installation-store.js";
@@ -44,6 +45,7 @@ export interface LocalGitHubAppRuntime {
   webhookHandler: ReturnType<typeof createGitHubAppWebhookHttpHandler>;
   runWorkerOnce(): ReturnType<typeof runConfiguredGitHubAppWorkerOnce>;
   runMaintenance(): Promise<LocalGitHubAppMaintenanceResult>;
+  getStatus(): Promise<GitHubAppRuntimeStatus>;
 }
 
 function requiredDirectory(value: string, label: string): string {
@@ -146,5 +148,6 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
         ...(options.now ? { now: options.now } : {}),
       }),
     }),
+    getStatus: () => buildGitHubAppRuntimeStatus({ installationStore, queue }),
   };
 }
