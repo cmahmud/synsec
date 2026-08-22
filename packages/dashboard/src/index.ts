@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 import type { FindingTriageView } from "@synsec/lifecycle/triage-view";
 import { writeFindingTriageHtml } from "@synsec/lifecycle/triage-html";
 import type { SynSecReport } from "@synsec/report";
+import type { ReportHistory } from "@synsec/report/history";
+import { writeHistoryHtml } from "@synsec/report/history-html";
 import { buildSbomView, writeSbomHtml } from "@synsec/report/sbom-html";
 import type { RepositoryPostureSummary } from "@synsec/repository/posture";
 import { writeRepositoryPostureHtml } from "@synsec/repository/posture-html";
@@ -11,6 +13,7 @@ export interface ProjectDashboardInput {
   report: SynSecReport;
   triage: FindingTriageView;
   posture: RepositoryPostureSummary;
+  history?: ReportHistory;
 }
 
 export interface ProjectDashboardPaths {
@@ -19,6 +22,7 @@ export interface ProjectDashboardPaths {
   triage: string;
   dependencies: string;
   posture: string;
+  history?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -33,6 +37,9 @@ function escapeHtml(value: string): string {
 export function renderProjectDashboardIndex(input: ProjectDashboardInput): string {
   const sbom = buildSbomView(input.report);
   const summary = input.report.summary;
+  const historyCard = input.history
+    ? `<a class=card href="history.html"><div class=value>${input.history.points.length}</div><div>historical scans</div><small>score delta ${input.history.scoreDelta >= 0 ? "+" : ""}${input.history.scoreDelta}</small></a>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -51,6 +58,7 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
   <a class=card href="triage.html"><div class=value>${input.triage.summary.current}</div><div>current lifecycle findings</div><small>${input.triage.summary.assigned} assigned · ${input.triage.summary.commented} commented</small></a>
   <a class=card href="dependencies.html"><div class=value>${sbom.uniquePackageCount}</div><div>unique SBOM packages</div><small>${sbom.licenses.length} observed licenses</small></a>
   <a class=card href="posture.html"><div class=value>${input.posture.routeCount}</div><div>bounded route signals</div><small>${input.posture.routesWithSinkSignals} with nearby sink signals</small></a>
+  ${historyCard}
   <div class=card><div class=value>${input.report.securityScore}</div><div>security score</div><small>${input.report.findingCount} correlated findings</small></div>
 </div>
 <div class=severity>
@@ -66,7 +74,8 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
  *
  * The bundle has no server, authentication, remote assets, JavaScript, source excerpts, or scanner
  * credentials. It is a developer-facing local composition primitive, not the future multi-user web
- * application. All generated files are written with restrictive permissions where supported.
+ * application. Optional history is accepted only through the existing trend-safe history model.
+ * All generated files are written with restrictive permissions where supported.
  */
 export async function writeProjectDashboard(
   directory: string,
@@ -80,15 +89,20 @@ export async function writeProjectDashboard(
     triage: join(root, "triage.html"),
     dependencies: join(root, "dependencies.html"),
     posture: join(root, "posture.html"),
+    ...(input.history ? { history: join(root, "history.html") } : {}),
   };
 
-  await Promise.all([
+  const writes: Promise<unknown>[] = [
     writeFile(paths.index, renderProjectDashboardIndex(input), { encoding: "utf8", mode: 0o600 })
       .then(() => chmod(paths.index, 0o600).catch(() => undefined)),
     writeFindingTriageHtml(paths.triage, input.triage),
     writeSbomHtml(paths.dependencies, buildSbomView(input.report)),
     writeRepositoryPostureHtml(paths.posture, input.posture),
-  ]);
+  ];
+  if (input.history && paths.history) {
+    writes.push(writeHistoryHtml(paths.history, input.history, { title: "SynSec project security history" }));
+  }
+  await Promise.all(writes);
 
   return paths;
 }
