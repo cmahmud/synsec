@@ -141,6 +141,24 @@ test("GitHub remediation writer rejects staged scope expansion before commit or 
   assert.equal(http.calls.length, 0);
 });
 
+test("GitHub remediation writer revalidates approval hashes immediately before any Git operation", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "synsec-remediation-tamper-"));
+  const approved = execution();
+  approved.proposal.changes[0].patch = approved.proposal.changes[0].patch.replace("+new", "+tampered");
+  const git = gitHarness();
+  const http = fetchHarness();
+
+  await assert.rejects(() => createApprovedGitHubRemediationPullRequest({
+    repository: "example/repo",
+    baseBranch: "main",
+    workspace,
+    installationToken: token,
+    execution: approved,
+  }, { gitRunner: git.runner, fetch: http.fetchImpl }), /patch contents no longer match/);
+  assert.equal(git.calls.length, 0);
+  assert.equal(http.calls.length, 0);
+});
+
 test("GitHub remediation writer treats the deterministic branch as idempotent only when commit contents match", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "synsec-remediation-idempotent-"));
   const same = gitHarness({ existingBranchSha: commit });
