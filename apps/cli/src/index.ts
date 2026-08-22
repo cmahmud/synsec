@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { reviewFinding, type AiFindingReview } from "@synsec/ai";
 import {
@@ -13,6 +13,7 @@ import {
 import type { CorrelatedFinding } from "@synsec/core";
 import { runScanEngine, scannerStatuses } from "@synsec/engine";
 import {
+  buildReport,
   readReport,
   renderHtml,
   toSarif,
@@ -22,6 +23,7 @@ import {
   type SynSecReport,
 } from "@synsec/report";
 import { getFindingContext } from "@synsec/repository";
+import { parseSarifJson } from "@synsec/scanners";
 import {
   assertWorkflowSourceContextAllowed,
   builtInWorkflows,
@@ -89,6 +91,7 @@ Usage:
   synsec doctor [path] [--config <file>]
   synsec scan <path> [options]
   synsec review <report.json> [options]
+  synsec import-sarif <input.sarif> [options]
   synsec workflows
   synsec render <report.json> [--html <file>] [--sarif <file>]
   synsec baseline <report.json> [destination]
@@ -118,6 +121,12 @@ Review options:
   --ai-limit <n>           Maximum findings to review.
   --ai-base-url <url>      OpenAI-compatible API base URL.
   --ai-model <model>       Model ID.
+
+SARIF import options:
+  --root <path>            Repository root represented by the imported findings (default: .).
+  --output <file>          SynSec JSON report path (default: .synsec/imported-report.json).
+  --html <file>            HTML report path (default: next to the JSON report).
+  --scanner <name>         Override the source scanner name for all imported findings.
 
 AI environment variables:
   SYNSEC_AI_BASE_URL
@@ -327,6 +336,10 @@ async function scan(): Promise<void> {
       `${outcome.report.summary.critical} critical, ${outcome.report.summary.high} high, ` +
       `${outcome.report.summary.medium} medium, ${outcome.report.summary.low} low\n`,
     );
+    const sbomPackages = (outcome.report.artifacts ?? [])
+      .filter((artifact) => artifact.type === "sbom")
+      .reduce((total, artifact) => total + artifact.packageCount, 0);
+    if (sbomPackages > 0) console.log(`SBOM: ${sbomPackages} package(s) inventoried\n`);
 
     if (outcome.report.baseline) {
       console.log(
@@ -376,6 +389,41 @@ async function review(): Promise<void> {
   console.log(`Wrote ${Object.keys(reviews).length} AI review(s) to ${outputPath}`);
 }
 
+async function importSarif(): Promise<void> {
+  const inputArg = args[1];
+  if (!inputArg || inputArg.startsWith("--")) {
+    throw new Error("Usage: synsec import-sarif <input.sarif> [--root <path>] [--output <file>] [--scanner <name>]");
+  }
+  const inputPath = resolve(inputArg);
+  const root = await ensureDirectory(option("--root") ?? ".");
+  const raw = await readFile(inputPath, "utf8");
+  const scannerOverride = option("--scanner");
+  const findings = parseSarifJson(raw, scannerOverride);
+  const now = new Date().toISOString();
+  const report = buildReport({
+    target: { path: root },
+    scans: [{
+      scanner: scannerOverride ?? "sarif-import",
+      startedAt: now,
+      completedAt: now,
+      target: { path: root },
+      findings,
+      diagnostics: [],
+    }],
+    toolVersion: VERSION,
+  });
+
+  const outputPath = resolve(option("--output") ?? resolve(root, ".synsec/imported-report.json"));
+  const htmlPath = resolve(option("--html") ?? outputPath.replace(/\.json$/i, ".html"));
+  await Promise.all([
+    writeReport(outputPath, report),
+    writeHtml(htmlPath, report),
+  ]);
+  console.log(`Imported ${findings.length} SARIF finding(s).`);
+  console.log(`JSON: ${outputPath}`);
+  console.log(`HTML: ${htmlPath}`);
+}
+
 async function render(): Promise<void> {
   const reportArg = args[1];
   if (!reportArg || reportArg.startsWith("--")) throw new Error("Usage: synsec render <report.json> [--html <file>] [--sarif <file>]");
@@ -414,6 +462,9 @@ async function main(): Promise<void> {
       break;
     case "review":
       await review();
+      break;
+    case "import-sarif":
+      await importSarif();
       break;
     case "workflows":
       listWorkflows();
