@@ -93,8 +93,6 @@ export async function discoverChangedFiles(rootPath: string, requestedBase?: str
     { timeoutMs: 10_000 },
   );
 
-  // GitHub Actions checkouts can occasionally have the base branch available
-  // without the origin/ prefix. Try that deterministic fallback before failing.
   if (output.exitCode !== 0 && !requestedBase && githubBase) {
     output = await runProcess(
       "git",
@@ -253,6 +251,9 @@ export async function runScanEngine(input: {
     scans,
     toolVersion: input.toolVersion ?? "0.2.0",
     repository: inventory.metadata,
+    scope: changedScope
+      ? { mode: "changed-files", baseRef: changedScope.base, changedFiles: changedScope.files }
+      : { mode: "repository" },
   });
   if (input.baseline) report = applyBaseline(report, input.baseline);
 
