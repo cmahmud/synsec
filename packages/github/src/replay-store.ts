@@ -173,6 +173,7 @@ export class FileGitHubWebhookReplayStore {
     const receivedAt = validatedReceivedAt(receivedAtValue);
     const now = this.now();
     if (!Number.isFinite(now) || now <= 0) throw new Error("Webhook replay-store clock must be a positive timestamp.");
+    await ensurePrivateDirectory(this.directory);
     const path = recordPath(this.directory, deliveryId);
     let existing: ReplayRecord;
     try {
