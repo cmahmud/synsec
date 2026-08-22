@@ -37,8 +37,9 @@ function decoratedHandler(
     })
     .sort((a, b) => a.line - b.line || a.name.localeCompare(b.name));
 
-  if (candidates.length === 0) return undefined;
-  const nearestDistance = candidates[0].line - route.line;
+  const first = candidates[0];
+  if (!first) return undefined;
+  const nearestDistance = first.line - route.line;
   const nearest = candidates.filter((candidate) => candidate.line - route.line === nearestDistance);
   return nearest.length === 1 ? nearest[0] : undefined;
 }
