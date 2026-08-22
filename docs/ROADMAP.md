@@ -21,7 +21,7 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] OSV-Scanner adapter
 - [x] Trivy adapter
 - [x] Grype adapter
-- [x] Checkov adapter
+- [x] Checkov IaC adapter
 - [x] Syft SBOM adapter and normalized scanner-artifact model
 - [x] OpenSSF Scorecard adapter
 - [x] Bounded parallel scanner orchestration
@@ -37,7 +37,10 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Secret redaction in normalized output
 - [x] Changed-file finding scope with persisted base/file metadata
 - [x] Direct changed-file execution for Opengrep and Betterleaks
+- [x] Conservative incremental scan planner with bounded local-dependent expansion and full-scan fallback
 - [ ] Native incremental execution for every scanner that can safely support it
+
+The incremental planner always includes direct changes and may add structurally known local dependents to improve review coverage. It fails over to a full repository scan when narrowing is ambiguous or high impact, including lockfiles, CI/security/IaC/configuration changes, unindexed analyzable source, unsafe paths, excessive direct changes, or dependent expansion that would exceed its configured bound. This is a coverage heuristic only; it never claims that unselected files are unaffected or safe. Engine/hosted-worker execution still needs to consume this plan before the optimization becomes end-to-end.
 
 ## Phase 2 — Repository intelligence
 
@@ -51,18 +54,19 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Bounded route-level lexical process/filesystem/database/network sink context
 - [x] Bounded repository posture summary from route/auth/sink signals
 - [x] Bounded likely test-ownership context from resolved imports and filename conventions
+- [x] Bounded LCOV ingestion and finding-line test-coverage context primitive
 - [ ] Full function/call graph with reliable cross-module symbol resolution
 - [ ] Broad routes and externally reachable entry points across supported frameworks
 - [ ] Framework-aware authentication/authorization enforcement semantics
 - [ ] Data-flow-aware sink reachability beyond lexical proximity
 - [ ] Dependency reachability beyond scanner-provided call analysis
-- [ ] Runtime/test-run coverage context around findings
+- [ ] Persisted/report-integrated runtime/test-run coverage context around findings
 
 The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved. Decorator-based route mapping only links a route when one function declaration is structurally close enough to be unambiguous; generic router registrations remain unresolved rather than guessing a handler.
 
 Route authentication and sink context are similarly conservative. They record bounded same-file security signals near indexed routes and label the results `lexical-auth-signals-only` or `lexical-sink-signals-only`. Absence of nearby auth is reported only as `no-auth-signal-observed`, and nearby sinks are not treated as proven data-flow or call reachability. The repository posture summary aggregates these bounded signals for prioritization while explicitly remaining `bounded-lexical-posture-only`.
 
-Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. It does not claim that a test executes a finding path or that the source is covered at runtime; coverage ingestion remains separate future work.
+Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. The LCOV primitive can now ingest caller-supplied test coverage and classify a concrete finding line as executed, not executed, or lacking data. SynSec does not run target tests to generate that coverage, and the result is explicitly labeled `observed-test-coverage-not-runtime-reachability`; normal report persistence/UI integration remains future work.
 
 ## Phase 3 — Contextual security review
 
@@ -151,6 +155,7 @@ See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and se
 - [x] Self-contained trend-safe security-history HTML dashboard renderer
 - [x] History-store → restrictive local dashboard file generation
 - [x] Bounded lifecycle finding-ownership metadata foundation
+- [x] Bounded append-only local finding review-comment store
 - [ ] Project/repository dashboard application
 - [ ] Multi-project/server persistence layer
 - [ ] Interactive security-score history UI
@@ -159,9 +164,9 @@ See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and se
 - [ ] Dependency and SBOM views
 - [ ] Interactive repository posture view
 - [ ] Team triage workflow
-- [ ] Finding comments and richer collaboration history
+- [ ] Multi-user comments and richer collaboration history
 
-The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. The self-contained history dashboard renders only this trend-safe model, escapes titles/content, and can be written with restrictive local permissions. Lifecycle ownership is separately bounded triage metadata preserved across state transitions/rescans; it is not scanner evidence and does not make the current local store a multi-user collaboration database.
+The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. The self-contained history dashboard renders only this trend-safe model, escapes titles/content, and can be written with restrictive local permissions. Lifecycle ownership is separately bounded triage metadata preserved across state transitions/rescans. Review comments are stored in a separate restrictive append-only local store with bounded author/body/fingerprint fields and strict schema validation; SynSec does not automatically copy scanner diagnostics, source excerpts, tokens, or repository credentials into it. Neither primitive is scanner evidence or a multi-user collaboration database.
 
 ## Phase 7 — Isolated scan workers
 
