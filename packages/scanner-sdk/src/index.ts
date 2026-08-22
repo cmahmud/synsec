@@ -233,7 +233,7 @@ export async function runProcess(
         resolve({
           exitCode: code ?? -1,
           stdout,
-          stderr,
+          stderr: sanitizeOperationalText(stderr),
         });
       });
     });
