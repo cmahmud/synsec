@@ -44,9 +44,25 @@ test("remediation write permissions are explicit opt-in and contents write subsu
   assert.match(setup.notes.join("\n"), /explicitly approved remediation PR creation/);
 });
 
-test("setup contract contains no repository, installation, token, or target identity", () => {
-  const serialized = JSON.stringify(buildSynSecGitHubAppSetupContract({ enableRemediationPullRequests: true }));
-  for (const forbidden of ["installationId", "repository", "token", "clone_url", "targetUrl"]) {
+test("setup contract contains no installation, repository-target, credential, or commit identity", () => {
+  const setup = buildSynSecGitHubAppSetupContract({ enableRemediationPullRequests: true });
+  const serialized = JSON.stringify(setup);
+  for (const forbidden of [
+    "installationId",
+    "accountLogin",
+    "example/private-repository",
+    "installation-token-value",
+    "a".repeat(40),
+    "clone_url",
+    "targetUrl",
+  ]) {
     assert.equal(serialized.includes(forbidden), false);
   }
+  assert.deepEqual(Object.keys(setup).sort(), [
+    "events",
+    "notes",
+    "permissions",
+    "remediationWriteEnabled",
+    "version",
+  ]);
 });
