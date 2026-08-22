@@ -7,6 +7,10 @@ import {
   type GitHubReportPublicationOptions,
   type GitHubReportPublicationResult,
 } from "./orchestrator.js";
+import {
+  publishGitHubSarif,
+  type GitHubSarifPublication,
+} from "./sarif-publisher.js";
 
 export interface GitHubActionsRepositoryScanOptions extends GitHubReportPublicationOptions {
   config: SynSecConfig;
@@ -15,6 +19,7 @@ export interface GitHubActionsRepositoryScanOptions extends GitHubReportPublicat
   toolVersion?: string;
   changedOnly?: boolean;
   changedBase?: string;
+  publishSarif?: boolean;
   scan?: typeof runScanEngine;
 }
 
@@ -22,12 +27,14 @@ export interface GitHubActionsRepositoryScanResult {
   context: GitHubPullRequestContext;
   outcome: ScanEngineOutcome;
   publication: GitHubReportPublicationResult;
+  sarifPublication?: GitHubSarifPublication;
 }
 
 /**
  * Run the existing repository scanner engine for the current GitHub Actions checkout and publish
  * the completed report as a check run. Pull-request contexts default to changed-file scanning;
- * push/other contexts default to a full repository scan. No live-target discovery is performed.
+ * push/other contexts default to a full repository scan. Optional code-scanning publication uses
+ * the same completed report and fixed GitHub host. No live-target discovery is performed.
  */
 export async function runGitHubActionsRepositoryScan(
   token: string,
@@ -66,5 +73,18 @@ export async function runGitHubActionsRepositoryScan(
     fetch: options.fetch,
   });
 
-  return { context, outcome, publication };
+  const sarifPublication = options.publishSarif
+    ? await publishGitHubSarif(outcome.report, context, token, {
+      apiVersion: options.apiVersion,
+      userAgent: options.userAgent,
+      fetch: options.fetch,
+    })
+    : undefined;
+
+  return {
+    context,
+    outcome,
+    publication,
+    ...(sarifPublication ? { sarifPublication } : {}),
+  };
 }
