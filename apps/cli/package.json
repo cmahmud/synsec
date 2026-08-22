@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "synsec": "dist/index.js"
+    "synsec": "dist/index.js",
+    "synsec-github-app": "dist/github-app-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -16,6 +17,7 @@
     "@synsec/config": "0.2.0",
     "@synsec/core": "0.1.0",
     "@synsec/engine": "0.2.0",
+    "@synsec/github": "0.2.0",
     "@synsec/lifecycle": "0.2.0",
     "@synsec/report": "0.2.0",
     "@synsec/repository": "0.2.0",
