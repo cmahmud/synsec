@@ -80,14 +80,14 @@ test("deployment assertion reports only bounded diagnostic codes", () => {
     () =>
       assertGitHubAppDeploymentReady({
         ...validConfig,
-        webhookSecret: "secret-value-that-must-not-appear",
+        webhookSecret: "must-not-appear",
         stateDirectory: "/srv/synsec",
         workspaceDirectory: "/srv/synsec/repos",
       }),
     (error) => {
       assert.match(error.message, /weak-webhook-secret/);
       assert.match(error.message, /overlapping-runtime-directories/);
-      assert.doesNotMatch(error.message, /secret-value-that-must-not-appear/);
+      assert.doesNotMatch(error.message, /must-not-appear/);
       return true;
     },
   );
