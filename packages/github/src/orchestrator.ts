@@ -25,6 +25,17 @@ export interface GitHubReportPublicationResult {
   publication: GitHubCheckPublication;
 }
 
+function sameCommit(reportSha: string, contextSha: string): boolean {
+  const report = reportSha.trim().toLowerCase();
+  const context = contextSha.trim().toLowerCase();
+  if (!report || !context) return false;
+  if (report === context) return true;
+
+  const hexSha = /^[0-9a-f]+$/;
+  if (!hexSha.test(report) || !hexSha.test(context) || Math.min(report.length, context.length) < 7) return false;
+  return report.startsWith(context) || context.startsWith(report);
+}
+
 /**
  * Convert a completed SynSec report into a GitHub check and publish it to the commit represented
  * by the bounded local Actions context. This function never performs scanning, target discovery,
@@ -38,6 +49,11 @@ export async function publishSynSecReportToGitHub(
   const context = await loadGitHubContext(options.env ?? process.env);
   if (!context) {
     throw new Error("Unable to resolve a valid GitHub repository and commit context for check publication.");
+  }
+
+  const reportCommitSha = report.target.commitSha?.trim();
+  if (reportCommitSha && !sameCommit(reportCommitSha, context.sha)) {
+    throw new Error("SynSec report commit does not match the GitHub commit selected for publication.");
   }
 
   const check = buildGitHubCheck(report, context, {
