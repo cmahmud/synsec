@@ -64,7 +64,7 @@ class MemoryQueue {
 }
 
 test("worker returns idle when no queued job is available", async () => {
-  const queue = new MemoryQueue(undefined);
+  const queue = new MemoryQueue(null);
   const result = await runNextGitHubAppScanJob({
     queue,
     installationStore: { isRepositoryAllowed: async () => true },
