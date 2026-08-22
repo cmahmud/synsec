@@ -47,14 +47,17 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Import/module graph with bounded dependency/dependent traversal
 - [x] Bounded same-file lexical call-graph primitive for JavaScript/TypeScript and Python
 - [x] Conservative decorator-route to callable-entrypoint mapping
+- [x] Bounded route-level lexical authentication/authorization context
 - [ ] Full function/call graph with reliable cross-module symbol resolution
 - [ ] Broad routes and externally reachable entry points across supported frameworks
-- [ ] Authentication/authorization context
-- [ ] Database, filesystem, process, and network sinks
+- [ ] Framework-aware authentication/authorization enforcement semantics
+- [ ] Database, filesystem, process, and network sink context beyond raw lexical signals
 - [ ] Dependency reachability beyond scanner-provided call analysis
 - [ ] Test ownership and coverage context around findings
 
 The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved. Decorator-based route mapping only links a route when one function declaration is structurally close enough to be unambiguous; generic router registrations remain unresolved rather than guessing a handler.
+
+Route authentication context is similarly conservative. It records bounded same-file authentication, authorization, token, and session signals near indexed routes, prioritizes explicit authorization evidence, and labels the result `lexical-auth-signals-only`. Absence of a nearby signal is reported only as `no-auth-signal-observed`; it is not treated as proof that a route is public or unprotected.
 
 ## Phase 3 — Contextual security review
 
