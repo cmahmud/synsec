@@ -45,6 +45,18 @@ export interface RepositoryIndex {
   sinks: SinkSignal[];
 }
 
+export interface DependencyUsage {
+  packageName: string;
+  status: "observed-import" | "unknown";
+  evidence: ModuleEdge[];
+}
+
+export interface RouteSecurityContext {
+  route: RouteSignal;
+  nearbyAuthSignals: AuthSignal[];
+  nearbySinks: SinkSignal[];
+}
+
 const analyzableExtensions = new Set([
   ".js", ".mjs", ".cjs", ".jsx",
   ".ts", ".mts", ".cts", ".tsx",
@@ -202,6 +214,52 @@ export async function buildRepositoryIndex(rootPath: string, files: readonly Ind
     routes,
     authSignals,
     sinks,
+  };
+}
+
+export function packageNameFromPurl(purl: string | undefined): string | undefined {
+  if (!purl?.startsWith("pkg:")) return undefined;
+  const slash = purl.indexOf("/");
+  if (slash < 0) return undefined;
+  let value = purl.slice(slash + 1);
+  const query = value.search(/[?#]/);
+  if (query >= 0) value = value.slice(0, query);
+  const version = value.lastIndexOf("@");
+  if (version > 0) value = value.slice(0, version);
+  try {
+    value = decodeURIComponent(value);
+  } catch {
+    // Keep the raw package path when malformed percent encoding is present.
+  }
+  return value || undefined;
+}
+
+function moduleMatchesPackage(edge: ModuleEdge, packageName: string): boolean {
+  const specifier = edge.specifier.toLowerCase();
+  const normalized = packageName.toLowerCase();
+  const pythonNormalized = normalized.replaceAll("-", "_");
+  if (specifier === normalized || specifier.startsWith(`${normalized}/`)) return true;
+  if (specifier === pythonNormalized || specifier.startsWith(`${pythonNormalized}.`)) return true;
+  return false;
+}
+
+export function findDependencyUsage(index: RepositoryIndex, packageName: string, maxEvidence = 10): DependencyUsage {
+  const evidence = index.moduleEdges
+    .filter((edge) => moduleMatchesPackage(edge, packageName))
+    .slice(0, Math.max(1, maxEvidence));
+  return {
+    packageName,
+    status: evidence.length > 0 ? "observed-import" : "unknown",
+    evidence,
+  };
+}
+
+export function routeSecurityContext(index: RepositoryIndex, route: RouteSignal, radius = 30): RouteSecurityContext {
+  const nearby = (line: number): boolean => Math.abs(line - route.line) <= Math.max(0, radius);
+  return {
+    route,
+    nearbyAuthSignals: index.authSignals.filter((signal) => signal.path === route.path && nearby(signal.line)),
+    nearbySinks: index.sinks.filter((signal) => signal.path === route.path && nearby(signal.line)),
   };
 }
 
