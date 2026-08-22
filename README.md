@@ -2,7 +2,7 @@
 
 SynSec is a repository-first security scanner that combines mature open-source security engines into one normalized, correlated report.
 
-Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Grype, and Checkov, SynSec runs them through a common adapter layer, merges overlapping results, adds repository context, tracks changes against baselines, exports developer-friendly reports, and can optionally send selected findings through an OpenAI-compatible model router for a separate review pass.
+Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Grype, Checkov, and OpenSSF Scorecard, SynSec runs them through a common adapter layer, merges overlapping results, adds repository context, tracks changes against baselines, exports developer-friendly reports, and can optionally send selected findings through an OpenAI-compatible model router for a separate review pass.
 
 > **Current release line:** v0.2 development MVP. The repository is usable for local testing, but scanner adapters and report schemas may still change before v1.0.
 
@@ -10,12 +10,14 @@ Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Gr
 
 - Multi-scanner repository scans with bounded concurrency.
 - Scanner failure isolation: one broken engine does not destroy the whole scan.
+- Protection against false "clean" reports when no scanner successfully ran.
 - Opengrep SAST integration.
 - Betterleaks secret scanning, with Gitleaks retained as an optional fallback.
 - OSV-Scanner dependency analysis.
 - Trivy vulnerability, secret, and misconfiguration analysis.
 - Grype dependency/package analysis.
 - Checkov IaC analysis.
+- OpenSSF Scorecard repository-posture analysis.
 - Scanner-independent finding schema.
 - Deterministic cross-scanner correlation and deduplication.
 - Repository language/framework inventory.
@@ -49,7 +51,9 @@ npm run synsec -- doctor .
 npm run synsec -- scan /path/to/repository
 ```
 
-SynSec automatically skips selected scanner engines that are not installed and reports them at the end of the run. Run `doctor` before a scan when setting up a new machine.
+See [`docs/INSTALL.md`](docs/INSTALL.md) for scanner installation notes.
+
+SynSec skips selected engines that are not installed and reports the missing coverage. If **none** of the selected engines can run, the scan fails instead of returning a misleading 100/100 score.
 
 A normal scan writes:
 
@@ -105,7 +109,8 @@ That creates `synsec.config.json`.
     "osv-scanner",
     "trivy",
     "grype",
-    "checkov"
+    "checkov",
+    "scorecard"
   ],
   "parallelism": 3,
   "timeoutMs": 900000,
@@ -136,10 +141,13 @@ That creates `synsec.config.json`.
 | Trivy | `trivy` | dependencies, secrets, IaC/misconfiguration | yes |
 | Grype | `grype` | package/dependency vulnerabilities | yes |
 | Checkov | `checkov` | infrastructure-as-code | yes |
+| OpenSSF Scorecard | `scorecard` | repository security posture | yes |
 
 Betterleaks is preferred for new installs because it is the actively developed successor maintained by the Gitleaks team. SynSec does **not** enable Betterleaks live credential validation; the adapter performs repository scanning with redacted report output only.
 
-The engines stay separate projects with their own licenses. SynSec invokes their installed binaries and parses their machine-readable output rather than copying their source into this repository.
+OpenSSF Scorecard results are treated as repository-posture findings rather than definitive vulnerabilities. Perfect 10/10 checks are not manufactured into findings; non-perfect checks retain their own score and reason as metadata.
+
+The engines stay separate projects with their own licenses. SynSec invokes installed binaries and parses their machine-readable output rather than copying their source into this repository.
 
 ## Correlation
 
@@ -152,11 +160,19 @@ Raw scanner output is not the product. SynSec converts each result into a common
 - CVE, CWE, GHSA, and OSV identifiers;
 - evidence that is safe to retain;
 - remediation guidance;
-- scanner-specific metadata.
+- scanner-specific metadata;
+- native scanner fingerprint.
 
-The correlation layer then groups equivalent results so the user sees one logical issue with multiple supporting scanner sources instead of several copies of the same alert.
+SynSec then computes its own correlation fingerprint. This matters because two scanners often use different rule IDs, titles, and native fingerprints for the same issue.
 
-Correlation is deterministic in v0.2. More advanced code-flow and semantic correlation belongs in later releases.
+Current v0.2 correlation can merge:
+
+- dependency findings sharing advisory identifiers and package identity;
+- secret findings at the same file/line without hashing or retaining the secret;
+- SAST findings sharing file/line/CWE;
+- conservative scanner-aware exact matches when stronger evidence is unavailable.
+
+The user sees one logical issue with multiple supporting sources instead of several copies of the same alert.
 
 ## Baselines
 
@@ -172,19 +188,13 @@ A later scan can compare against it:
 npm run synsec -- scan . --baseline .synsec/baseline.json
 ```
 
-The new report tracks:
-
-- new findings;
-- fixed findings;
-- findings that are still present.
-
-This makes SynSec useful as a regression detector rather than only a one-time scanner.
+The new report tracks new, fixed, and persisting findings. This makes SynSec useful as a regression detector rather than only a one-time scanner.
 
 ## Optional AI review
 
 AI is a **second-pass reviewer**, not the source of truth. It is disabled by default.
 
-SynSec currently supports any endpoint implementing the OpenAI-compatible `/chat/completions` shape, which includes many local gateways and model routers. That allows a router such as OmniRoute, a self-hosted model gateway, or another compatible provider to sit behind SynSec without tying the project to one model vendor.
+SynSec supports endpoints implementing the OpenAI-compatible `/chat/completions` shape, including local gateways and model routers. A router such as OmniRoute, a self-hosted gateway, or another compatible provider can therefore sit behind SynSec without tying the project to one model vendor.
 
 ```bash
 export SYNSEC_AI_BASE_URL="http://localhost:PORT/v1"
@@ -194,7 +204,7 @@ export SYNSEC_AI_API_KEY="optional-key"
 npm run synsec -- scan . --ai
 ```
 
-By default the AI reviewer receives the normalized finding but **not repository source code**. To explicitly allow a small bounded source excerpt around a finding:
+By default the AI reviewer receives normalized finding metadata but **not repository source code**. To explicitly allow a small bounded source excerpt around a finding:
 
 ```bash
 npm run synsec -- scan . --ai --ai-source
@@ -216,13 +226,14 @@ Unknown evidence stays `unknown`; the reviewer is instructed not to invent proof
 
 ## Privacy and network behavior
 
-Repository contents stay local to SynSec and its local scanner processes unless the operator explicitly enables an integration that communicates externally.
+Repository contents stay local to SynSec and its local scanner processes unless the operator explicitly enables an integration or scanner behavior that communicates externally.
 
 Important exceptions to understand:
 
 - OSV-Scanner normally queries vulnerability/package services for dependency metadata unless configured for its offline mode externally.
 - Opengrep's `auto` rules configuration may fetch rule configuration from the network.
-- AI review sends finding metadata to the configured model endpoint when enabled.
+- OpenSSF Scorecard can use Git hosting APIs and may need a GitHub token for complete/rate-limit-friendly results.
+- AI review sends normalized finding metadata to the configured model endpoint when enabled.
 - Source excerpts are only sent to the AI endpoint when `sendSourceContext` or `--ai-source` is explicitly enabled.
 
 Secret scanner output is requested with full redaction, and SynSec deliberately does not copy secret values into normalized findings.
@@ -242,6 +253,7 @@ repository
            +-- Trivy
            +-- Grype
            +-- Checkov
+           +-- OpenSSF Scorecard
                   |
                   v
           normalized findings
@@ -273,6 +285,8 @@ packages/engine       orchestration and failure isolation
 packages/ai           opt-in provider-agnostic review gate
 ```
 
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and package details and [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned work.
+
 ## Safety model
 
 SynSec's primary job is defensive analysis of repositories the operator owns or is authorized to assess. Repository scanning does not execute the target project's application or build scripts.
@@ -288,12 +302,12 @@ npm test
 npm run typecheck
 ```
 
-CI currently runs the build and test suite on Node 24.
+CI runs the build, typecheck, and test suite on Node 20 and Node 24.
 
 ## Project status
 
-v0.2 is intended to become the first release worth hands-on testing. The next major work after scanner reliability is repository reachability/context, GitHub pull-request integration, stronger finding lifecycle management, and a richer persistent web application.
+v0.2 is intended to be the first release worth hands-on testing. The next major work after scanner reliability is repository reachability/context, GitHub pull-request integration, stronger finding lifecycle management, reusable defensive workflows, and a richer persistent web application.
 
 ## License
 
-A project license has not been selected yet. Third-party scanner engines retain their own licenses and are not vendored into SynSec.
+A SynSec project license has not been selected yet. Third-party scanner engines retain their own licenses and are not vendored into SynSec.
