@@ -14,7 +14,10 @@ test("scan engine runs an available adapter end-to-end and builds a correlated r
   try {
     await mkdir(join(root, "src"));
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }));
-    await writeFile(join(root, "src", "index.js"), "console.log('fixture');\n");
+    await writeFile(join(root, "src", "index.js"), `import express from "express";
+const app = express();
+app.get("/health", (_req, res) => res.json({ ok: true }));
+`);
 
     const trivy = join(bin, "trivy");
     await writeFile(trivy, `#!/bin/sh
@@ -39,8 +42,12 @@ JSON
     assert.equal(outcome.report.rawFindingCount, 1);
     assert.equal(outcome.report.findingCount, 1);
     assert.equal(outcome.report.summary.high, 1);
+    assert.equal(outcome.report.scope.mode, "repository");
     assert.equal(outcome.failures.length, 0);
     assert.equal(outcome.report.repository.languages.JavaScript, 1);
+    assert.equal(outcome.repositoryIndex.indexedFileCount, 1);
+    assert.ok(outcome.repositoryIndex.moduleEdges.some((edge) => edge.specifier === "express"));
+    assert.ok(outcome.repositoryIndex.routes.some((route) => route.route === "/health"));
   } finally {
     process.env.PATH = originalPath;
     await rm(root, { recursive: true, force: true });
