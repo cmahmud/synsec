@@ -1,6 +1,7 @@
 import type { SynSecConfig } from "@synsec/config";
 import { runScanEngine, type ScanEngineOutcome } from "@synsec/engine";
 import type { SynSecReport } from "@synsec/report";
+import { loadValidatedGitHubBaseline } from "./baseline.js";
 import { loadGitHubContext, type GitHubPullRequestContext } from "./index.js";
 import {
   publishSynSecReportToGitHub,
@@ -16,6 +17,8 @@ export interface GitHubActionsRepositoryScanOptions extends GitHubReportPublicat
   config: SynSecConfig;
   rootPath?: string;
   baseline?: SynSecReport;
+  baselinePath?: string;
+  baselineExpectedCommitSha?: string;
   toolVersion?: string;
   changedOnly?: boolean;
   changedBase?: string;
@@ -34,7 +37,8 @@ export interface GitHubActionsRepositoryScanResult {
  * Run the existing repository scanner engine for the current GitHub Actions checkout and publish
  * the completed report as a check run. Pull-request contexts default to changed-file scanning;
  * push/other contexts default to a full repository scan. Optional code-scanning publication uses
- * the same completed report and fixed GitHub host. No live-target discovery is performed.
+ * the same completed report and fixed GitHub host. A local baseline path is size-bounded and
+ * commit-bound before it enters the scan engine. No live-target discovery is performed.
  */
 export async function runGitHubActionsRepositoryScan(
   token: string,
@@ -45,7 +49,15 @@ export async function runGitHubActionsRepositoryScan(
   if (!context) {
     throw new Error("Unable to resolve a valid GitHub repository and commit context for repository scanning.");
   }
+  if (options.baseline && options.baselinePath) {
+    throw new Error("Provide either an in-memory baseline or baselinePath, not both.");
+  }
 
+  const baseline = options.baselinePath
+    ? await loadValidatedGitHubBaseline(options.baselinePath, context, {
+      expectedCommitSha: options.baselineExpectedCommitSha,
+    })
+    : options.baseline;
   const changedOnly = options.changedOnly ?? Boolean(context.pullRequestNumber);
   const changedBase = options.changedBase
     ?? (changedOnly && context.baseRef ? `origin/${context.baseRef}` : undefined);
@@ -53,7 +65,7 @@ export async function runGitHubActionsRepositoryScan(
   const outcome = await scan({
     rootPath: options.rootPath ?? process.cwd(),
     config: options.config,
-    baseline: options.baseline,
+    baseline,
     toolVersion: options.toolVersion,
     changedOnly,
     changedBase,
