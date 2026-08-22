@@ -30,6 +30,7 @@ async function main(): Promise<void> {
   const baselinePath = baselineInput
     ? await resolveWorkspaceFileInput(workspace, baselineInput, "baseline-path")
     : undefined;
+  const autoBaseline = booleanInput(process.env.SYNSEC_AUTO_BASELINE, true);
   const publishSarif = booleanInput(process.env.SYNSEC_PUBLISH_SARIF, false);
   const changedOnly = changedOnlyInput(process.env.SYNSEC_CHANGED_ONLY);
 
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
     config,
     rootPath: workspace,
     baselinePath,
+    autoBaseline: baselinePath ? false : autoBaseline,
     changedOnly,
     publishSarif,
     threshold: config.failOn,
@@ -47,11 +49,13 @@ async function main(): Promise<void> {
     writeOutput("finding-count", result.outcome.report.findingCount),
     writeOutput("check-run-id", result.publication.publication.id),
     writeOutput("sarif-upload-id", result.sarifPublication?.id),
+    writeOutput("baseline-source", result.baselineSource ?? "none"),
   ]);
 
   console.log(
     `SynSec scanned ${result.outcome.report.scope?.mode === "changed-files" ? "changed files" : "the repository"}: `
-      + `${result.outcome.report.findingCount} finding(s), security score ${result.outcome.report.securityScore}/100.`,
+      + `${result.outcome.report.findingCount} finding(s), security score ${result.outcome.report.securityScore}/100.`
+      + ` Baseline: ${result.baselineSource ?? "none"}.`,
   );
   if (result.outcome.shouldFail) process.exitCode = 1;
 }
