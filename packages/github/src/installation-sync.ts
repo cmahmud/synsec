@@ -34,6 +34,35 @@ export type GitHubInstallationSyncResult =
   | { status: "updated"; record: GitHubInstallationRecord }
   | { status: "removed"; installationId: number; existed: boolean };
 
+const installationSyncLocks = new WeakMap<GitHubInstallationStateStore, Map<number, Promise<void>>>();
+
+async function withInstallationSyncLock<T>(
+  store: GitHubInstallationStateStore,
+  installationId: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let locks = installationSyncLocks.get(store);
+  if (!locks) {
+    locks = new Map<number, Promise<void>>();
+    installationSyncLocks.set(store, locks);
+  }
+  const previous = locks.get(installationId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+  const tail = previous.then(() => gate);
+  locks.set(installationId, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (locks.get(installationId) === tail) {
+      locks.delete(installationId);
+      if (locks.size === 0) installationSyncLocks.delete(store);
+    }
+  }
+}
+
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -175,13 +204,11 @@ function requireMetadata(event: GitHubInstallationStateEvent): {
   };
 }
 
-/** Apply one already verified GitHub installation-management event to durable authorization state. */
-export async function synchronizeGitHubInstallationState(
+async function synchronizeGitHubInstallationStateUnlocked(
   event: GitHubInstallationStateEvent,
   store: GitHubInstallationStateStore,
-  now = Date.now(),
+  now: number,
 ): Promise<GitHubInstallationSyncResult> {
-  if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub installation synchronization clock must be a positive timestamp.");
   if (event.event === "installation" && event.action === "deleted") {
     const existed = await store.remove(event.installationId);
     return { status: "removed", installationId: event.installationId, existed };
@@ -241,6 +268,25 @@ export async function synchronizeGitHubInstallationState(
     updatedAt,
   });
   return { status: "updated", record };
+}
+
+/**
+ * Apply one already verified GitHub installation-management event to durable authorization state.
+ * Calls targeting the same installation are serialized within one runtime so read-modify-write
+ * repository deltas cannot overwrite one another. Different installations remain concurrent.
+ * This is an in-process guarantee only; a shared multi-host backend still requires transactions.
+ */
+export async function synchronizeGitHubInstallationState(
+  event: GitHubInstallationStateEvent,
+  store: GitHubInstallationStateStore,
+  now = Date.now(),
+): Promise<GitHubInstallationSyncResult> {
+  if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub installation synchronization clock must be a positive timestamp.");
+  return withInstallationSyncLock(
+    store,
+    event.installationId,
+    () => synchronizeGitHubInstallationStateUnlocked(event, store, now),
+  );
 }
 
 /** Verify, normalize, and synchronize one installation-management delivery. */
