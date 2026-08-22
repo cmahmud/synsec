@@ -1,6 +1,25 @@
 import type { Severity } from "@synsec/core";
 import type { SeverityCounts, SynSecReport } from "./index.js";
 
+export interface ReportHistoryInput {
+  reportId: string;
+  generatedAt: string;
+  target: {
+    commitSha?: string;
+    branch?: string;
+  };
+  securityScore: number;
+  findingCount: number;
+  summary: SeverityCounts;
+  findings: Array<{
+    fingerprint: string;
+    primary: {
+      title: string;
+      severity: Severity;
+    };
+  }>;
+}
+
 export interface ReportHistoryPoint {
   reportId: string;
   generatedAt: string;
@@ -41,17 +60,17 @@ const severityRank: Record<Severity, number> = {
   unknown: 0,
 };
 
-function timestamp(report: SynSecReport): number {
+function timestamp(report: ReportHistoryInput): number {
   const value = Date.parse(report.generatedAt);
   if (!Number.isFinite(value)) throw new Error(`Report ${report.reportId} has an invalid generatedAt timestamp.`);
   return value;
 }
 
-function fingerprints(report: SynSecReport): Set<string> {
+function fingerprints(report: ReportHistoryInput): Set<string> {
   return new Set(report.findings.map((finding) => finding.fingerprint));
 }
 
-function deltaCounts(previous: SynSecReport | undefined, current: SynSecReport): Pick<ReportHistoryPoint, "newCount" | "fixedCount" | "persistingCount"> {
+function deltaCounts(previous: ReportHistoryInput | undefined, current: ReportHistoryInput): Pick<ReportHistoryPoint, "newCount" | "fixedCount" | "persistingCount"> {
   if (!previous) {
     return { newCount: current.findingCount, fixedCount: 0, persistingCount: 0 };
   }
@@ -71,7 +90,7 @@ function deltaCounts(previous: SynSecReport | undefined, current: SynSecReport):
   return { newCount, fixedCount, persistingCount };
 }
 
-export function buildReportHistory(reports: readonly SynSecReport[]): ReportHistory {
+export function buildReportHistory(reports: readonly ReportHistoryInput[]): ReportHistory {
   if (reports.length === 0) {
     return { schemaVersion: 1, points: [], findings: [], scoreDelta: 0, findingCountDelta: 0 };
   }
@@ -89,7 +108,7 @@ export function buildReportHistory(reports: readonly SynSecReport[]): ReportHist
   );
   const points: ReportHistoryPoint[] = [];
   const findingMap = new Map<string, FindingHistory>();
-  let previous: SynSecReport | undefined;
+  let previous: ReportHistoryInput | undefined;
 
   for (const report of ordered) {
     const delta = deltaCounts(previous, report);
@@ -145,3 +164,5 @@ export function buildReportHistory(reports: readonly SynSecReport[]): ReportHist
     findingCountDelta: first && last ? last.findingCount - first.findingCount : 0,
   };
 }
+
+export type { SynSecReport };
