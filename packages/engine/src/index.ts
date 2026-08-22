@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import type { SynSecConfig } from "@synsec/config";
 import type { Finding, ScanResult, ScanTarget, Severity } from "@synsec/core";
-import { applyBaseline, buildReport, type SynSecReport } from "@synsec/report";
+import { buildReport, type SynSecReport } from "@synsec/report";
+import { applyEvidenceAwareBaseline } from "@synsec/report/baseline";
 import { inventoryRepository } from "@synsec/repository";
 import {
   buildRepositoryIndex,
@@ -89,6 +90,24 @@ function normalizeRepositoryPath(path: string, root: string): string {
   if (normalized.startsWith(`${normalizedRoot}/`)) normalized = normalized.slice(normalizedRoot.length + 1);
   normalized = normalized.replace(/^\.\//, "").replace(/^\//, "");
   return normalized;
+}
+
+function normalizeProvidedChangedFiles(files: readonly string[], root: string): string[] {
+  if (files.length > 10_000) throw new Error("Externally supplied changed-file scope exceeds 10000 paths.");
+  const normalized: string[] = [];
+  for (const value of files) {
+    if (typeof value !== "string" || value.includes("\0")) throw new Error("Externally supplied changed-file scope contains an invalid path.");
+    const candidate = value.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+    if (!candidate || candidate.startsWith("/") || /^[A-Za-z]:\//.test(candidate)) {
+      throw new Error("Externally supplied changed-file scope must contain repository-relative paths.");
+    }
+    const segments = candidate.split("/");
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      throw new Error("Externally supplied changed-file scope contains an unsafe path segment.");
+    }
+    normalized.push(normalizeRepositoryPath(candidate, root));
+  }
+  return [...new Map(normalized.map((path) => [path.toLowerCase(), path])).values()].sort();
 }
 
 export async function discoverChangedFiles(rootPath: string, requestedBase?: string): Promise<{ base: string; files: string[] }> {
@@ -283,6 +302,8 @@ export async function runScanEngine(input: {
   toolVersion?: string;
   changedOnly?: boolean;
   changedBase?: string;
+  /** Repository-relative paths derived by a trusted caller from exact commit provenance. */
+  changedFiles?: readonly string[];
 }): Promise<ScanEngineOutcome> {
   const root = resolve(input.rootPath);
   const [target, statuses, inventory] = await Promise.all([
@@ -297,7 +318,16 @@ export async function runScanEngine(input: {
   if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
 
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
-  const changedScope = input.changedOnly ? await discoverChangedFiles(root, input.changedBase) : undefined;
+  let changedScope: { base: string; files: string[] } | undefined;
+  if (input.changedFiles !== undefined) {
+    if (!input.changedOnly) throw new Error("Externally supplied changed files require changedOnly=true.");
+    const base = input.changedBase?.trim();
+    if (!base) throw new Error("Externally supplied changed files require an explicit changedBase provenance identifier.");
+    changedScope = { base, files: normalizeProvidedChangedFiles(input.changedFiles, root) };
+  } else if (input.changedOnly) {
+    changedScope = await discoverChangedFiles(root, input.changedBase);
+  }
+
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
   const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex);
   const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex);
@@ -317,7 +347,7 @@ export async function runScanEngine(input: {
       ? { mode: "changed-files", baseRef: changedScope.base, changedFiles: changedScope.files }
       : { mode: "repository" },
   });
-  if (input.baseline) report = applyBaseline(report, input.baseline);
+  if (input.baseline) report = applyEvidenceAwareBaseline(report, input.baseline);
 
   const outcome: ScanEngineOutcome = {
     report,
