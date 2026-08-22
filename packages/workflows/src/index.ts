@@ -149,6 +149,19 @@ export function workflowFindings(
   return findings.filter((finding) => categories.has(finding.primary.category));
 }
 
+export function assertWorkflowCapabilitiesAllowed(
+  workflow: WorkflowDefinition,
+  requested: readonly WorkflowCapability[],
+): void {
+  const allowed = new Set<WorkflowCapability>(workflow.capabilities);
+  const denied = [...new Set(requested)].filter((capability) => !allowed.has(capability));
+  if (denied.length > 0) {
+    throw new Error(
+      `Workflow ${workflow.id} does not permit capabilities: ${denied.sort().join(", ")}.`,
+    );
+  }
+}
+
 export function assertWorkflowSourceContextAllowed(
   workflow: WorkflowDefinition,
   sourceContextRequested: boolean,
@@ -157,5 +170,8 @@ export function assertWorkflowSourceContextAllowed(
     throw new Error(
       `Workflow ${workflow.id} does not permit source context. This boundary prevents sensitive values from being unnecessarily sent to a model.`,
     );
+  }
+  if (sourceContextRequested) {
+    assertWorkflowCapabilitiesAllowed(workflow, ["read-bounded-source-context"]);
   }
 }
