@@ -93,7 +93,7 @@ export async function runTriage(input: {
   }
 
   if (!input.fingerprint || !input.state) {
-    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state|owner|comment|review-at> [--note <text>] [--review-at <ISO|clear>] [--store <file>] or synsec triage <report.json> --list");
+    throw new Error("Usage: synsec triage <report.json> <fingerprint> <state|owner|comment|review-at> [--note <text>] [--store <file>] or synsec triage <report.json> --list");
   }
   const exists = report.findings.some((finding) => finding.fingerprint === input.fingerprint);
   if (!exists) throw new Error(`Finding fingerprint is not present in report ${report.reportId}: ${input.fingerprint}`);
@@ -112,10 +112,11 @@ export async function runTriage(input: {
   }
 
   if (input.state === "review-at") {
-    if (input.reviewAt === undefined) {
-      throw new Error("Review deadline triage requires --review-at <ISO timestamp|clear>.");
+    const requestedReviewAt = input.reviewAt ?? input.note;
+    if (requestedReviewAt === undefined) {
+      throw new Error("Review deadline triage requires --note <ISO timestamp|clear>.");
     }
-    store = setFindingReviewAt(store, input.fingerprint, reviewAtValue(input.reviewAt));
+    store = setFindingReviewAt(store, input.fingerprint, reviewAtValue(requestedReviewAt));
     await writeLifecycleStore(paths.lifecycle, store);
     const reviewAt = store.records[input.fingerprint]?.reviewAt;
     return [
