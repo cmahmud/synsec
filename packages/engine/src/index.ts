@@ -144,6 +144,15 @@ export function reportMeetsFailureThreshold(report: SynSecReport, failOn: SynSec
   return report.findings.some((group) => severityRank[group.primary.severity] >= threshold);
 }
 
+function unavailableSummary(statuses: readonly ScannerStatus[]): string {
+  const selected = statuses.filter((status) => status.selected);
+  if (selected.length === 0) return "No scanner engines are selected in the SynSec configuration.";
+  const detail = selected
+    .map((status) => `${status.displayName}: ${status.availability.reason ?? "unavailable"}`)
+    .join("; ");
+  return `No selected scanner engines are available. ${detail}`;
+}
+
 export async function runScanEngine(input: {
   rootPath: string;
   config: SynSecConfig;
@@ -157,7 +166,17 @@ export async function runScanEngine(input: {
     inventoryRepository(root),
   ]);
 
+  const availableSelected = statuses.filter(
+    (status) => status.selected && status.availability.available,
+  );
+  if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
+
   const { scans, failures } = await runSelectedScanners(target, input.config, statuses);
+  if (scans.length === 0) {
+    const details = failures.map((failure) => `${failure.scanner}: ${failure.message}`).join("; ");
+    throw new Error(`All available scanner engines failed.${details ? ` ${details}` : ""}`);
+  }
+
   let report = buildReport({
     target,
     scans,
