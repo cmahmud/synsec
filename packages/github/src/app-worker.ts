@@ -1,7 +1,7 @@
 import type { SynSecReport } from "@synsec/report";
 import {
-  acquireGitHubRepositoryCommit,
-  type AcquiredGitHubRepository,
+  acquireGitHubRepositoryScanTarget,
+  type AcquiredGitHubScanTarget,
   type GitHubRepositoryAcquisitionOptions,
 } from "./repository-acquisition.js";
 import type { GitHubScanJob } from "./scan-queue.js";
@@ -23,12 +23,12 @@ export interface GitHubAppWorkerOptions {
   queue: GitHubAppWorkerQueue;
   installationStore: GitHubAppWorkerAuthorizer;
   getInstallationToken(installationId: number, purpose: GitHubInstallationTokenPurpose): Promise<string>;
-  scan(job: GitHubScanJob, workspace: string): Promise<SynSecReport>;
+  scan(job: GitHubScanJob, workspace: string, baseWorkspace?: string): Promise<SynSecReport>;
   publish(job: GitHubScanJob, report: SynSecReport, installationToken: string): Promise<void>;
   acquire?: (
-    input: { repository: string; commitSha: string; installationToken: string },
+    input: { repository: string; commitSha: string; baseCommitSha?: string; installationToken: string },
     options?: GitHubRepositoryAcquisitionOptions,
-  ) => Promise<AcquiredGitHubRepository>;
+  ) => Promise<AcquiredGitHubScanTarget>;
   acquisitionOptions?: GitHubRepositoryAcquisitionOptions;
 }
 
@@ -49,14 +49,15 @@ function safeError(error: unknown): string {
  * Authorization is checked again after lease acquisition so a repository removed or suspended
  * after webhook queueing is never scanned from stale authorization. Installation credentials are
  * obtained only in the transport layer: one short-lived token for exact-commit acquisition and a
- * fresh token for publication. The scanner receives only the commit-pinned workspace and job
- * descriptor. Reports must bind to the exact queued head SHA before publication or completion.
+ * fresh token for publication. For PR jobs, acquisition can also materialize the exact queued base
+ * commit in a second isolated workspace without exposing credentials to the scanner. Reports must
+ * bind to the exact queued head SHA before publication or completion.
  */
 export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): Promise<GitHubAppWorkerResult> {
   const job = await options.queue.claimNext();
   if (!job) return { status: "idle" };
 
-  let acquired: AcquiredGitHubRepository | undefined;
+  let acquired: AcquiredGitHubScanTarget | undefined;
   try {
     const allowed = await options.installationStore.isRepositoryAllowed(job.installationId, job.repository);
     if (!allowed) {
@@ -65,18 +66,25 @@ export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): 
     }
 
     const acquisitionToken = await options.getInstallationToken(job.installationId, "acquire");
-    const acquire = options.acquire ?? acquireGitHubRepositoryCommit;
+    const acquire = options.acquire ?? acquireGitHubRepositoryScanTarget;
     acquired = await acquire({
       repository: job.repository,
       commitSha: job.headSha,
+      ...(job.event === "pull_request" && job.baseSha ? { baseCommitSha: job.baseSha } : {}),
       installationToken: acquisitionToken,
     }, options.acquisitionOptions);
 
     if (acquired.repository !== job.repository || acquired.commitSha.toLowerCase() !== job.headSha.toLowerCase()) {
       throw new Error("Acquired GitHub repository does not match the leased scan job provenance.");
     }
+    if (job.event === "pull_request") {
+      const acquiredBaseSha = acquired.base?.commitSha.toLowerCase();
+      if (!job.baseSha || !acquiredBaseSha || acquiredBaseSha !== job.baseSha.toLowerCase()) {
+        throw new Error("Acquired GitHub base repository does not match the leased pull-request base SHA.");
+      }
+    }
 
-    const report = await options.scan(job, acquired.workspace);
+    const report = await options.scan(job, acquired.workspace, acquired.base?.workspace);
     const reportSha = report.target.commitSha?.trim().toLowerCase();
     if (!reportSha || reportSha !== job.headSha.toLowerCase()) {
       throw new Error("GitHub App worker report commit does not match the leased scan job head SHA.");
