@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/scanner-sdk" },
+    { "path": "./packages/scanners" },
     { "path": "./apps/cli" }
   ]
 }
