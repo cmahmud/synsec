@@ -12,6 +12,10 @@
       "types": "./dist/markdown.d.ts",
       "import": "./dist/markdown.js"
     },
+    "./baseline": {
+      "types": "./dist/baseline.d.ts",
+      "import": "./dist/baseline.js"
+    },
     "./history": {
       "types": "./dist/history.d.ts",
       "import": "./dist/history.js"
