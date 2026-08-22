@@ -10,9 +10,14 @@ export interface GitHubAppTokenOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export type GitHubInstallationPermissionLevel = "read" | "write";
+export type GitHubInstallationPermissions = Record<string, GitHubInstallationPermissionLevel>;
+
 export interface GitHubInstallationToken {
   token: string;
   expiresAt: string;
+  permissions?: GitHubInstallationPermissions;
+  repositorySelection?: "all" | "selected";
 }
 
 export interface GitHubAppWebhook {
@@ -69,6 +74,24 @@ function repositoryName(payload: Record<string, unknown>): string | undefined {
   const repository = objectValue(payload.repository);
   const fullName = stringValue(repository?.full_name);
   return fullName && /^[^/\s]+\/[^/\s]+$/.test(fullName) ? fullName : undefined;
+}
+
+function installationPermissions(value: unknown): GitHubInstallationPermissions | undefined {
+  if (value === undefined) return undefined;
+  const record = objectValue(value);
+  if (!record) throw new Error("GitHub installation-token API returned invalid permission metadata.");
+  const permissions: GitHubInstallationPermissions = {};
+  for (const [name, level] of Object.entries(record)) {
+    const normalizedName = name.trim();
+    if (!normalizedName || normalizedName.length > 128 || !/^[a-z0-9_]+$/i.test(normalizedName)) {
+      throw new Error("GitHub installation-token API returned invalid permission metadata.");
+    }
+    if (level !== "read" && level !== "write") {
+      throw new Error("GitHub installation-token API returned invalid permission metadata.");
+    }
+    permissions[normalizedName] = level;
+  }
+  return permissions;
 }
 
 /** Verify GitHub's X-Hub-Signature-256 against the exact request bytes. */
@@ -237,5 +260,18 @@ export async function createGitHubInstallationToken(
   const token = stringValue(payload.token);
   const expiresAt = stringValue(payload.expires_at);
   if (!token || !expiresAt) throw new Error("GitHub installation-token API response is missing token metadata.");
-  return { token, expiresAt };
+  if (!Number.isFinite(Date.parse(expiresAt))) {
+    throw new Error("GitHub installation-token API returned an invalid expiration timestamp.");
+  }
+  const permissions = installationPermissions(payload.permissions);
+  const selection = payload.repository_selection;
+  if (selection !== undefined && selection !== "all" && selection !== "selected") {
+    throw new Error("GitHub installation-token API returned invalid repository-selection metadata.");
+  }
+  return {
+    token,
+    expiresAt,
+    ...(permissions ? { permissions } : {}),
+    ...(selection ? { repositorySelection: selection } : {}),
+  };
 }
