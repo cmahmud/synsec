@@ -23,6 +23,7 @@ import {
   type SynSecReport,
 } from "@synsec/report";
 import { getFindingContext } from "@synsec/repository";
+import { writeRepositoryIndex } from "@synsec/repository/analysis";
 import { parseSarifJson } from "@synsec/scanners";
 import {
   assertWorkflowSourceContextAllowed,
@@ -107,7 +108,7 @@ Scan options:
   --fail-on <severity>     Exit non-zero when this severity or higher is found.
   --baseline <report>      Compare against a previous SynSec report.
   --json                   Print the report JSON to stdout.
-  --no-write               Do not write JSON/HTML/SARIF report files.
+  --no-write               Do not write reports or the repository index.
   --ai                     Run optional AI triage after deterministic scanning.
   --workflow <id>          Restrict AI triage to a built-in defensive workflow.
   --ai-source              Allow source excerpts when the selected workflow permits it.
@@ -312,11 +313,13 @@ async function scan(): Promise<void> {
   });
 
   const paths = resolveReportPaths(root, config);
+  const repositoryIndexPath = resolve(root, ".synsec/repository-index.json");
   if (!flag("--no-write")) {
     await Promise.all([
       writeReport(paths.json, outcome.report),
       writeHtml(paths.html, outcome.report),
       writeSarif(paths.sarif, outcome.report),
+      writeRepositoryIndex(repositoryIndexPath, outcome.repositoryIndex),
     ]);
   }
 
@@ -347,6 +350,11 @@ async function scan(): Promise<void> {
       .filter((artifact) => artifact.type === "sbom")
       .reduce((total, artifact) => total + artifact.packageCount, 0);
     if (sbomPackages > 0) console.log(`SBOM: ${sbomPackages} package(s) inventoried\n`);
+    console.log(
+      `Repository index: ${outcome.repositoryIndex.indexedFileCount} file(s), ` +
+      `${outcome.repositoryIndex.moduleEdges.length} module edge(s), ${outcome.repositoryIndex.routes.length} route signal(s), ` +
+      `${outcome.repositoryIndex.authSignals.length} auth signal(s), ${outcome.repositoryIndex.sinks.length} sink signal(s)\n`,
+    );
 
     if (outcome.report.baseline) {
       console.log(
@@ -368,6 +376,7 @@ async function scan(): Promise<void> {
       console.log(`JSON:  ${paths.json}`);
       console.log(`HTML:  ${paths.html}`);
       console.log(`SARIF: ${paths.sarif}`);
+      console.log(`INDEX: ${repositoryIndexPath}`);
     }
   }
 
