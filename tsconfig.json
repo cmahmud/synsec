@@ -12,6 +12,7 @@
     { "path": "./packages/scanners" },
     { "path": "./packages/engine" },
     { "path": "./packages/github" },
-    { "path": "./apps/cli" }
+    { "path": "./apps/cli" },
+    { "path": "./apps/github-action" }
   ]
 }
