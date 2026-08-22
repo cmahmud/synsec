@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { routeSinkFlowContext } from "@synsec/repository/route-sink-flow";
+import {
+  findingRouteSinkFlowEvidence,
+  routeSinkFlowContext,
+} from "@synsec/repository/route-sink-flow";
 
 const route = {
   path: "server.ts",
@@ -53,7 +56,7 @@ const entrypoint = {
   interpretation: "structural-route-call-evidence-only",
 };
 
-test("resolved route flow links sinks inside the handler and bounded callees without source text", () => {
+function flowFixture() {
   const index = {
     schemaVersion: 1,
     generatedAt: "2026-08-22T21:00:00.000Z",
@@ -67,8 +70,11 @@ test("resolved route flow links sinks inside the handler and bounded callees wit
       { path: "server.ts", line: 80, kind: "process", evidence: "exec(command)" },
     ],
   };
+  return routeSinkFlowContext(index, entrypoint, graph);
+}
 
-  const context = routeSinkFlowContext(index, entrypoint, graph);
+test("resolved route flow links sinks inside the handler and bounded callees without source text", () => {
+  const context = flowFixture();
   assert.equal(context.interpretation, "structural-route-call-sink-evidence-only");
   assert.deepEqual(context.kinds, ["network", "database"]);
   assert.deepEqual(context.evidence.map((item) => [item.functionName, item.depth, item.kind]), [
@@ -78,6 +84,24 @@ test("resolved route flow links sinks inside the handler and bounded callees wit
   assert.equal(JSON.stringify(context).includes("secretUrl"), false);
   assert.equal(JSON.stringify(context).includes("db.query"), false);
   assert.equal(JSON.stringify(context).includes("exec(command)"), false);
+});
+
+test("exact finding route-flow evidence matches only the linked sink line and stays sanitized", () => {
+  const context = flowFixture();
+  const direct = findingRouteSinkFlowEvidence([context], "./server.ts", 23);
+  assert.deepEqual(direct, [{
+    method: "GET",
+    route: "/users",
+    frameworkHint: "Node HTTP router",
+    resolution: "named-function",
+    handler: "listUsers",
+    sinkKind: "network",
+    functionName: "listUsers",
+    depth: 0,
+    interpretation: "structural-route-call-sink-evidence-only",
+  }]);
+  assert.deepEqual(findingRouteSinkFlowEvidence([context], "server.ts", 24), []);
+  assert.equal(JSON.stringify(direct).includes("secretUrl"), false);
 });
 
 test("unresolved routes and ambiguous function ownership do not manufacture sink flow", () => {
