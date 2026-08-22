@@ -1,0 +1,40 @@
+name: SynSec scheduled repository scan
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  security-events: write
+
+jobs:
+  synsec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Install and pin the scanner binaries selected by synsec.config.json here.
+      # SynSec intentionally does not download scanners implicitly.
+
+      - name: Scan repository
+        id: synsec
+        uses: cmahmud/synsec@<pinned-ref>
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          changed-only: "false"
+          auto-baseline: "false"
+          publish-sarif: "true"
+
+      - name: Retain SynSec report
+        if: ${{ always() && steps.synsec.outputs.report-path != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: synsec-report-${{ github.run_id }}
+          path: ${{ steps.synsec.outputs.report-path }}
+          if-no-files-found: error
+          retention-days: 30
