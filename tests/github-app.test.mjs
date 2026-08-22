@@ -135,11 +135,16 @@ test("createGitHubAppJwt creates a short-lived verifiable RS256 token", () => {
   ), true);
 });
 
-test("createGitHubInstallationToken posts only to the fixed GitHub installation endpoint", async () => {
+test("createGitHubInstallationToken posts only to the fixed GitHub installation endpoint and validates permission metadata", async () => {
   let request;
   const fakeFetch = async (url, init) => {
     request = { url, init };
-    return new Response(JSON.stringify({ token: "installation-token", expires_at: "2026-08-22T17:00:00Z" }), { status: 201 });
+    return new Response(JSON.stringify({
+      token: "installation-token",
+      expires_at: "2026-08-22T17:00:00Z",
+      permissions: { contents: "read", checks: "write" },
+      repository_selection: "selected",
+    }), { status: 201 });
   };
 
   const result = await createGitHubInstallationToken(42, "app-jwt", { fetch: fakeFetch });
@@ -148,7 +153,28 @@ test("createGitHubInstallationToken posts only to the fixed GitHub installation 
   assert.equal(request.init.redirect, "error");
   assert.equal(request.init.headers.Authorization, "Bearer app-jwt");
   assert.equal(request.init.body, "{}");
-  assert.deepEqual(result, { token: "installation-token", expiresAt: "2026-08-22T17:00:00Z" });
+  assert.deepEqual(result, {
+    token: "installation-token",
+    expiresAt: "2026-08-22T17:00:00Z",
+    permissions: { contents: "read", checks: "write" },
+    repositorySelection: "selected",
+  });
+});
+
+test("installation-token metadata validation fails closed", async () => {
+  const invalidPermission = async () => new Response(JSON.stringify({
+    token: "installation-token",
+    expires_at: "2026-08-22T17:00:00Z",
+    permissions: { checks: "admin" },
+  }), { status: 201 });
+  await assert.rejects(() => createGitHubInstallationToken(42, "app-jwt", { fetch: invalidPermission }), /invalid permission metadata/);
+
+  const invalidSelection = async () => new Response(JSON.stringify({
+    token: "installation-token",
+    expires_at: "2026-08-22T17:00:00Z",
+    repository_selection: "surprise",
+  }), { status: 201 });
+  await assert.rejects(() => createGitHubInstallationToken(42, "app-jwt", { fetch: invalidSelection }), /repository-selection metadata/);
 });
 
 test("installation-token errors do not expose the app JWT", async () => {
