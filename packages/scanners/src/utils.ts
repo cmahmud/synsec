@@ -5,7 +5,9 @@ import type { ScannerAvailability } from "@synsec/scanner-sdk";
 export type UnknownRecord = Record<string, unknown>;
 
 export function asRecord(value: unknown): UnknownRecord | undefined {
-  return typeof value === "object" && value !== null ? (value as UnknownRecord) : undefined;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : undefined;
 }
 
 export function asString(value: unknown): string | undefined {
@@ -57,13 +59,28 @@ export function identifiersFrom(values: string[]): FindingIdentifiers | undefine
   return result;
 }
 
+function normalizedPath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function absoluteLike(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value) || value.startsWith("//");
+}
+
 export function relativeLike(path: string | undefined, root: string): string | undefined {
   if (!path) return undefined;
-  const base = root.replace(/\\/g, "/").replace(/\/$/, "");
-  const candidate = path.replace(/\\/g, "/");
+  const base = normalizedPath(root).replace(/\/$/, "");
+  const candidate = normalizedPath(path).trim();
+  if (!candidate) return undefined;
   if (candidate === base) return ".";
   if (candidate.startsWith(`${base}/`)) return candidate.slice(base.length + 1);
-  return candidate;
+
+  // Scanner output is untrusted. Do not preserve absolute host paths outside
+  // the repository or traversal-shaped paths in normalized reports.
+  if (absoluteLike(candidate)) return undefined;
+  const relative = candidate.replace(/^\.\//, "");
+  if (relative === ".." || relative.startsWith("../") || relative.includes("/../")) return undefined;
+  return relative;
 }
 
 export function safeJson(raw: string): unknown {
