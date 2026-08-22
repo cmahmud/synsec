@@ -1,0 +1,79 @@
+# GitHub integration
+
+SynSec's GitHub integration is intentionally split into two layers:
+
+1. **Repository security analysis** stays inside the normal scanner/report pipeline.
+2. **GitHub publication** converts a completed SynSec report into GitHub-native check output and annotations.
+
+This keeps GitHub credentials out of scanners and prevents repository analysis from silently expanding into unrelated network targets.
+
+## Current integration primitives
+
+`@synsec/github` provides:
+
+- GitHub Actions context detection from environment variables.
+- Bounded parsing of `GITHUB_EVENT_PATH`.
+- Correct pull-request head SHA selection from the event payload instead of the synthetic merge SHA.
+- Pull-request number, base branch, and head branch resolution.
+- Conversion of a `SynSecReport` into a check-run result.
+- Source annotations for findings with file/line locations.
+- Severity-aware annotation levels.
+- Baseline-aware annotation filtering so PR checks can focus on new findings.
+- A hard 50-annotation cap per generated payload, matching GitHub's check-run annotation request limit.
+- CI threshold evaluation independent of scanner exit-code quirks.
+
+The package does **not** currently make authenticated GitHub API calls. A future GitHub App or Actions adapter should own credential use and transport while reusing these deterministic primitives.
+
+## Pull-request SHA handling
+
+GitHub Actions commonly sets `GITHUB_SHA` to a synthetic merge commit for `pull_request` workflows. Publishing a check against that SHA can make the check appear on the wrong commit or disappear when the synthetic merge ref changes.
+
+For PR events, SynSec therefore prefers:
+
+```text
+pull_request.head.sha
+```
+
+from the local Actions event payload. `loadGitHubContext()` reads `GITHUB_EVENT_PATH`, rejects non-files, refuses event payloads larger than 2 MiB, parses JSON locally, and then resolves the effective repository/commit context.
+
+No network request is required for context detection.
+
+## Check conclusions
+
+The generated check conclusion follows the configured severity threshold:
+
+- `failure` when at least one finding meets or exceeds the threshold.
+- `neutral` when findings exist but none meets the threshold.
+- `success` when the report contains no findings.
+
+This is deliberately separate from individual scanner process exit codes. Scanner failures and scan completeness remain engine/report concerns; GitHub publishing consumes the completed normalized report.
+
+## Inline annotations
+
+Only findings with a concrete repository path and start line can become GitHub annotations. Paths are normalized to forward slashes and leading `./` is removed. High/critical findings map to `failure`, medium/low to `warning`, and informational/unknown findings to `notice`.
+
+When a report includes a baseline, `buildGitHubCheck()` defaults to annotating only newly introduced findings. Persisting findings remain represented in the report summary without repeatedly flooding pull-request annotations.
+
+## Security boundaries
+
+GitHub integration must preserve the repository-first defensive model:
+
+- Tokens belong to the GitHub transport layer, never scanner input.
+- Report and annotation generation must not require network access.
+- Source excerpts are not added to GitHub annotations unless already present in normalized deterministic finding fields.
+- Secret values must remain redacted before publication.
+- A future remediation pull-request flow must require explicit approval before repository writes.
+- Repository installation must not authorize live-target exploitation, target expansion, persistence, or secret exfiltration.
+
+## Next implementation steps
+
+The remaining Phase 5 work is transport and product integration rather than report semantics:
+
+1. Add a GitHub App installation/authentication layer.
+2. Publish generated check results through the Checks API.
+3. Wire PR events to changed-file scans and baseline selection.
+4. Upload SARIF to GitHub code scanning where repository permissions allow it.
+5. Add scheduled repository scans.
+6. Add explicitly approved remediation pull requests.
+
+The deterministic package should remain usable from both a GitHub App and a GitHub Actions integration so the scanning core does not become hosting-provider-specific.
