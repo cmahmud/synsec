@@ -6,6 +6,7 @@ import {
   createGitHubAppJwt,
   createGitHubInstallationToken,
   parseVerifiedGitHubAppWebhook,
+  shouldScanGitHubAppWebhook,
   verifyGitHubWebhookSignature,
 } from "../packages/github/dist/app.js";
 
@@ -78,6 +79,39 @@ test("parseVerifiedGitHubAppWebhook rejects unsupported, unsigned, or incomplete
     webhookSecret,
     eventName: "push",
   }), /missing required repository, installation, or commit identity/);
+});
+
+test("shouldScanGitHubAppWebhook allows only push and selected PR lifecycle events", () => {
+  const pr = {
+    event: "pull_request",
+    action: "synchronize",
+    installationId: 42,
+    repository: "cmahmud/synsec",
+    headSha: "abc123",
+    baseSha: "def456",
+    pullRequestNumber: 7,
+  };
+
+  assert.equal(shouldScanGitHubAppWebhook(pr), true);
+  assert.equal(shouldScanGitHubAppWebhook({ ...pr, action: "closed" }), false);
+  assert.equal(shouldScanGitHubAppWebhook({ ...pr, action: "converted_to_draft" }), false);
+  assert.equal(shouldScanGitHubAppWebhook({ ...pr, headSha: undefined }), false);
+  assert.equal(shouldScanGitHubAppWebhook({
+    event: "push",
+    installationId: 42,
+    repository: "cmahmud/synsec",
+    headSha: "abc123",
+  }), true);
+  assert.equal(shouldScanGitHubAppWebhook({
+    event: "installation",
+    action: "created",
+    installationId: 42,
+  }), false);
+  assert.equal(shouldScanGitHubAppWebhook({
+    event: "installation_repositories",
+    action: "added",
+    installationId: 42,
+  }), false);
 });
 
 test("createGitHubAppJwt creates a short-lived verifiable RS256 token", () => {
