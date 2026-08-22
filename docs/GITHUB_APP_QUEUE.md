@@ -54,7 +54,9 @@ The heartbeat is process-local. It is not persisted as a timer and does not surv
 
 ## Single-host concurrency limitation
 
-The current file-backed queue improves stale-worker correctness with unique fencing identities and renewal, but it is still a single-host runtime foundation. Filesystem read/replace operations are not advertised as a linearizable distributed transaction protocol across independent hosts or shared network filesystems.
+The current file-backed queue improves stale-worker correctness with unique fencing identities and renewal, but it is still a single-host runtime foundation. `claimNext()` calls are serialized inside one `FileGitHubScanQueue` instance so multiple worker loops using the same runtime object cannot race the local read/replace claim path.
+
+That in-process serialization is not a cross-process lock. Independent Node processes, separate queue instances pointed at the same directory, shared network filesystems, and multi-host deployment are not advertised as linearizable or transactionally safe.
 
 Production horizontal scaling still requires a transactional shared queue/state backend with an atomic equivalent of:
 
@@ -66,7 +68,7 @@ Production horizontal scaling still requires a transactional shared queue/state 
 
 A future shared backend must preserve these semantics rather than weakening them to job-id-only acknowledgement.
 
-Until such a backend exists, operators should keep this file queue on one host and use service supervision for worker concurrency on that host. Do not treat shared filesystem placement as a supported substitute for transactional multi-host persistence.
+Until such a backend exists, operators should keep this file queue on one host and one runtime process/queue instance. Service supervision may restart that process, but operators should not run multiple independent worker processes against the same queue directory. Do not treat shared filesystem placement as a supported substitute for transactional multi-host persistence.
 
 ## Security boundary
 
