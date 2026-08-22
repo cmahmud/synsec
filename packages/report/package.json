@@ -15,6 +15,10 @@
     "./history": {
       "types": "./dist/history.d.ts",
       "import": "./dist/history.js"
+    },
+    "./history-store": {
+      "types": "./dist/history-store.d.ts",
+      "import": "./dist/history-store.js"
     }
   },
   "types": "./dist/index.d.ts",
