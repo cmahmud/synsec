@@ -42,7 +42,7 @@ test("runtime status exposes aggregate installation and queue posture only", asy
     event: "push",
   });
   const leased = await queue.claimNext();
-  await queue.fail(leased.jobId);
+  await queue.fail(leased.jobId, leased.attempts);
 
   const status = await buildGitHubAppRuntimeStatus({ installationStore, queue });
   assert.deepEqual(status, {
