@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,12 +24,15 @@ test("CLI lists capability-scoped defensive workflows", async () => {
   assert.match(stdout, /external network assessment: forbidden/);
 });
 
-test("CLI help documents finding lifecycle triage and remediation verification", async () => {
+test("CLI help documents finding lifecycle, remediation verification, and multi-model review", async () => {
   const { stdout } = await exec(process.execPath, [cli.pathname, "help"]);
   assert.match(stdout, /synsec triage <report\.json>/);
   assert.match(stdout, /synsec verify <before\.json> <after\.json>/);
   assert.match(stdout, /false-positive/);
   assert.match(stdout, /accepted-risk/);
+  assert.match(stdout, /--ai-models <a,b,c>/);
+  assert.match(stdout, /--ai-min-reviewers <n>/);
+  assert.match(stdout, /model inference only/);
 });
 
 test("CLI init writes a safe default configuration", async () => {
@@ -181,6 +185,97 @@ test("CLI verify confirms a remediation only when the detecting scanner reran ov
     assert.equal(verification.summary.fixed, 1);
     assert.equal(verification.summary.inconclusive, 0);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI review can run bounded multi-model consensus without treating it as scanner evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-cli-consensus-"));
+  const requestedModels = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    requestedModels.push(body.model);
+    const verdict = body.model === "reviewer-c" ? "likely" : "confirmed";
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            verdict,
+            confidence: 0.9,
+            severity: "high",
+            summary: `Reviewed by ${body.model}`,
+            rationale: "Repository-local defensive review fixture.",
+            gate: [],
+            remediation: "Use a safer repository-local implementation.",
+          }),
+        },
+      }],
+    }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const report = buildReport({
+      target: { path: root },
+      scans: [{
+        scanner: "fixture",
+        startedAt: "2026-08-22T20:00:00.000Z",
+        completedAt: "2026-08-22T20:00:01.000Z",
+        target: { path: root },
+        diagnostics: [],
+        findings: [{
+          id: "fixture-finding",
+          title: "Review fixture",
+          category: "sast",
+          severity: "high",
+          confidence: 0.95,
+          scanner: { name: "fixture", ruleId: "FIX-REVIEW" },
+          location: { path: "src/app.ts", startLine: 3 },
+        }],
+      }],
+      scope: { mode: "repository" },
+    });
+    const reportPath = join(root, "report.json");
+    const outputPath = join(root, "consensus.json");
+    await writeFile(reportPath, JSON.stringify(report), "utf8");
+
+    const result = await exec(process.execPath, [
+      cli.pathname,
+      "review",
+      reportPath,
+      "--root",
+      root,
+      "--ai-base-url",
+      `http://127.0.0.1:${address.port}`,
+      "--ai-models",
+      "reviewer-a,reviewer-b,reviewer-c",
+      "--ai-min-reviewers",
+      "2",
+      "--ai-review-concurrency",
+      "2",
+      "--output",
+      outputPath,
+    ]);
+    assert.match(result.stdout, /AI consensus review/);
+    assert.deepEqual([...requestedModels].sort(), ["reviewer-a", "reviewer-b", "reviewer-c"]);
+
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.schemaVersion, 2);
+    assert.equal(output.reviewMode, "consensus");
+    assert.equal(output.interpretation, "model-consensus-not-scanner-evidence");
+    assert.deepEqual(output.models, ["reviewer-a", "reviewer-b", "reviewer-c"]);
+    const entry = output.reviews[report.findings[0].fingerprint];
+    assert.equal(entry.reviews.length, 3);
+    assert.equal(entry.failures.length, 0);
+    assert.equal(entry.consensus.verdict, "confirmed");
+    assert.equal(entry.consensus.agreement, "majority");
+    assert.equal(entry.consensus.interpretation, "model-consensus-not-scanner-evidence");
+  } finally {
+    await new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
     await rm(root, { recursive: true, force: true });
   }
 });
