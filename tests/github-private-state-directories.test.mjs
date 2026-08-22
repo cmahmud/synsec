@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { FileGitHubInstallationStore } from "@synsec/github/installation-store";
 import { FileGitHubWebhookReplayStore } from "@synsec/github/replay-store";
 import { FileGitHubScanQueue } from "@synsec/github/scan-queue";
+import { ensurePrivateDirectory } from "../packages/github/dist/private-directory.js";
 
 test("GitHub durable stores repair permissive pre-existing directories where supported", async () => {
   if (process.platform === "win32") return;
@@ -46,6 +47,24 @@ test("GitHub durable stores repair permissive pre-existing directories where sup
     for (const directory of [installationDirectory, replayDirectory, queueDirectory]) {
       assert.equal((await stat(directory)).mode & 0o777, 0o700);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private durable directory handling refuses a symlink final path", async () => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "synsec-private-state-symlink-"));
+  const realDirectory = join(root, "real");
+  const linkedDirectory = join(root, "linked");
+  try {
+    await mkdir(realDirectory, { mode: 0o755 });
+    await symlink(realDirectory, linkedDirectory, "dir");
+    await assert.rejects(
+      () => ensurePrivateDirectory(linkedDirectory),
+      /real directory|EEXIST|not a directory/i,
+    );
+    assert.equal((await stat(realDirectory)).mode & 0o777, 0o755);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
