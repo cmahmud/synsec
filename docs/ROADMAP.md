@@ -112,8 +112,12 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Inline SARIF/code-scanning upload
 - [x] Provenance-safe pull-request baseline acquisition from the exact local base commit
 - [x] Scheduled full-repository workflow template with explicit report-artifact retention
-- [ ] GitHub App
-- [ ] Repository installation flow
+- [x] GitHub App HMAC webhook verification and bounded event normalization
+- [x] GitHub App short-lived JWT and fixed-host installation-token exchange primitives
+- [x] Explicit GitHub App scan-trigger allowlist for push and selected PR lifecycle events
+- [ ] Hosted GitHub App webhook/service orchestration
+- [ ] Repository installation/setup flow and durable installation state
+- [ ] Durable webhook delivery replay protection
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
@@ -123,7 +127,9 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-See [GITHUB.md](./GITHUB.md) for the current integration contract and security boundaries.
+GitHub App support is currently a hosting foundation, not a complete hosted service. Verified webhooks never derive scanner targets from payload-controlled URLs, installation-management events are not scan triggers, and installation-token exchange is fixed to `api.github.com`. A production service still needs durable installation/delivery state, isolated commit-pinned checkout workers, queueing, and setup UX. See [GITHUB_APP.md](./GITHUB_APP.md).
+
+See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
 ## Phase 6 — Persistent web application
 
@@ -145,14 +151,18 @@ The local history store retains only report identifiers, timestamps, commit/bran
 
 ## Phase 7 — Isolated scan workers
 
+- [x] Scanner subprocess timeout, abort, output-memory, and kill-escalation bounds
+- [x] Credential-minimized default scanner subprocess environment
 - [ ] Containerized scanner images
 - [ ] Job queue
 - [ ] Per-scan workspace isolation
-- [ ] Resource limits and timeouts
+- [ ] OS/container CPU and memory limits
 - [ ] Network policy
 - [ ] Horizontal workers
 - [ ] Artifact retention policy
-- [ ] Secrets/credential minimization for private repository clones
+- [ ] Secrets/credential minimization for private repository clones and filesystem credentials
+
+External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. This prevents ambient CI/App/cloud tokens and credential-bearing proxy variables from being handed to scanner binaries automatically. It is not a complete filesystem credential sandbox: container/workspace isolation and private-clone credential minimization remain open work.
 
 ## Later — explicitly authorized external assessment
 
