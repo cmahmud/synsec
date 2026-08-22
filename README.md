@@ -2,7 +2,7 @@
 
 SynSec is a repository-first security scanner that combines mature open-source security engines into one normalized, correlated report.
 
-Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Grype, Checkov, and OpenSSF Scorecard, SynSec runs them through a common adapter layer, merges overlapping results, adds repository context, tracks changes against baselines, exports developer-friendly reports, and can optionally send selected findings through an OpenAI-compatible model router for a separate review pass.
+Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Grype, Checkov, Syft, and OpenSSF Scorecard, SynSec runs them through a common adapter layer, merges overlapping results, preserves supporting artifacts such as SBOMs, adds repository context, tracks changes against baselines, exports developer-friendly reports, and can optionally send selected findings through an OpenAI-compatible model router for a separate review pass.
 
 > **Current release line:** v0.2 development MVP. The repository is usable for local testing, but scanner adapters and report schemas may still change before v1.0.
 
@@ -17,11 +17,14 @@ Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Gr
 - Trivy vulnerability, secret, and misconfiguration analysis.
 - Grype dependency/package analysis.
 - Checkov IaC analysis.
+- Syft SBOM generation with normalized package, PURL, license, and location metadata.
 - OpenSSF Scorecard repository-posture analysis.
-- Scanner-independent finding schema.
+- Generic SARIF 2.1 import for bringing third-party scanner findings into SynSec.
+- Scanner-independent finding and artifact schemas.
 - Deterministic cross-scanner correlation and deduplication.
 - Repository language/framework inventory.
 - Git commit, branch, and remote metadata discovery with credential redaction.
+- Changed-file scan scope for pull-request and incremental workflows, with direct narrowing for supported scanners.
 - Versioned JSON reports.
 - Self-contained HTML security dashboard.
 - SARIF 2.1.0 output for code-scanning systems.
@@ -29,6 +32,7 @@ Instead of replacing tools such as Opengrep, Trivy, Betterleaks, OSV-Scanner, Gr
 - Configurable CI failure thresholds.
 - Explicit opt-in AI finding review through an OpenAI-compatible endpoint.
 - A seven-question AI review gate that keeps scanner evidence separate from model inference.
+- Capability-scoped defensive review workflows for repository, dependency, secret, and infrastructure findings.
 
 ## Quick start
 
@@ -64,7 +68,7 @@ A normal scan writes:
 └── report.sarif
 ```
 
-Open `report.html` locally for the dashboard.
+The JSON report can also contain scanner artifacts such as a normalized Syft SBOM. Open `report.html` locally for the dashboard.
 
 ## Commands
 
@@ -73,6 +77,8 @@ synsec init [path]
 synsec doctor [path]
 synsec scan <path> [options]
 synsec review <report.json> [options]
+synsec import-sarif <input.sarif> [options]
+synsec workflows
 synsec render <report.json>
 synsec baseline <report.json> [destination]
 synsec version
@@ -84,6 +90,8 @@ Useful scan options:
 --scanners opengrep,betterleaks,trivy
 --parallel 3
 --timeout 900
+--changed
+--changed-base main
 --fail-on high
 --baseline .synsec/baseline.json
 --json
@@ -110,6 +118,7 @@ That creates `synsec.config.json`.
     "trivy",
     "grype",
     "checkov",
+    "syft",
     "scorecard"
   ],
   "parallelism": 3,
@@ -141,13 +150,40 @@ That creates `synsec.config.json`.
 | Trivy | `trivy` | dependencies, secrets, IaC/misconfiguration | yes |
 | Grype | `grype` | package/dependency vulnerabilities | yes |
 | Checkov | `checkov` | infrastructure-as-code | yes |
+| Syft | `syft` | software bill of materials / package inventory | yes |
 | OpenSSF Scorecard | `scorecard` | repository security posture | yes |
 
 Betterleaks is preferred for new installs because it is the actively developed successor maintained by the Gitleaks team. SynSec does **not** enable Betterleaks live credential validation; the adapter performs repository scanning with redacted report output only.
 
+Syft is an artifact-producing scanner in SynSec. It does not manufacture vulnerability findings: its package inventory is preserved as an SBOM artifact in the report and can be used by later dependency/reachability workflows.
+
 OpenSSF Scorecard results are treated as repository-posture findings rather than definitive vulnerabilities. Perfect 10/10 checks are not manufactured into findings; non-perfect checks retain their own score and reason as metadata.
 
 The engines stay separate projects with their own licenses. SynSec invokes installed binaries and parses their machine-readable output rather than copying their source into this repository.
+
+## Changed-file scans
+
+For pull-request or incremental analysis, SynSec can scope a report to files changed since a Git base ref:
+
+```bash
+npm run synsec -- scan . --changed --changed-base main
+```
+
+When `--changed-base` is omitted, SynSec uses the GitHub pull-request base branch when `GITHUB_BASE_REF` is available and otherwise falls back to `HEAD~1`.
+
+The report records the scope and changed file list. File-located findings outside that diff are omitted, while repository-level findings that do not map to one file are retained. Opengrep and Betterleaks currently narrow execution directly to the changed files; other scanners may still perform their normal repository analysis before SynSec filters file-located results. This distinction is intentional so the report does not imply that every underlying engine has a native incremental mode.
+
+## Importing SARIF
+
+SynSec can ingest SARIF 2.1 output from another scanner and normalize it into the same finding/report model:
+
+```bash
+npm run synsec -- import-sarif external-results.sarif --root .
+```
+
+By default this writes `.synsec/imported-report.json` and an adjacent HTML report. The importer preserves rule IDs, locations, severity, confidence when present, common identifiers, remediation text, source tool version, and a native partial fingerprint when supplied.
+
+This is an import path, not a command-execution plugin: SynSec reads the SARIF document and does not execute the producing scanner.
 
 ## Correlation
 
@@ -194,7 +230,7 @@ The new report tracks new, fixed, and persisting findings. This makes SynSec use
 
 AI is a **second-pass reviewer**, not the source of truth. It is disabled by default.
 
-SynSec supports endpoints implementing the OpenAI-compatible `/chat/completions` shape, including local gateways and model routers. A router such as OmniRoute, a self-hosted gateway, or another compatible provider can therefore sit behind SynSec without tying the project to one model vendor.
+SynSec supports endpoints implementing the OpenAI-compatible `/chat/completions` shape, including local gateways and model routers. A self-hosted router or another compatible provider can therefore sit behind SynSec without tying the project to one model vendor.
 
 ```bash
 export SYNSEC_AI_BASE_URL="http://localhost:PORT/v1"
@@ -224,6 +260,23 @@ The review uses seven checks:
 
 Unknown evidence stays `unknown`; the reviewer is instructed not to invent proof.
 
+## Defensive workflows
+
+`npm run synsec -- workflows` lists the built-in review workflows. Current workflows are:
+
+- `repository-review` — broad review of normalized repository findings;
+- `dependency-review` — dependencies, containers, supply chain, and license findings;
+- `secrets-review` — redacted secret metadata only, with source context prohibited;
+- `infrastructure-review` — IaC, configuration, and repository-posture findings.
+
+A workflow can be selected during AI review:
+
+```bash
+npm run synsec -- scan . --ai --workflow dependency-review
+```
+
+Workflow definitions declare allowed capabilities. Repository modifications require an explicit approval boundary, and external network assessment is forbidden in these repository workflows.
+
 ## Privacy and network behavior
 
 Repository contents stay local to SynSec and its local scanner processes unless the operator explicitly enables an integration or scanner behavior that communicates externally.
@@ -234,7 +287,7 @@ Important exceptions to understand:
 - Opengrep's `auto` rules configuration may fetch rule configuration from the network.
 - OpenSSF Scorecard can use Git hosting APIs and may need a GitHub token for complete/rate-limit-friendly results.
 - AI review sends normalized finding metadata to the configured model endpoint when enabled.
-- Source excerpts are only sent to the AI endpoint when `sendSourceContext` or `--ai-source` is explicitly enabled.
+- Source excerpts are only sent to the AI endpoint when `sendSourceContext` or `--ai-source` is explicitly enabled and the selected workflow permits them.
 
 Secret scanner output is requested with full redaction, and SynSec deliberately does not copy secret values into normalized findings.
 
@@ -253,6 +306,7 @@ repository
            +-- Trivy
            +-- Grype
            +-- Checkov
+           +-- Syft ----------> SBOM artifact
            +-- OpenSSF Scorecard
                   |
                   v
@@ -265,7 +319,7 @@ repository
           |                |
           v                v
       reports          optional AI review
-   JSON/HTML/SARIF       (separate evidence)
+   JSON/HTML/SARIF       + workflows
           |
           v
       baseline diff
@@ -275,14 +329,15 @@ The codebase is split into small packages:
 
 ```text
 apps/cli              command-line product
-packages/core         domain model + correlation
+packages/core         domain model + correlation + artifact types
 packages/config       stable configuration format
 packages/scanner-sdk  scanner adapter/process boundary
-packages/scanners     built-in scanner integrations
+packages/scanners     built-in scanner integrations + SARIF importer
 packages/repository   safe repository inventory/context
-packages/report       JSON/SARIF/HTML + baselines
-packages/engine       orchestration and failure isolation
+packages/report       JSON/SARIF/HTML + baselines + scan scope
+packages/engine       orchestration, incremental scope, failure isolation
 packages/ai           opt-in provider-agnostic review gate
+packages/workflows    capability-scoped defensive review workflows
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and package details and [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned work.
@@ -306,7 +361,7 @@ CI runs the build, typecheck, and test suite on Node 20 and Node 24.
 
 ## Project status
 
-v0.2 is intended to be the first release worth hands-on testing. The next major work after scanner reliability is repository reachability/context, GitHub pull-request integration, stronger finding lifecycle management, reusable defensive workflows, and a richer persistent web application.
+v0.2 is intended to be the first release worth hands-on testing. The next major work after scanner reliability is repository reachability/context, GitHub pull-request integration, stronger finding lifecycle management, fix-verification/report-writing workflows, model-routing policy, and a richer persistent web application.
 
 ## License
 
