@@ -27,13 +27,15 @@ SynSec's GitHub App support is a transport and orchestration layer around the sa
 
 `@synsec/github/app-handler` composes signature verification, replay claiming, installation-state synchronization, durable authorization, and queue dispatch in one tested boundary. Duplicate authenticated deliveries do not mutate installation state or enqueue duplicate work; installation-management events remain bookkeeping-only. If durable synchronization or queue dispatch fails after an accepted replay claim, the handler releases exactly that still-current claim before propagating the error so the delivery can be retried instead of being silently consumed.
 
+`@synsec/github/app-http` provides a framework-free Node HTTP request handler for mounting behind an HTTPS terminator or server. It accepts only POST requests at one configured path, requires JSON plus GitHub signature/event/delivery headers, bounds the raw body to 10 MiB before durable handling, emits `no-store` minimal responses, returns `202` only for queued scans, and does not reflect internal failure details. Durable-processing failures surface as generic `500` responses after replay-claim release so GitHub can retry.
+
 `@synsec/github/repository-acquisition` materializes one exact commit from a strict `owner/name` identity through a fixed `https://github.com/<owner>/<repo>.git` transport. It rejects URL-shaped repository identities before URL construction, disables system/global Git configuration and `file://` transport so local rewrite rules cannot redirect the request, keeps the installation token out of argv and repository config, skips Git LFS smudging/submodule initialization, checks out detached `FETCH_HEAD`, verifies the resulting HEAD against the requested SHA, and removes failed temporary workspaces.
 
 `@synsec/github/app-worker` consumes at most one leased queue job, rechecks installation authorization at execution time, acquires a short-lived token only for transport, scans the exact-commit workspace through an injected repository-scan runner, requires the resulting report to bind to the queued head SHA, obtains a fresh publication token, publishes through an injected GitHub transport, and acknowledges the queue only after publication succeeds. A repository removed or suspended after queueing is failed before credentials or source are acquired. Other worker failures return the job to the bounded retry queue.
 
 `@synsec/github/app-worker-runner` is the production-oriented local composition over that worker boundary. It runs the existing `runScanEngine()` against the acquired exact-commit workspace, builds a check from the normalized queue repository/head context, publishes through the fixed Checks API transport, and can upload the same commit-bound report as SARIF. Pull-request jobs currently use a full repository scan at this layer; SynSec does not invent a changed-file baseline from a branch name when the exact base commit has not also been acquired.
 
-These primitives still do **not** constitute a complete hosted GitHub App product by themselves. A minimal HTTPS server, concrete App-JWT/private-key configuration, process/container isolation, operational secret management, setup UX, and shared transactional persistence for multi-host deployments remain required.
+These primitives now form an end-to-end local hosting chain, but they still do **not** constitute a complete hosted GitHub App product by themselves. TLS/runtime deployment, concrete App-JWT/private-key configuration, process/container isolation, operational secret management, setup UX, and shared transactional persistence for multi-host deployments remain required.
 
 ## Webhook boundary
 
@@ -41,7 +43,7 @@ Webhook consumers must preserve the raw request bytes until signature verificati
 
 After verification, callers should use the normalized event rather than payload URLs as the security boundary. Repository checkout and API publication derive from validated GitHub installation/repository identity through fixed GitHub transports. A `clone_url`, `html_url`, scanner-provided URL, finding text, or other repository-controlled field must never become an arbitrary outbound target.
 
-The preferred local composition is `handleGitHubAppWebhook()`: signature verification and event normalization happen before the replay claim; duplicate authenticated deliveries stop before synchronization/dispatch; installation-management events synchronize durable authorization state; and scan-bearing events must pass `isRepositoryAllowed()` before queueing. Installation creation/removal and repository-selection changes never authorize immediate scanner execution by themselves. A transient durable-processing error releases only the handler's exact accepted replay claim and is then propagated so the hosting layer can return failure to GitHub and receive a retry.
+The preferred local HTTP boundary is `createGitHubAppWebhookHttpHandler()` mounted behind HTTPS. It bounds the body while reading it and delegates durable handling to `handleGitHubAppWebhook()`: signature verification and event normalization happen before the replay claim; duplicate authenticated deliveries stop before synchronization/dispatch; installation-management events synchronize durable authorization state; and scan-bearing events must pass `isRepositoryAllowed()` before queueing. Installation creation/removal and repository-selection changes never authorize immediate scanner execution by themselves. A transient durable-processing error releases only the handler's exact accepted replay claim and is then propagated so the HTTP layer can return failure to GitHub and receive a retry.
 
 ## Queue and worker boundary
 
@@ -65,7 +67,7 @@ A hosted service should validate its configured GitHub App permissions explicitl
 
 A production hosted App still needs:
 
-1. a minimal HTTPS webhook endpoint that preserves raw request bytes and invokes `handleGitHubAppWebhook()`;
+1. TLS/runtime deployment around the bounded HTTP handler, with request/server timeouts and operational health handling;
 2. concrete App-JWT/private-key configuration and installation-token providers for the worker;
 3. exact-base acquisition/baseline composition for changed-file PR scans when that optimization is enabled;
 4. process/container workspace isolation around scans, including OS CPU/memory limits and network policy;
