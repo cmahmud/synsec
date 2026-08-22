@@ -26,7 +26,7 @@ The production file queue exposes its configured `leaseMs` and a fenced `renew()
 
 Renewal does not create a new claim and does not change the fence. It only extends `leaseUntil` for the currently owned lease after revalidating the stored `leaseId` and expiry state.
 
-The heartbeat remains active across repository acquisition, scanning, report construction, and publication. Before GitHub publication the worker also performs an explicit fenced `assertLease()` check. Before completion or retry mutation it stops the heartbeat and checks whether any renewal failed.
+The heartbeat remains active across repository acquisition, scanning, report construction, and publication. Before GitHub publication the worker also performs an explicit fenced `assertLease()` check. Before completion or retry mutation it stops the heartbeat and waits for any in-flight renewal before checking whether the heartbeat failed.
 
 If renewal fails, SynSec treats the worker as no longer safely authoritative. It does not silently continue as though ownership were intact. Publication/completion is blocked by the failed heartbeat or by the explicit lease assertion, and any retry mutation must still satisfy the same fence.
 
@@ -37,6 +37,21 @@ An active unexpired lease is not claimable by another worker. Once `leaseUntil` 
 The previous worker's fence is immediately stale. It cannot release, fail, complete, renew, or pass the pre-publication ownership check for the reclaimed job.
 
 This protects against a common failure mode where a slow or paused worker resumes after another worker has already taken ownership.
+
+## In-process enqueue and authorization ordering
+
+The supported single-runtime implementation also serializes two read-modify-write operations whose correctness depends on ordering:
+
+- `enqueue()` duplicate-delivery and capacity checks are serialized within one `FileGitHubScanQueue` instance, so concurrent calls in that runtime cannot both persist the same delivery id after racing the same pre-write snapshot.
+- GitHub installation/repository-selection synchronization is serialized per installation id and state-store instance. Concurrent deltas for the same installation therefore observe the preceding committed authorization state instead of both deriving replacements from one stale repository set. Events for different installations remain independently concurrent.
+
+These are deliberately in-process guarantees. They do not turn two separate Node processes, two queue/store objects over the same directory, or a shared filesystem into a transactional datastore.
+
+## Durable-state filesystem permissions
+
+Queue records, installation authorization state, and replay markers are written as private files. Their store directories are also created as `0700` and, on platforms with POSIX permissions, SynSec repairs a pre-existing more-permissive directory back to `0700` before writing/listing durable state. This matters because installation records can contain account/repository authorization names even though credentials and source are excluded.
+
+This directory repair applies to the local filesystem stores only. It is not a substitute for host access controls, encrypted storage where required, or a transactional shared service for multi-host deployments.
 
 ## Operational status
 
@@ -62,24 +77,26 @@ The heartbeat is process-local. It is not persisted as a timer and does not surv
 
 ## Single-host concurrency limitation
 
-The current file-backed queue improves stale-worker correctness with unique fencing identities and renewal, but it is still a single-host runtime foundation. `claimNext()` calls are serialized inside one `FileGitHubScanQueue` instance so multiple worker loops using the same runtime object cannot race the local read/replace claim path.
+The current file-backed queue improves stale-worker correctness with unique fencing identities and renewal, but it is still a single-host runtime foundation. Claims and enqueue duplicate/capacity checks are serialized inside one `FileGitHubScanQueue` instance; installation authorization deltas are similarly ordered within one runtime per installation.
 
-That in-process serialization is not a cross-process lock. Independent Node processes, separate queue instances pointed at the same directory, shared network filesystems, and multi-host deployment are not advertised as linearizable or transactionally safe.
+That in-process serialization is not a cross-process lock. Independent Node processes, separate queue/store instances pointed at the same directory, shared network filesystems, and multi-host deployment are not advertised as linearizable or transactionally safe.
 
-Production horizontal scaling still requires a transactional shared queue/state backend with an atomic equivalent of:
+Production horizontal scaling still requires a transactional shared queue/state backend with atomic equivalents of:
 
-1. select eligible pending/expired work;
-2. compare current durable state;
-3. install a unique lease fence and expiry;
-4. renew only that exact fence; and
-5. condition terminal/retry acknowledgement on that same fence.
+1. unique delivery insertion and queue capacity enforcement;
+2. select eligible pending/expired work;
+3. compare current durable state;
+4. install a unique lease fence and expiry;
+5. renew only that exact fence;
+6. condition terminal/retry acknowledgement on that same fence; and
+7. transactionally apply installation/repository authorization deltas.
 
-A future shared backend must preserve these semantics rather than weakening them to job-id-only acknowledgement.
+A future shared backend must preserve these semantics rather than weakening them to job-id-only acknowledgement or last-write-wins authorization updates.
 
-Until such a backend exists, operators should keep this file queue on one host and one runtime process/queue instance. Service supervision may restart that process, but operators should not run multiple independent worker processes against the same queue directory. Do not treat shared filesystem placement as a supported substitute for transactional multi-host persistence.
+Until such a backend exists, operators should keep this file queue and installation state on one host and one runtime process/store instance. Service supervision may restart that process, but operators should not run multiple independent worker/runtime processes against the same durable state directories. Do not treat shared filesystem placement as a supported substitute for transactional multi-host persistence.
 
 ## Security boundary
 
-Queue leasing does not widen scan scope or grant new repository capability. Repository authorization is rechecked after claim, acquisition stays pinned to queued exact commits, scanners do not receive GitHub credentials, and publication remains commit-bound.
+Queue leasing and authorization ordering do not widen scan scope or grant new repository capability. Repository authorization is rechecked after claim, acquisition stays pinned to queued exact commits, scanners do not receive GitHub credentials, and publication remains commit-bound.
 
 The queue never authorizes autonomous live-target assessment, target expansion, persistence, secret exfiltration, or unapproved repository writes. Remediation remains a separate explicit approval-consuming workflow with distinct write credentials.
