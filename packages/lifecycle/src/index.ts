@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CorrelatedFinding } from "@synsec/core";
 import type { SynSecReport } from "@synsec/report";
@@ -60,6 +60,13 @@ export interface RemediationVerification {
   };
 }
 
+const MAX_LIFECYCLE_BYTES = 16 * 1024 * 1024;
+const MAX_LIFECYCLE_RECORDS = 100_000;
+const MAX_FINGERPRINT_LENGTH = 512;
+const MAX_NOTE_LENGTH = 10_000;
+const MAX_REPORT_ID_LENGTH = 512;
+const MAX_PATH_LENGTH = 4096;
+
 export function emptyLifecycleStore(): FindingLifecycleStore {
   return { schemaVersion: 1, records: {} };
 }
@@ -68,14 +75,44 @@ export function isFindingState(value: unknown): value is FindingState {
   return value === "new" || value === "confirmed" || value === "false-positive" || value === "accepted-risk" || value === "fixed" || value === "regressed";
 }
 
+function boundedString(value: unknown, maxLength: number, required = false): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (required && !trimmed) return false;
+  return value.length <= maxLength;
+}
+
+function validTimestamp(value: unknown): value is string {
+  return boundedString(value, 128, true) && Number.isFinite(Date.parse(value));
+}
+
+function isLifecycleRecord(value: unknown, key: string): value is FindingLifecycleRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!boundedString(record.fingerprint, MAX_FINGERPRINT_LENGTH, true) || record.fingerprint !== key) return false;
+  if (!isFindingState(record.state) || !validTimestamp(record.updatedAt)) return false;
+  if (record.note !== undefined && !boundedString(record.note, MAX_NOTE_LENGTH)) return false;
+  if (record.reportId !== undefined && !boundedString(record.reportId, MAX_REPORT_ID_LENGTH, true)) return false;
+  if (record.lastSeenPath !== undefined && !boundedString(record.lastSeenPath, MAX_PATH_LENGTH, true)) return false;
+  return true;
+}
+
 export function isLifecycleStore(value: unknown): value is FindingLifecycleStore {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.schemaVersion === 1 && typeof record.records === "object" && record.records !== null && !Array.isArray(record.records);
+  if (record.schemaVersion !== 1 || typeof record.records !== "object" || record.records === null || Array.isArray(record.records)) return false;
+  const entries = Object.entries(record.records as Record<string, unknown>);
+  if (entries.length > MAX_LIFECYCLE_RECORDS) return false;
+  return entries.every(([key, item]) => boundedString(key, MAX_FINGERPRINT_LENGTH, true) && isLifecycleRecord(item, key));
 }
 
 export async function readLifecycleStore(path: string): Promise<FindingLifecycleStore> {
   try {
+    const metadata = await stat(path);
+    if (!metadata.isFile()) throw new Error(`SynSec lifecycle store is not a file: ${path}`);
+    if (metadata.size > MAX_LIFECYCLE_BYTES) {
+      throw new Error(`SynSec lifecycle store exceeds the ${MAX_LIFECYCLE_BYTES}-byte limit: ${path}`);
+    }
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (!isLifecycleStore(parsed)) throw new Error(`Not a supported SynSec lifecycle store: ${path}`);
     return parsed;
@@ -89,8 +126,23 @@ export async function readLifecycleStore(path: string): Promise<FindingLifecycle
 }
 
 export async function writeLifecycleStore(path: string, store: FindingLifecycleStore): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  if (!isLifecycleStore(store)) throw new Error("Refusing to write an invalid SynSec lifecycle store.");
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const serialized = `${JSON.stringify(store, null, 2)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_LIFECYCLE_BYTES) {
+    throw new Error(`SynSec lifecycle store exceeds the ${MAX_LIFECYCLE_BYTES}-byte limit.`);
+  }
+
+  try {
+    await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await chmod(temporaryPath, 0o600).catch(() => undefined);
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600).catch(() => undefined);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
 
 export function setFindingState(
@@ -258,32 +310,27 @@ export function verifyRemediation(
         reasons: ["The requested fingerprint is not present in the before report."],
       };
     }
-    if (afterByFingerprint.has(fingerprint)) {
+
+    const persisting = afterByFingerprint.get(fingerprint);
+    if (persisting) {
       return {
         fingerprint,
         title: baseline.primary.title,
         status: "persisting" as const,
-        reasons: ["The same correlated finding fingerprint is still present after remediation."],
+        reasons: ["The same normalized finding fingerprint is still present after remediation."],
       };
     }
 
-    const scannerCoverage = afterReranDetectingScanner(after, baseline);
-    const scopeCoverage = afterScopeCoversFinding(after, baseline);
-    const reasons = [scannerCoverage.reason, scopeCoverage.reason].filter((value): value is string => Boolean(value));
-    if (!scannerCoverage.covered || !scopeCoverage.covered) {
-      return {
-        fingerprint,
-        title: baseline.primary.title,
-        status: "inconclusive" as const,
-        reasons,
-      };
-    }
-
+    const scope = afterScopeCoversFinding(after, baseline);
+    const scanner = afterReranDetectingScanner(after, baseline);
+    const reasons = [scope.reason, scanner.reason].filter((reason): reason is string => Boolean(reason));
     return {
       fingerprint,
       title: baseline.primary.title,
-      status: "fixed" as const,
-      reasons: ["The finding disappeared after a detecting scanner re-ran over the affected scope."],
+      status: scope.covered && scanner.covered ? "fixed" as const : "inconclusive" as const,
+      reasons: scope.covered && scanner.covered
+        ? ["The finding disappeared after its source path and at least one detecting scanner were rechecked."]
+        : reasons,
     };
   });
 
@@ -308,9 +355,4 @@ export function verifyRemediation(
       newFindings: newFindings.length,
     },
   };
-}
-
-export async function writeRemediationVerification(path: string, verification: RemediationVerification): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(verification, null, 2)}\n`, "utf8");
 }
