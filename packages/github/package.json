@@ -17,6 +17,7 @@
     "./app-dispatch": "./dist/app-dispatch.js",
     "./app-handler": "./dist/app-handler.js",
     "./app-http": "./dist/app-http.js",
+    "./app-runtime": "./dist/app-runtime.js",
     "./app-worker": "./dist/app-worker.js",
     "./app-worker-runner": "./dist/app-worker-runner.js",
     "./replay-store": "./dist/replay-store.js",
