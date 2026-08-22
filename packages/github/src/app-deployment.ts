@@ -41,12 +41,13 @@ function isPositiveAppId(value: number | string): boolean {
 
 function looksLikePemPrivateKey(value: string): boolean {
   const trimmed = value.trim();
-  return (
-    (trimmed.startsWith("-----BEGIN RSA PRIVATE KEY-----") ||
-      trimmed.startsWith("-----BEGIN PRIVATE KEY-----")) &&
-    (trimmed.endsWith("-----END RSA PRIVATE KEY-----") ||
-      trimmed.endsWith("-----END PRIVATE KEY-----"))
-  );
+  if (trimmed.startsWith("-----BEGIN RSA PRIVATE KEY-----")) {
+    return trimmed.endsWith("-----END RSA PRIVATE KEY-----");
+  }
+  if (trimmed.startsWith("-----BEGIN PRIVATE KEY-----")) {
+    return trimmed.endsWith("-----END PRIVATE KEY-----");
+  }
+  return false;
 }
 
 function directoriesOverlap(left: string, right: string): boolean {
@@ -96,11 +97,11 @@ export function validateGitHubAppDeployment(
     });
   }
 
-  if (!host || /[\s/]/.test(host)) {
+  if (!host || host === "*" || /[\s/]/.test(host)) {
     issues.push({
       level: "error",
       code: "invalid-listen-host",
-      message: "Listener host must be a host name or IP address, not a URL or path.",
+      message: "Listener host must be a host name or IP address, not a URL, wildcard, or path.",
     });
   } else if (config.tlsMode === "none" && !LOOPBACK_HOSTS.has(host)) {
     issues.push({
