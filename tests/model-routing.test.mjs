@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { routeModel } from "../packages/workflows/dist/routing.js";
+import { routeModel, routeModelSet } from "../packages/workflows/dist/routing.js";
 
 const candidates = [
   {
@@ -90,4 +90,70 @@ test("local preference is deterministic when multiple candidates remain eligible
     preferLocal: true,
   });
   assert.equal(privateDecision.candidate.id, "local-small");
+});
+
+test("routeModelSet selects distinct reviewers with the same eligibility policy", () => {
+  const expanded = [
+    ...candidates,
+    {
+      id: "local-security",
+      tasks: ["security-reasoner", "verifier"],
+      costTier: 1,
+      latencyTier: 1,
+      privacy: "local",
+      supportsSourceContext: true,
+    },
+    {
+      id: "remote-security-2",
+      tasks: ["security-reasoner"],
+      costTier: 2,
+      latencyTier: 1,
+      privacy: "remote",
+      supportsSourceContext: true,
+    },
+    {
+      id: "local-security",
+      tasks: ["security-reasoner"],
+      costTier: 0,
+      latencyTier: 0,
+      privacy: "local",
+      supportsSourceContext: true,
+    },
+  ];
+  const decision = routeModelSet(expanded, {
+    task: "security-reasoner",
+    sourceContextRequested: false,
+    preferLocal: true,
+  }, 3);
+  assert.deepEqual(decision.candidates.map((candidate) => candidate.id), [
+    "local-security",
+    "private-security",
+    "remote-security-2",
+  ]);
+  assert.equal(new Set(decision.candidates.map((candidate) => candidate.id)).size, 3);
+});
+
+test("routeModelSet fails closed when source/privacy constraints leave too few reviewers", () => {
+  assert.throws(
+    () => routeModelSet(candidates, {
+      task: "security-reasoner",
+      sourceContextRequested: true,
+    }, 2),
+    /Only 1 distinct model candidate\(s\).*2 required/,
+  );
+  assert.throws(
+    () => routeModelSet(candidates, {
+      task: "verifier",
+      sourceContextRequested: false,
+      requireLocal: true,
+    }, 2),
+    /Only 0 distinct model candidate\(s\).*privacy=local-only/,
+  );
+});
+
+test("routeModelSet validates the consensus reviewer count", () => {
+  assert.throws(
+    () => routeModelSet(candidates, { task: "security-reasoner", sourceContextRequested: false }, 1),
+    /between 2 and 10/,
+  );
 });
