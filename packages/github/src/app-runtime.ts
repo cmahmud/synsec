@@ -6,6 +6,7 @@ import { createGitHubAppInstallationTokenProvider } from "./app-token-provider.j
 import { runConfiguredGitHubAppWorkerOnce, type ConfiguredGitHubAppWorkerOptions } from "./app-worker-runner.js";
 import { FileGitHubInstallationStore } from "./installation-store.js";
 import { FileGitHubWebhookReplayStore } from "./replay-store.js";
+import { pruneGitHubAppFailedJobs, type GitHubAppRetentionResult } from "./retention.js";
 import { FileGitHubScanQueue } from "./scan-queue.js";
 import type { GitHubCheckThreshold } from "./index.js";
 import type { GitHubPublisherOptions } from "./publisher.js";
@@ -20,11 +21,18 @@ export interface LocalGitHubAppRuntimeOptions extends GitHubPublisherOptions {
   webhookPath?: string;
   replayRetentionMs?: number;
   queueLeaseMs?: number;
+  failedJobRetentionMs?: number;
+  retentionMaxDeletes?: number;
   threshold?: GitHubCheckThreshold;
   publishSarif?: boolean;
   toolVersion?: string;
   onWebhookError?: (error: unknown) => void;
   now?: () => number;
+}
+
+export interface LocalGitHubAppMaintenanceResult {
+  expiredReplayRecordsDeleted: number;
+  failedJobs: GitHubAppRetentionResult;
 }
 
 export interface LocalGitHubAppRuntime {
@@ -35,6 +43,7 @@ export interface LocalGitHubAppRuntime {
   queue: FileGitHubScanQueue;
   webhookHandler: ReturnType<typeof createGitHubAppWebhookHttpHandler>;
   runWorkerOnce(): ReturnType<typeof runConfiguredGitHubAppWorkerOnce>;
+  runMaintenance(): Promise<LocalGitHubAppMaintenanceResult>;
 }
 
 function requiredDirectory(value: string, label: string): string {
@@ -129,5 +138,13 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
     queue,
     webhookHandler,
     runWorkerOnce: () => runConfiguredGitHubAppWorkerOnce(workerOptions),
+    runMaintenance: async () => ({
+      expiredReplayRecordsDeleted: await replayStore.pruneExpired(),
+      failedJobs: await pruneGitHubAppFailedJobs(queue, {
+        ...(options.failedJobRetentionMs !== undefined ? { failedJobRetentionMs: options.failedJobRetentionMs } : {}),
+        ...(options.retentionMaxDeletes !== undefined ? { maxDeletes: options.retentionMaxDeletes } : {}),
+        ...(options.now ? { now: options.now } : {}),
+      }),
+    }),
   };
 }
