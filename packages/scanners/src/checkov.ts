@@ -2,12 +2,17 @@ import { randomUUID } from "node:crypto";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
-import { asArray, asNumber, asRecord, asString, commandAvailability, normalizeSeverity, safeJson } from "./utils.js";
+import { asArray, asNumber, asRecord, asString, commandAvailability, normalizeSeverity, relativeLike, safeJson } from "./utils.js";
 
 function runnerObjects(parsed: unknown): Record<string, unknown>[] {
   if (Array.isArray(parsed)) return parsed.map(asRecord).filter((value): value is Record<string, unknown> => Boolean(value));
   const record = asRecord(parsed);
   return record ? [record] : [];
+}
+
+function checkovRepositoryPath(value: unknown): string | undefined {
+  const raw = asString(value)?.replace(/^\/+/, "");
+  return relativeLike(raw, "");
 }
 
 export function parseCheckovJson(raw: string): Finding[] {
@@ -20,7 +25,7 @@ export function parseCheckovJson(raw: string): Finding[] {
       const item = asRecord(value);
       if (!item) continue;
       const ruleId = asString(item.check_id) ?? asString(item.bc_check_id);
-      const file = asString(item.file_path)?.replace(/^\//, "");
+      const file = checkovRepositoryPath(item.file_path);
       const range = asArray(item.file_line_range);
       const startLine = asNumber(range[0]);
       const endLine = asNumber(range[1]);
