@@ -46,6 +46,18 @@ test("scan queue leases, releases, and completes work deterministically", async 
   assert.equal((await queue.claimNext()).repository, "o/b");
 });
 
+test("concurrent claims on one local queue instance are serialized", async () => {
+  const { queue } = await setup({ leaseMs: 10_000 });
+  const pending = await queue.enqueue({ deliveryId: "serialized", installationId: 1, repository: "o/r", headSha: "a".repeat(40), event: "push" });
+  const results = await Promise.all([queue.claimNext(), queue.claimNext()]);
+  const claimed = results.filter(Boolean);
+  const idle = results.filter((value) => value === undefined);
+  assert.equal(claimed.length, 1);
+  assert.equal(idle.length, 1);
+  assert.equal(claimed[0].jobId, pending.jobId);
+  assert.equal(claimed[0].attempts, 1);
+});
+
 test("expired leases can be reclaimed but active leases cannot", async () => {
   let now = Date.parse("2026-08-22T18:20:00.000Z");
   const { queue } = await setup({ now: () => now, leaseMs: 10_000 });
