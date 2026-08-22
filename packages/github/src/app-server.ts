@@ -100,6 +100,7 @@ function safeStatus(status: GitHubAppRuntimeStatus): Record<string, unknown> {
       total: status.queue.total,
       pending: status.queue.pending,
       leased: status.queue.leased,
+      expiredLeases: status.queue.expiredLeases,
       failed: status.queue.failed,
     },
   };
