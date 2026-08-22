@@ -42,6 +42,7 @@ export interface ProcessOptions {
   cwd?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Explicit child environment. When omitted, SynSec passes only a small non-secret OS allowlist. */
   env?: NodeJS.ProcessEnv;
   /** Maximum bytes retained from each output stream. Defaults to 64 MiB per stream. */
   maxOutputBytes?: number;
@@ -51,6 +52,43 @@ export interface ProcessOptions {
 
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 2_000;
+const SAFE_ENV_KEYS = new Set([
+  "PATH",
+  "PATHEXT",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "WINDIR",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "HOME",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "COLORTERM",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+]);
+
+/**
+ * Build the default environment for untrusted external scanner processes.
+ * Credentials, CI tokens, cloud secrets, registry tokens, and proxy URLs are not inherited implicitly.
+ */
+export function buildScannerProcessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    const normalized = key.toUpperCase();
+    if (SAFE_ENV_KEYS.has(normalized) || normalized.startsWith("LC_")) result[key] = value;
+  }
+  return result;
+}
 
 export async function runProcess(
   command: string,
@@ -58,6 +96,9 @@ export async function runProcess(
   options: ProcessOptions = {},
 ): Promise<ProcessOutput> {
   if (options.signal?.aborted) throw new Error(`Process aborted before start: ${command}`);
+  if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+    throw new Error("timeoutMs must be a positive finite number when provided.");
+  }
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   if (!Number.isFinite(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("maxOutputBytes must be a positive finite number.");
@@ -70,7 +111,7 @@ export async function runProcess(
   return await new Promise<ProcessOutput>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: options.env ?? buildScannerProcessEnv(),
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
