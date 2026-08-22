@@ -1,10 +1,10 @@
 # Approved remediation pull requests
 
-SynSec remediation remains an explicitly approved repository-write workflow. Proposal generation does not grant write permission, scan workers never receive repository-write credentials, and a remediation writer may act only on an `ApprovedRemediationExecution` whose proposal, patch hashes, approval id, and target commit have already been revalidated.
+SynSec remediation remains an explicitly approved repository-write workflow. Proposal generation does not grant write permission, scan workers never receive repository-write credentials, and a remediation writer may act only on an `ApprovedRemediationExecution` whose proposal, patch hashes, approval id, and target commit are revalidated immediately before execution.
 
 ## Execution boundary
 
-`@synsec/github/remediation-writer` consumes an approved execution plus one exact acquired worktree. Before changing the worktree it verifies local `HEAD`, queries the fixed `https://github.com/<owner>/<repo>.git` transport for the configured base ref, and requires that remote ref to still equal the approved target commit. If the base moved, remediation stops before patch application and the proposal must be regenerated and approved again.
+`@synsec/github/remediation-writer` consumes an approved execution plus one exact acquired worktree. It reruns the remediation authorization/integrity checks before issuing even a local Git command, so mutation of the JavaScript execution object after an earlier approval check cannot substitute different patch contents. Before changing the worktree it then verifies local `HEAD`, queries the fixed `https://github.com/<owner>/<repo>.git` transport for the configured base ref, and requires that remote ref to still equal the approved target commit. If the base moved, remediation stops before patch application and the proposal must be regenerated and approved again.
 
 The writer writes the already-approved patch bodies to a private temporary file, runs `git apply --cached --check`, applies to the index only, then verifies the staged `A`/`M` path set exactly equals the proposal. Renames, deletions, extra files, missing files, or operation mismatches fail closed before a commit or network write.
 
@@ -16,14 +16,18 @@ After the branch is present, the writer opens the pull request only through `htt
 
 `createLocalGitHubAppRuntime()` exposes `createRemediationPullRequest()` as an explicit operator action. It is not called from webhook intake, scan dispatch, scan workers, findings, AI review, or automatic lifecycle transitions.
 
-The runtime rechecks installation/repository authorization, requests a fresh installation token for the distinct `remediate` purpose, acquires the exact approved target commit into the configured workspace tree, invokes the approval-bound writer, and cleans that worktree afterward.
+The runtime rechecks installation/repository authorization and first requests the normal `acquire` credential, which requires only `contents:read`, to materialize the exact approved target commit. Only after acquisition succeeds does it request a fresh token for the distinct `remediate` purpose and pass that credential to the approval-bound writer. The acquired worktree is cleaned afterward even when the write operation fails.
 
 The remediation token purpose requires:
 
 - `contents:write` for the non-force branch push; and
 - `pull_requests:write` for pull-request creation.
 
-Normal scan acquisition still requests only `contents:read`. Check publication still requests `checks:write` and optional `security_events:write`. A write-capable token is therefore not handed to scanners merely because remediation support is configured.
+Normal scan and remediation-source acquisition therefore continue to use `contents:read`. Check publication still requests `checks:write` and optional `security_events:write`. The shorter-lived write-capable credential is minted only at the explicit approved write boundary and is never passed to scanners.
+
+## GitHub App setup
+
+`@synsec/github/app-setup` provides a feature-aware setup contract for operators. Repository scanning without remediation recommends only `contents:read` and `checks:write`, plus `security_events:write` when SARIF is enabled. `contents:write` and `pull_requests:write` appear only when `enableRemediationPullRequests` is explicitly enabled. The helper describes required permissions and webhook events; it does not create or broaden an installation.
 
 ## Failure and retry semantics
 
