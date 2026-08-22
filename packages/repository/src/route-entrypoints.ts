@@ -2,7 +2,7 @@ import type { RepositoryIndex, RouteSignal } from "./analysis.js";
 import type { CallGraph, CallGraphNode, CallNeighborhood } from "./call-graph.js";
 import { findCallNeighborhood } from "./call-graph.js";
 
-export type RouteEntrypointResolution = "decorated-function" | "unresolved";
+export type RouteEntrypointResolution = "decorated-function" | "named-function" | "unresolved";
 
 export interface RouteEntrypoint {
   route: RouteSignal;
@@ -44,6 +44,15 @@ function decoratedHandler(
   return nearest.length === 1 ? nearest[0] : undefined;
 }
 
+function namedNodeHandler(route: RouteSignal, graph: CallGraph): CallGraphNode | undefined {
+  if (route.frameworkHint !== "Node HTTP router" || !route.handler) return undefined;
+  const routePath = normalizePath(route.path);
+  const candidates = graph.nodes.filter(
+    (node) => normalizePath(node.path) === routePath && node.name === route.handler,
+  );
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
 export function resolveRouteEntrypoints(
   index: RepositoryIndex,
   graph: CallGraph,
@@ -54,7 +63,9 @@ export function resolveRouteEntrypoints(
   const maxCallNodes = options.maxCallNodes ?? 100;
 
   return index.routes.map((route) => {
-    const handler = decoratedHandler(route, graph, maxDeclarationDistance);
+    const decorated = decoratedHandler(route, graph, maxDeclarationDistance);
+    const named = decorated ? undefined : namedNodeHandler(route, graph);
+    const handler = decorated ?? named;
     if (!handler) {
       return {
         route,
@@ -65,7 +76,7 @@ export function resolveRouteEntrypoints(
 
     return {
       route,
-      resolution: "decorated-function",
+      resolution: decorated ? "decorated-function" : "named-function",
       handler,
       calls: findCallNeighborhood(graph, handler.id, maxCallDepth, maxCallNodes),
       interpretation: "structural-route-call-evidence-only",
