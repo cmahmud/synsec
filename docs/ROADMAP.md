@@ -22,19 +22,22 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Trivy adapter
 - [x] Grype adapter
 - [x] Checkov adapter
+- [x] Syft SBOM adapter and normalized scanner-artifact model
 - [x] OpenSSF Scorecard adapter
 - [x] Bounded parallel scanner orchestration
 - [x] Scanner failure isolation
+- [x] Refuse false clean reports when no selected scanner can run
 - [x] Versioned JSON report format
 - [x] SARIF 2.1 export
+- [x] Generic SARIF 2.1 import into normalized findings
 - [x] Self-contained HTML report/dashboard
 - [x] Stronger cross-scanner advisory and source-location correlation
 - [x] Configurable CI severity threshold
 - [x] Baseline support with new/fixed/persisting findings
 - [x] Secret redaction in normalized output
-- [ ] Syft SBOM adapter
-- [ ] Generic SARIF import
-- [ ] Changed-files-only scan mode
+- [x] Changed-file finding scope with persisted base/file metadata
+- [x] Direct changed-file execution for Opengrep and Betterleaks
+- [ ] Native incremental execution for every scanner that can safely support it
 
 ## Phase 2 — Repository intelligence
 
@@ -65,17 +68,19 @@ This roadmap separates what is already usable in the repository from the deeper 
 
 ## Phase 4 — Reusable workflows / skills
 
-The orchestration layer should be able to expose small reusable defensive workflows rather than hard-coding one giant agent prompt.
+The orchestration layer should expose small reusable defensive workflows rather than hard-coding one giant agent prompt.
 
-- [ ] Repository review workflow
-- [ ] Dependency review workflow
-- [ ] Secrets review workflow
-- [ ] IaC review workflow
+- [x] Repository review workflow
+- [x] Dependency review workflow
+- [x] Secrets review workflow with source-context prohibition
+- [x] Infrastructure/IaC review workflow
 - [ ] Fix verification workflow
 - [ ] Report-writing workflow
 - [ ] Provider/model routing policy by task and cost
 - [ ] User-defined workflow/skill format with explicit capabilities
-- [ ] Human approval boundaries for any action that changes a repository
+- [x] Explicit capability declarations per built-in workflow
+- [x] Human approval boundary declared for any repository-changing action
+- [x] External network assessment forbidden in repository workflows
 
 These workflows operate on repository evidence and scanner results. They are not a mechanism for silently expanding into external targets.
 
