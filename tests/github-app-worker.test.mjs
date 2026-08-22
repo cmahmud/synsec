@@ -43,25 +43,37 @@ class MemoryQueue {
     this.completed = [];
     this.released = [];
     this.failed = [];
+    this.asserted = [];
+    this.leaseValid = true;
   }
   async claimNext() {
     const next = this.next;
     this.next = undefined;
     return next;
   }
-  async release(id) {
-    this.released.push(id);
+  async assertLease(id, attempts) {
+    this.asserted.push([id, attempts]);
+    if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
+    return job();
+  }
+  async release(id, attempts) {
+    this.released.push([id, attempts]);
+    if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return { ...job(), status: "pending", leaseUntil: undefined };
   }
-  async fail(id) {
-    this.failed.push(id);
+  async fail(id, attempts) {
+    this.failed.push([id, attempts]);
+    if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return { ...job(), status: "failed", leaseUntil: undefined };
   }
-  async complete(id) {
-    this.completed.push(id);
+  async complete(id, attempts) {
+    this.completed.push([id, attempts]);
+    if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return true;
   }
 }
+
+const fenced = ["a".repeat(32), 1];
 
 test("worker returns idle when no queued job is available", async () => {
   const queue = new MemoryQueue(null);
@@ -89,7 +101,7 @@ test("worker rechecks authorization before obtaining credentials or repository c
     publish: async () => { throw new Error("must not publish"); },
   });
   assert.equal(result.status, "revoked");
-  assert.deepEqual(queue.failed, ["a".repeat(32)]);
+  assert.deepEqual(queue.failed, [fenced]);
   assert.equal(tokenCalls, 0);
   assert.equal(acquisitionCalls, 0);
 });
@@ -131,7 +143,8 @@ test("worker isolates transport credentials from scanning and publishes only a c
   assert.deepEqual(acquisitionTokens, ["acquisition-secret"]);
   assert.deepEqual(publicationTokens, ["publication-secret"]);
   assert.equal(scannedWorkspace, "/tmp/synsec-worker-repo");
-  assert.deepEqual(queue.completed, ["a".repeat(32)]);
+  assert.deepEqual(queue.asserted, [fenced]);
+  assert.deepEqual(queue.completed, [fenced]);
   assert.deepEqual(queue.released, []);
   assert.equal(cleanupCalls, 1);
 });
@@ -157,7 +170,38 @@ test("worker refuses stale scan output, cleans the workspace, and schedules boun
   assert.equal(result.status, "retry_scheduled");
   assert.match(result.error, /report commit does not match/);
   assert.equal(publishCalls, 0);
-  assert.deepEqual(queue.released, ["a".repeat(32)]);
+  assert.deepEqual(queue.released, [fenced]);
   assert.deepEqual(queue.completed, []);
   assert.equal(cleanupCalls, 1);
+});
+
+test("worker revalidates the current lease generation before minting publication credentials", async () => {
+  const queue = new MemoryQueue();
+  const tokenPurposes = [];
+  let publishCalls = 0;
+  const resultPromise = runNextGitHubAppScanJob({
+    queue,
+    installationStore: { isRepositoryAllowed: async () => true },
+    getInstallationToken: async (_installationId, purpose) => {
+      tokenPurposes.push(purpose);
+      return "token";
+    },
+    acquire: async (input) => ({
+      repository: input.repository,
+      commitSha: input.commitSha,
+      workspace: "/tmp/synsec-worker-repo",
+      cleanup: async () => {},
+    }),
+    scan: async () => {
+      queue.leaseValid = false;
+      return report();
+    },
+    publish: async () => { publishCalls += 1; },
+  });
+
+  await assert.rejects(resultPromise, /Queue release also failed/);
+  assert.deepEqual(tokenPurposes, ["acquire"]);
+  assert.equal(publishCalls, 0);
+  assert.deepEqual(queue.asserted, [fenced]);
+  assert.deepEqual(queue.released, [fenced]);
 });
