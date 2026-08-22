@@ -38,9 +38,10 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Changed-file finding scope with persisted base/file metadata
 - [x] Direct changed-file execution for Opengrep and Betterleaks
 - [x] Conservative incremental scan planner with bounded local-dependent expansion and full-scan fallback
+- [x] Engine integration of dependency-aware incremental planning for local and caller-supplied changed scopes
 - [ ] Native incremental execution for every scanner that can safely support it
 
-The incremental planner always includes direct changes and may add structurally known local dependents to improve review coverage. It fails over to a full repository scan when narrowing is ambiguous or high impact, including lockfiles, CI/security/IaC/configuration changes, unindexed analyzable source, unsafe paths, excessive direct changes, or dependent expansion that would exceed its configured bound. This is a coverage heuristic only; it never claims that unselected files are unaffected or safe. Engine/hosted-worker execution still needs to consume this plan before the optimization becomes end-to-end.
+The incremental planner always includes direct changes and may add structurally known local dependents to improve review coverage. It fails over to a full repository scan when narrowing is ambiguous or high impact, including lockfiles, CI/security/IaC/configuration changes, unindexed analyzable source, unsafe paths, excessive change sets, or dependent expansion that would exceed its configured bound. `runScanEngine()` now applies this plan to locally discovered and explicitly supplied changed-file scopes, and hosted exact-tree PR paths pass through the same planner before scanner execution. This is a coverage heuristic only; it never claims that unselected files are unaffected or safe. Universal native incremental execution remains open because only adapters that can safely narrow their own underlying scanner invocation should do so; other engines may still require repository-wide analysis followed by SynSec scope filtering.
 
 ## Phase 2 — Repository intelligence
 
@@ -132,9 +133,9 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Memory-only App installation-token provider with purpose-specific permission checks
 - [x] Deterministic worker-permission diagnostic model for acquisition, Checks, and optional SARIF
 - [x] Single-host local runtime composition with separate durable-state/workspace trees
+- [x] Exact-provenance changed-file head execution for hosted PR Checks with conservative full-scan fallback
 - [ ] Production TLS/listener deployment, supervision, and operational secret rotation
 - [ ] Repository installation/setup UX and recovery flows
-- [ ] Native changed-file execution for hosted PR workers using exact provenance
 - [ ] Transactional shared App state/queue for multi-host deployment
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
@@ -145,7 +146,9 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. A separate deterministic diagnostic explains whether GitHub-reported token permissions satisfy `contents:read`, `checks:write`, and optional `security_events:write`; unavailable metadata fails closed rather than being treated as authorization. Hosted PR execution is still full-repository at each commit; native changed-file optimization remains future work. See [GITHUB_APP.md](./GITHUB_APP.md).
+GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. A separate deterministic diagnostic explains whether GitHub-reported token permissions satisfy `contents:read`, `checks:write`, and optional `security_events:write`; unavailable metadata fails closed rather than being treated as authorization.
+
+For hosted PR Checks, SynSec compares the already-acquired exact base/head trees locally with bounded `git ls-tree` output, accepts only safe normal-blob head paths, and feeds those direct paths through the engine's dependency-aware incremental planner. Deletions, changed non-blob entries such as submodules, malformed/unsafe tree evidence, tree-command failure, or configured size bounds force a full repository scan. SARIF-enabled hosted PR jobs deliberately remain full-repository because publishing a partial SARIF analysis as the latest code-scanning result could make untouched alerts appear absent. Incremental scope is therefore an optimization with exact provenance and conservative fallback, not evidence that omitted files are safe or unreachable. See [INCREMENTAL_SCANS.md](./INCREMENTAL_SCANS.md) and [GITHUB_APP.md](./GITHUB_APP.md).
 
 See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
