@@ -43,6 +43,23 @@ test("replay store permits reuse only after bounded retention expires", async ()
   assert.equal((await store.claim("delivery-1")).accepted, true);
 });
 
+test("replay claim release permits retry only for the exact current unexpired claim", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "synsec-replay-release-"));
+  let now = Date.UTC(2026, 7, 22, 17, 0, 0);
+  const store = new FileGitHubWebhookReplayStore(directory, { now: () => now, retentionMs: HOUR });
+
+  const first = await store.claim("delivery-release");
+  assert.equal(first.accepted, true);
+  assert.equal(await store.release("delivery-release", "2026-08-22T16:59:59.000Z"), false);
+  assert.equal((await store.claim("delivery-release")).accepted, false);
+  assert.equal(await store.release("delivery-release", first.receivedAt), true);
+  const retried = await store.claim("delivery-release");
+  assert.equal(retried.accepted, true);
+
+  now += HOUR + 1;
+  assert.equal(await store.release("delivery-release", retried.receivedAt), false);
+});
+
 test("replay store validates ids and retention bounds", async () => {
   const directory = await mkdtemp(join(tmpdir(), "synsec-replay-validation-"));
   assert.throws(() => new FileGitHubWebhookReplayStore(directory, { retentionMs: HOUR - 1 }), /retention must be an integer/);
@@ -50,6 +67,7 @@ test("replay store validates ids and retention bounds", async () => {
   const store = new FileGitHubWebhookReplayStore(directory, { retentionMs: HOUR });
   await assert.rejects(() => store.claim("../delivery"), /unsupported characters/);
   await assert.rejects(() => store.claim("x".repeat(129)), /exceeds 128 characters/);
+  await assert.rejects(() => store.release("delivery", "not-a-date"), /receivedAt must be an ISO timestamp/);
 });
 
 test("replay store rejects corrupt existing records instead of treating them as duplicates", async () => {
