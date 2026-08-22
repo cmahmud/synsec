@@ -7,7 +7,8 @@
     ".": "./dist/index.js",
     "./analysis": "./dist/analysis.js",
     "./module-graph": "./dist/module-graph.js",
-    "./call-graph": "./dist/call-graph.js"
+    "./call-graph": "./dist/call-graph.js",
+    "./route-entrypoints": "./dist/route-entrypoints.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
