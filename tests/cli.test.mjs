@@ -1,0 +1,37 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const exec = promisify(execFile);
+const cli = new URL("../apps/cli/dist/index.js", import.meta.url);
+
+test("CLI reports its version", async () => {
+  const { stdout } = await exec(process.execPath, [cli.pathname, "version"]);
+  assert.equal(stdout.trim(), "0.2.0");
+});
+
+test("CLI lists capability-scoped defensive workflows", async () => {
+  const { stdout } = await exec(process.execPath, [cli.pathname, "workflows"]);
+  assert.match(stdout, /repository-review/);
+  assert.match(stdout, /dependency-review/);
+  assert.match(stdout, /secrets-review/);
+  assert.match(stdout, /external network assessment: forbidden/);
+});
+
+test("CLI init writes a safe default configuration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-cli-test-"));
+  try {
+    await exec(process.execPath, [cli.pathname, "init", root]);
+    const parsed = JSON.parse(await readFile(join(root, "synsec.config.json"), "utf8"));
+    assert.equal(parsed.schemaVersion, 1);
+    assert.equal(parsed.ai.enabled, false);
+    assert.equal(parsed.ai.sendSourceContext, false);
+    assert.ok(parsed.scanners.includes("opengrep"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
