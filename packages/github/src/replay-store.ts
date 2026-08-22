@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { link, open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { link, lstat, open, readFile, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ensurePrivateDirectory } from "./private-directory.js";
 
@@ -83,9 +83,9 @@ function parseRecord(text: string, expectedDeliveryId?: string): ReplayRecord {
 }
 
 async function readRecord(path: string, expectedDeliveryId?: string): Promise<ReplayRecord> {
-  const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size > MAX_RECORD_BYTES) {
-    throw new Error("Stored GitHub webhook replay record is invalid or oversized.");
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_RECORD_BYTES) {
+    throw new Error("Stored GitHub webhook replay record is invalid, symlinked, or oversized.");
   }
   return parseRecord(await readFile(path, "utf8"), expectedDeliveryId);
 }
