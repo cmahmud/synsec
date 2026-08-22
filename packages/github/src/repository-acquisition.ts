@@ -43,6 +43,13 @@ export interface AcquiredGitHubRepository {
   cleanup(): Promise<void>;
 }
 
+export interface AcquiredGitHubScanTarget extends AcquiredGitHubRepository {
+  base?: {
+    commitSha: string;
+    workspace: string;
+  };
+}
+
 function boundedTimeout(value: number | undefined): number {
   const timeoutMs = value ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS) {
@@ -253,6 +260,60 @@ export async function acquireGitHubRepositoryCommit(input: {
     workspace,
     cleanup: async () => {
       await rm(workspace, { recursive: true, force: true });
+    },
+  };
+}
+
+/**
+ * Acquire the exact head commit and, when supplied, the exact PR base commit as a second isolated
+ * workspace. The same short-lived installation credential is used only during this acquisition
+ * phase; neither workspace contains persisted Git credentials. Cleanup is all-or-nothing.
+ */
+export async function acquireGitHubRepositoryScanTarget(input: {
+  repository: string;
+  commitSha: string;
+  baseCommitSha?: string;
+  installationToken: string;
+}, options: GitHubRepositoryAcquisitionOptions = {}): Promise<AcquiredGitHubScanTarget> {
+  const repository = validateGitHubRepositoryIdentity(input.repository);
+  const commitSha = validateGitHubCommitSha(input.commitSha);
+  const baseCommitSha = input.baseCommitSha === undefined
+    ? undefined
+    : validateGitHubCommitSha(input.baseCommitSha);
+
+  const head = await acquireGitHubRepositoryCommit({
+    repository,
+    commitSha,
+    installationToken: input.installationToken,
+  }, options);
+
+  if (!baseCommitSha) return head;
+  if (baseCommitSha === commitSha) {
+    return {
+      ...head,
+      base: { commitSha: baseCommitSha, workspace: head.workspace },
+    };
+  }
+
+  let base: AcquiredGitHubRepository | undefined;
+  try {
+    base = await acquireGitHubRepositoryCommit({
+      repository,
+      commitSha: baseCommitSha,
+      installationToken: input.installationToken,
+    }, options);
+  } catch (error) {
+    await head.cleanup();
+    throw error;
+  }
+
+  return {
+    repository,
+    commitSha,
+    workspace: head.workspace,
+    base: { commitSha: base.commitSha, workspace: base.workspace },
+    cleanup: async () => {
+      await Promise.all([head.cleanup(), base?.cleanup()]);
     },
   };
 }
