@@ -26,7 +26,7 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 cat <<'JSON'
-{"Results":[{"Target":"package-lock.json","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-4242","PkgName":"fixture-package","InstalledVersion":"1.0.0","FixedVersion":"1.0.1","Title":"Fixture dependency vulnerability","Severity":"HIGH"}]}]}
+{"Results":[{"Target":"package-lock.json","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-4242","PkgName":"express","InstalledVersion":"1.0.0","FixedVersion":"1.0.1","Title":"Fixture dependency vulnerability","Severity":"HIGH"}]}]}
 JSON
 `);
     await chmod(trivy, 0o755);
@@ -48,6 +48,10 @@ JSON
     assert.equal(outcome.repositoryIndex.indexedFileCount, 1);
     assert.ok(outcome.repositoryIndex.moduleEdges.some((edge) => edge.specifier === "express"));
     assert.ok(outcome.repositoryIndex.routes.some((route) => route.route === "/health"));
+    const usage = outcome.report.findings[0].primary.metadata.dependencyUsage;
+    assert.equal(usage.status, "observed-import");
+    assert.equal(usage.packageName, "express");
+    assert.equal(usage.evidence[0].specifier, "express");
   } finally {
     process.env.PATH = originalPath;
     await rm(root, { recursive: true, force: true });
