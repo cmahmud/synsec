@@ -3,6 +3,7 @@ import type { SynSecConfig } from "@synsec/config";
 import type { Finding, ScanResult, ScanTarget, Severity } from "@synsec/core";
 import { applyBaseline, buildReport, type SynSecReport } from "@synsec/report";
 import { inventoryRepository } from "@synsec/repository";
+import { buildRepositoryIndex, type RepositoryIndex } from "@synsec/repository/analysis";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
 import { builtInScanners } from "@synsec/scanners";
 
@@ -20,6 +21,7 @@ export interface ScannerFailure {
 
 export interface ScanEngineOutcome {
   report: SynSecReport;
+  repositoryIndex: RepositoryIndex;
   statuses: ScannerStatus[];
   failures: ScannerFailure[];
   shouldFail: boolean;
@@ -237,6 +239,7 @@ export async function runScanEngine(input: {
   );
   if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
 
+  const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
   const changedScope = input.changedOnly ? await discoverChangedFiles(root, input.changedBase) : undefined;
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
   const scans = changedScope ? scopeScansToChangedFiles(result.scans, root, changedScope.files) : result.scans;
@@ -259,6 +262,7 @@ export async function runScanEngine(input: {
 
   const outcome: ScanEngineOutcome = {
     report,
+    repositoryIndex,
     statuses,
     failures,
     shouldFail: reportMeetsFailureThreshold(report, input.config.failOn),
