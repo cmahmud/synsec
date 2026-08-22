@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join, resolve, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { SynSecConfig } from "@synsec/config";
 import { createGitHubAppWebhookHttpHandler } from "./app-http.js";
 import { createGitHubAppInstallationTokenProvider } from "./app-token-provider.js";
@@ -43,12 +43,13 @@ function requiredDirectory(value: string, label: string): string {
   return resolve(normalized);
 }
 
+function isSameOrDescendant(parent: string, candidate: string): boolean {
+  const path = relative(parent, candidate);
+  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
+}
+
 function pathsOverlap(a: string, b: string): boolean {
-  const aToB = relative(a, b);
-  const bToA = relative(b, a);
-  return a === b
-    || (aToB !== "" && !aToB.startsWith("..") && !resolve(aToB).startsWith(".."))
-    || (bToA !== "" && !bToA.startsWith("..") && !resolve(bToA).startsWith(".."));
+  return isSameOrDescendant(a, b) || isSameOrDescendant(b, a);
 }
 
 /**
