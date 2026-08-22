@@ -38,6 +38,7 @@ export const defaultConfig: SynSecConfig = {
     "trivy",
     "grype",
     "checkov",
+    "scorecard",
   ],
   parallelism: 3,
   timeoutMs: 15 * 60_000,
