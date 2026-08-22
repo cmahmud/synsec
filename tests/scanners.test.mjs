@@ -6,6 +6,7 @@ import {
   parseGrypeJson,
   parseOpengrepJson,
   parseOsvJson,
+  parseScorecardJson,
 } from "../packages/scanners/dist/index.js";
 
 test("Betterleaks parser redacts normalized evidence by design", () => {
@@ -73,4 +74,18 @@ test("Checkov parser maps failed IaC checks", () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].category, "iac");
   assert.equal(findings[0].location.path, "main.tf");
+});
+
+test("Scorecard parser creates posture findings only for non-perfect checks", () => {
+  const findings = parseScorecardJson(JSON.stringify({
+    score: 7.2,
+    checks: [
+      { name: "Branch-Protection", score: 3, reason: "branch protection is incomplete", details: ["detail"], documentation: { short: "Protect important branches", url: "https://example.invalid/docs" } },
+      { name: "Security-Policy", score: 10, reason: "security policy found", documentation: { short: "Document security reporting" } },
+    ],
+  }));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].category, "repository-posture");
+  assert.equal(findings[0].severity, "high");
+  assert.equal(findings[0].scanner.ruleId, "Branch-Protection");
 });
