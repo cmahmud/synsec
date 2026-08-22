@@ -110,14 +110,16 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Report/commit binding before check publication
 - [x] Packaged Actions entrypoint / workflow template
 - [x] Inline SARIF/code-scanning upload
+- [x] Provenance-safe pull-request baseline acquisition from the exact local base commit
 - [ ] GitHub App
 - [ ] Repository installation flow
-- [ ] Baseline acquisition for pull-request scans
 - [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
 The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, push contexts default to full repository scans, and publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated. The packaged Action keeps explicit config/baseline file inputs inside the real checked-out workspace, including symlink resolution, before those files are read.
+
+For PRs without an explicit baseline, the Action can scan the exact event-provided base commit in a temporary detached worktree. The base commit must already be present locally; SynSec does not implicitly fetch a remote or substitute a nearby revision. The resulting report is accepted only when its commit identity matches the requested base SHA, then the temporary worktree is removed.
 
 See [GITHUB.md](./GITHUB.md) for the current integration contract and security boundaries.
 
