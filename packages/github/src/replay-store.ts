@@ -51,7 +51,7 @@ function recordPath(directory: string, deliveryId: string): string {
   return join(directory, `${digest}.json`);
 }
 
-function parseRecord(text: string, expectedDeliveryId: string): ReplayRecord {
+function parseRecord(text: string, expectedDeliveryId?: string): ReplayRecord {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -62,15 +62,19 @@ function parseRecord(text: string, expectedDeliveryId: string): ReplayRecord {
     throw new Error("Stored GitHub webhook replay record is invalid.");
   }
   const record = value as Partial<ReplayRecord>;
-  if (record.version !== 1 || record.deliveryId !== expectedDeliveryId || typeof record.receivedAt !== "string") {
+  if (record.version !== 1 || typeof record.deliveryId !== "string" || typeof record.receivedAt !== "string") {
+    throw new Error("Stored GitHub webhook replay record has an invalid shape.");
+  }
+  const deliveryId = validatedDeliveryId(record.deliveryId);
+  if (expectedDeliveryId !== undefined && deliveryId !== expectedDeliveryId) {
     throw new Error("Stored GitHub webhook replay record has an invalid shape.");
   }
   const timestamp = Date.parse(record.receivedAt);
   if (!Number.isFinite(timestamp)) throw new Error("Stored GitHub webhook replay timestamp is invalid.");
-  return record as ReplayRecord;
+  return { version: 1, deliveryId, receivedAt: record.receivedAt };
 }
 
-async function readRecord(path: string, expectedDeliveryId: string): Promise<ReplayRecord> {
+async function readRecord(path: string, expectedDeliveryId?: string): Promise<ReplayRecord> {
   const metadata = await stat(path);
   if (!metadata.isFile() || metadata.size > MAX_RECORD_BYTES) {
     throw new Error("Stored GitHub webhook replay record is invalid or oversized.");
@@ -156,13 +160,11 @@ export class FileGitHubWebhookReplayStore {
     let removed = 0;
     for (const entry of entries) {
       const path = join(this.directory, entry.name);
-      let metadata;
-      try {
-        metadata = await stat(path);
-      } catch {
-        continue;
+      const record = await readRecord(path);
+      if (recordPath(this.directory, record.deliveryId) !== path) {
+        throw new Error("Stored GitHub webhook replay record does not match its delivery-id filename.");
       }
-      if (now - metadata.mtimeMs < this.retentionMs) continue;
+      if (now - Date.parse(record.receivedAt) < this.retentionMs) continue;
       await rm(path, { force: true });
       removed += 1;
     }
