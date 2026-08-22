@@ -25,7 +25,7 @@ export interface ScannerAvailability {
 export interface ScannerAdapter {
   readonly id: string;
   readonly displayName: string;
-  readonly capabilities: ScannerCapability[];
+  readonly capabilities: readonly ScannerCapability[];
   checkAvailability(): Promise<ScannerAvailability>;
   scan(context: ScannerContext): Promise<ScanResult>;
 }
