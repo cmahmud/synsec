@@ -14,6 +14,7 @@
     "./app": "./dist/app.js",
     "./app-token-provider": "./dist/app-token-provider.js",
     "./app-permissions": "./dist/app-permissions.js",
+    "./app-setup": "./dist/app-setup.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./app-status": "./dist/app-status.js",
     "./app-server": "./dist/app-server.js",
