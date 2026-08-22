@@ -58,3 +58,49 @@ JSON
     await rm(bin, { recursive: true, force: true });
   }
 });
+
+test("scan engine adds bounded proximity signals to located non-secret findings", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-context-repo-"));
+  const bin = await mkdtemp(join(tmpdir(), "synsec-context-bin-"));
+  const originalPath = process.env.PATH ?? "";
+
+  try {
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "app.js"), `import express from "express";
+const app = express();
+function requireAuth(req, res, next) { return next(); }
+app.get("/users/:id", requireAuth, async (req, res) => {
+  const rows = await db.query("select * from users where id = $1", [req.params.id]);
+  res.json(rows);
+});
+`);
+
+    const opengrep = join(bin, "opengrep");
+    await writeFile(opengrep, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "opengrep 99.0.0-fixture"
+  exit 0
+fi
+cat <<'JSON'
+{"results":[{"check_id":"fixture.sql","path":"src/app.js","start":{"line":5,"col":3},"end":{"line":5,"col":40},"extra":{"message":"Fixture query finding","severity":"ERROR","metadata":{"cwe":["CWE-89"]}}}]}
+JSON
+`);
+    await chmod(opengrep, 0o755);
+    process.env.PATH = `${bin}${delimiter}${originalPath}`;
+
+    const config = structuredClone(defaultConfig);
+    config.scanners = ["opengrep"];
+    config.parallelism = 1;
+    const outcome = await runScanEngine({ rootPath: root, config, toolVersion: "test" });
+    const context = outcome.report.findings[0].primary.metadata.repositoryContext;
+    assert.equal(context.interpretation, "proximity-signals-only");
+    assert.ok(context.nearbyRoutes.some((signal) => signal.route === "/users/:id"));
+    assert.ok(context.nearbyAuthSignals.some((signal) => signal.kind === "authentication"));
+    assert.ok(context.nearbySinks.some((signal) => signal.kind === "database"));
+    assert.equal("evidence" in context.nearbySinks[0], false);
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(root, { recursive: true, force: true });
+    await rm(bin, { recursive: true, force: true });
+  }
+});
