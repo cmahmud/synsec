@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { correlateFindings } from "../packages/core/dist/index.js";
 
-test("correlates the same dependency advisory across scanners despite different rule IDs and titles", () => {
+test("correlates the same dependency advisory across scanners despite different rule IDs, titles, and alias sets", () => {
   const correlated = correlateFindings([
     {
       id: "one",
@@ -22,7 +22,7 @@ test("correlates the same dependency advisory across scanners despite different 
       severity: "critical",
       confidence: 0.95,
       location: { path: "package-lock.json" },
-      identifiers: { cve: ["CVE-2026-1234"] },
+      identifiers: { cve: ["CVE-2026-1234"], ghsa: ["GHSA-demo-demo-demo"] },
       title: "Second scanner uses a different title",
       scanner: { name: "grype", ruleId: "GHSA-demo-demo-demo" },
       metadata: { package: "demo-package" },
