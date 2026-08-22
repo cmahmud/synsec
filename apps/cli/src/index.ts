@@ -22,6 +22,7 @@ import {
   writeSarif,
   type SynSecReport,
 } from "@synsec/report";
+import { writeMarkdown } from "@synsec/report/markdown";
 import { getFindingContext } from "@synsec/repository";
 import { writeRepositoryIndex } from "@synsec/repository/analysis";
 import { parseSarifJson } from "@synsec/scanners";
@@ -98,7 +99,7 @@ Usage:
   synsec verify <before.json> <after.json> [--fingerprint <id>] [--output <file>]
   synsec import-sarif <input.sarif> [options]
   synsec workflows
-  synsec render <report.json> [--html <file>] [--sarif <file>]
+  synsec render <report.json> [--html <file>] [--sarif <file>] [--markdown <file>]
   synsec baseline <report.json> [destination]
   synsec version
 
@@ -133,7 +134,7 @@ Triage states:
   new, confirmed, false-positive, accepted-risk, fixed, regressed
 
 Verify options:
-  --fingerprint <id>       Verify only one finding fingerprint. Repeat with comma-separated IDs via --fingerprints.
+  --fingerprint <id>       Verify one finding fingerprint.
   --fingerprints <a,b,c>   Verify a specific set of finding fingerprints.
   --output <file>          Write machine-readable verification JSON.
 
@@ -339,6 +340,7 @@ async function scan(): Promise<void> {
       writeReport(paths.json, outcome.report),
       writeHtml(paths.html, outcome.report),
       writeSarif(paths.sarif, outcome.report),
+      writeMarkdown(paths.markdown, outcome.report),
       writeRepositoryIndex(repositoryIndexPath, outcome.repositoryIndex),
     ]);
   }
@@ -401,6 +403,7 @@ async function scan(): Promise<void> {
       console.log(`JSON:      ${paths.json}`);
       console.log(`HTML:      ${paths.html}`);
       console.log(`SARIF:     ${paths.sarif}`);
+      console.log(`MARKDOWN:  ${paths.markdown}`);
       console.log(`INDEX:     ${repositoryIndexPath}`);
       console.log(`LIFECYCLE: ${lifecycle.path}`);
     }
@@ -505,17 +508,20 @@ async function importSarif(): Promise<void> {
 
 async function render(): Promise<void> {
   const reportArg = args[1];
-  if (!reportArg || reportArg.startsWith("--")) throw new Error("Usage: synsec render <report.json> [--html <file>] [--sarif <file>]");
+  if (!reportArg || reportArg.startsWith("--")) throw new Error("Usage: synsec render <report.json> [--html <file>] [--sarif <file>] [--markdown <file>]");
   const reportPath = resolve(reportArg);
   const report = await readReport(reportPath);
   const htmlPath = resolve(option("--html") ?? reportPath.replace(/\.json$/i, ".html"));
   const sarifPath = resolve(option("--sarif") ?? reportPath.replace(/\.json$/i, ".sarif"));
+  const markdownPath = resolve(option("--markdown") ?? reportPath.replace(/\.json$/i, ".md"));
   await Promise.all([
     mkdir(dirname(htmlPath), { recursive: true }).then(() => writeFile(htmlPath, renderHtml(report), "utf8")),
     mkdir(dirname(sarifPath), { recursive: true }).then(() => writeFile(sarifPath, `${JSON.stringify(toSarif(report), null, 2)}\n`, "utf8")),
+    writeMarkdown(markdownPath, report),
   ]);
-  console.log(`HTML:  ${htmlPath}`);
-  console.log(`SARIF: ${sarifPath}`);
+  console.log(`HTML:     ${htmlPath}`);
+  console.log(`SARIF:    ${sarifPath}`);
+  console.log(`MARKDOWN: ${markdownPath}`);
 }
 
 async function baseline(): Promise<void> {
