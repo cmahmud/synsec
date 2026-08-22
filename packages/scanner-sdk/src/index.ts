@@ -43,13 +43,23 @@ export interface ProcessOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  /** Maximum bytes retained from each output stream. Defaults to 64 MiB per stream. */
+  maxOutputBytes?: number;
 }
+
+const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 export async function runProcess(
   command: string,
   args: string[],
   options: ProcessOptions = {},
 ): Promise<ProcessOutput> {
+  if (options.signal?.aborted) throw new Error(`Process aborted before start: ${command}`);
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  if (!Number.isFinite(maxOutputBytes) || maxOutputBytes <= 0) {
+    throw new Error("maxOutputBytes must be a positive finite number.");
+  }
+
   return await new Promise<ProcessOutput>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -61,7 +71,12 @@ export async function runProcess(
 
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let settled = false;
+    let timedOut = false;
+    let aborted = false;
+    let overflowError: Error | undefined;
 
     const finish = (callback: () => void): void => {
       if (settled) return;
@@ -69,38 +84,77 @@ export async function runProcess(
       callback();
     };
 
+    const stopForOverflow = (stream: "stdout" | "stderr", bytes: number): void => {
+      if (overflowError) return;
+      overflowError = new Error(
+        `Process ${command} exceeded the ${maxOutputBytes} byte ${stream} limit (${bytes} bytes observed).`,
+      );
+      child.kill("SIGTERM");
+    };
+
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > maxOutputBytes) {
+        stopForOverflow("stdout", stdoutBytes);
+        return;
+      }
       stdout += chunk;
     });
     child.stderr.on("data", (chunk: string) => {
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > maxOutputBytes) {
+        stopForOverflow("stderr", stderrBytes);
+        return;
+      }
       stderr += chunk;
     });
 
     const timeout = options.timeoutMs
-      ? setTimeout(() => child.kill("SIGTERM"), options.timeoutMs)
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, options.timeoutMs)
       : undefined;
 
     const onAbort = (): void => {
+      aborted = true;
       child.kill("SIGTERM");
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
+    const cleanup = (): void => {
+      if (timeout) clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+
     child.once("error", (error) => {
+      cleanup();
       finish(() => reject(error));
     });
 
     child.once("close", (code) => {
-      if (timeout) clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", onAbort);
-      finish(() =>
+      cleanup();
+      finish(() => {
+        if (overflowError) {
+          reject(overflowError);
+          return;
+        }
+        if (timedOut) {
+          reject(new Error(`Process timed out after ${options.timeoutMs} ms: ${command}`));
+          return;
+        }
+        if (aborted) {
+          reject(new Error(`Process aborted: ${command}`));
+          return;
+        }
         resolve({
           exitCode: code ?? -1,
           stdout,
           stderr,
-        }),
-      );
+        });
+      });
     });
   });
 }
