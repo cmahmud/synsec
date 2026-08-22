@@ -65,6 +65,8 @@ export interface NearbyRouteSignal {
   method: string;
   route: string;
   frameworkHint?: string;
+  /** Static named-handler candidate when the route registration was unambiguous. */
+  handler?: string;
 }
 
 export interface NearbySecuritySignal {
@@ -330,6 +332,7 @@ export function findingRepositoryContext(
       method: signal.method,
       route: signal.route,
       ...(signal.frameworkHint ? { frameworkHint: signal.frameworkHint } : {}),
+      ...(signal.handler ? { handler: signal.handler } : {}),
     }))
     .sort((a, b) => a.distance - b.distance || a.line - b.line)
     .slice(0, limit);
