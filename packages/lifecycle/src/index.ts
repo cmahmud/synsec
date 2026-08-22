@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { CorrelatedFinding } from "@synsec/core";
 import type { SynSecReport } from "@synsec/report";
 
 export type FindingState =
@@ -30,6 +31,31 @@ export interface LifecycleSummary {
   acceptedRisk: number;
   fixed: number;
   regressed: number;
+}
+
+export type VerificationStatus = "fixed" | "persisting" | "inconclusive" | "missing-baseline";
+
+export interface FindingVerification {
+  fingerprint: string;
+  title?: string;
+  status: VerificationStatus;
+  reasons: string[];
+}
+
+export interface RemediationVerification {
+  schemaVersion: 1;
+  generatedAt: string;
+  beforeReportId: string;
+  afterReportId: string;
+  items: FindingVerification[];
+  newFindings: string[];
+  summary: {
+    fixed: number;
+    persisting: number;
+    inconclusive: number;
+    missingBaseline: number;
+    newFindings: number;
+  };
 }
 
 export function emptyLifecycleStore(): FindingLifecycleStore {
@@ -155,4 +181,112 @@ export function currentLifecycleRecords(
   return Object.values(store.records)
     .filter((record) => current.has(record.fingerprint))
     .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
+}
+
+function normalizePath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
+}
+
+function afterScopeCoversFinding(after: SynSecReport, finding: CorrelatedFinding): { covered: boolean; reason?: string } {
+  if (after.scope?.mode === "repository") return { covered: true };
+  if (after.scope?.mode !== "changed-files") {
+    return { covered: false, reason: "The after report has no repository-wide or changed-file scan scope metadata." };
+  }
+  const path = finding.primary.location?.path;
+  if (!path) {
+    return { covered: false, reason: "The finding has no source path, so a changed-file scan cannot prove it was rechecked." };
+  }
+  const changed = new Set((after.scope.changedFiles ?? []).map(normalizePath));
+  if (!changed.has(normalizePath(path))) {
+    return { covered: false, reason: `The after report did not scan the finding path ${path} in its changed-file scope.` };
+  }
+  return { covered: true };
+}
+
+function afterReranDetectingScanner(after: SynSecReport, finding: CorrelatedFinding): { covered: boolean; reason?: string } {
+  const afterScanners = new Set(after.scanners.map((scanner) => scanner.scanner.toLowerCase()));
+  const detecting = [...new Set(finding.sources.map((source) => source.name.toLowerCase()))];
+  if (detecting.some((name) => afterScanners.has(name))) return { covered: true };
+  return {
+    covered: false,
+    reason: `None of the scanner(s) that detected the finding were present in the after report: ${detecting.join(", ") || "unknown"}.`,
+  };
+}
+
+export function verifyRemediation(
+  before: SynSecReport,
+  after: SynSecReport,
+  requestedFingerprints?: readonly string[],
+  generatedAt = new Date().toISOString(),
+): RemediationVerification {
+  const beforeByFingerprint = new Map(before.findings.map((finding) => [finding.fingerprint, finding]));
+  const afterByFingerprint = new Map(after.findings.map((finding) => [finding.fingerprint, finding]));
+  const targets = requestedFingerprints && requestedFingerprints.length > 0
+    ? [...new Set(requestedFingerprints)]
+    : before.findings.map((finding) => finding.fingerprint);
+
+  const items: FindingVerification[] = targets.map((fingerprint) => {
+    const baseline = beforeByFingerprint.get(fingerprint);
+    if (!baseline) {
+      return {
+        fingerprint,
+        status: "missing-baseline" as const,
+        reasons: ["The requested fingerprint is not present in the before report."],
+      };
+    }
+    if (afterByFingerprint.has(fingerprint)) {
+      return {
+        fingerprint,
+        title: baseline.primary.title,
+        status: "persisting" as const,
+        reasons: ["The same correlated finding fingerprint is still present after remediation."],
+      };
+    }
+
+    const scannerCoverage = afterReranDetectingScanner(after, baseline);
+    const scopeCoverage = afterScopeCoversFinding(after, baseline);
+    const reasons = [scannerCoverage.reason, scopeCoverage.reason].filter((value): value is string => Boolean(value));
+    if (!scannerCoverage.covered || !scopeCoverage.covered) {
+      return {
+        fingerprint,
+        title: baseline.primary.title,
+        status: "inconclusive" as const,
+        reasons,
+      };
+    }
+
+    return {
+      fingerprint,
+      title: baseline.primary.title,
+      status: "fixed" as const,
+      reasons: ["The finding disappeared after a detecting scanner re-ran over the affected scope."],
+    };
+  });
+
+  const beforeFingerprints = new Set(before.findings.map((finding) => finding.fingerprint));
+  const newFindings = after.findings
+    .map((finding) => finding.fingerprint)
+    .filter((fingerprint) => !beforeFingerprints.has(fingerprint))
+    .sort();
+
+  return {
+    schemaVersion: 1,
+    generatedAt,
+    beforeReportId: before.reportId,
+    afterReportId: after.reportId,
+    items,
+    newFindings,
+    summary: {
+      fixed: items.filter((item) => item.status === "fixed").length,
+      persisting: items.filter((item) => item.status === "persisting").length,
+      inconclusive: items.filter((item) => item.status === "inconclusive").length,
+      missingBaseline: items.filter((item) => item.status === "missing-baseline").length,
+      newFindings: newFindings.length,
+    },
+  };
+}
+
+export async function writeRemediationVerification(path: string, verification: RemediationVerification): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(verification, null, 2)}\n`, "utf8");
 }
