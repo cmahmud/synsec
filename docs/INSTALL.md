@@ -109,8 +109,7 @@ curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh 
 Confirm:
 
 ```bash
-gripe_version=$(grype version 2>/dev/null || true)
-printf '%s\n' "$gripe_version"
+grype version
 ```
 
 ## Checkov
