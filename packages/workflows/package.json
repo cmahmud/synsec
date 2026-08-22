@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
+    "./routing": "./dist/routing.js",
     "./user-defined": "./dist/user-defined.js"
   },
   "types": "./dist/index.d.ts",
