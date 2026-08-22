@@ -12,11 +12,12 @@ The preflight currently requires:
 
 - a positive integer GitHub App id;
 - a PEM-shaped App private key;
-- a webhook secret of at least 32 UTF-8 bytes;
+- either one webhook secret or an explicit two-secret rotation pair, with every secret between 32 and 4096 UTF-8 bytes;
 - a host/IP value rather than a URL-shaped listener setting;
 - local TLS or explicit upstream TLS termination for any non-loopback listener;
-- absolute durable-state and repository-workspace paths; and
-- separate, non-nested state and workspace directory trees.
+- absolute durable-state and repository-workspace paths;
+- separate, non-nested state and workspace directory trees; and
+- when strict scanner isolation is required, a declared sandbox/container boundary, CPU and memory limits, restricted networking, and read-only repository source.
 
 Plain HTTP is accepted only on loopback so local development can mount the handler without pretending that an externally reachable plaintext listener is production-ready.
 
@@ -68,15 +69,28 @@ The built-in `/healthz` route accepts only `GET`, disables caching, and returns 
 
 ## What this does not certify
 
-A successful preflight and bounded listener do **not** mean the hosted service is production-complete. Operators still need process/container isolation for scanner subprocesses, OS CPU/memory limits, outbound network policy, service supervision, secret injection and rotation, log retention, and a transactional shared state backend before horizontally scaling across hosts.
+A successful preflight and bounded listener do **not** mean the hosted service is production-complete. Operators still need actual process/container isolation for scanner subprocesses, OS CPU/memory limits, outbound network policy, service supervision, secret injection/reload, log retention, and a transactional shared state backend before horizontally scaling across hosts.
 
-The validator also does not test whether GitHub currently grants an installation the permissions needed for a specific operation. Runtime installation-token exchange remains authoritative for `contents:read`, `checks:write`, and optional `security_events:write` diagnostics.
+The validator also does not test whether GitHub currently grants an installation the permissions needed for a specific operation. Runtime installation-token exchange remains authoritative for `contents:read`, `checks:write`, optional `security_events:write`, and explicitly invoked remediation permissions.
 
 ## Secret rotation
 
-Treat App private keys and webhook secrets as hosting credentials, never scanner inputs. Rotation should replace injected credentials through the deployment platform, restart or roll the listener/runtime in a controlled way, and avoid writing either secret into SynSec state, reports, queue records, scanner environments, or repository workspaces.
+Treat App private keys and webhook secrets as hosting credentials, never scanner inputs. They remain memory-only in SynSec runtime configuration and are not written to state, reports, queue records, scanner environments, or repository workspaces.
 
-Webhook-secret rotation requires coordination with the GitHub App configuration because GitHub signs deliveries with the configured secret. Do not silently accept multiple indefinitely valid secrets as a convenience fallback; if an overlap window is implemented by a hosting layer, keep it explicit, bounded, and observable.
+Webhook-secret rotation supports an explicit overlap pair. The verification primitive accepts either a single secret or at most two distinct secrets. Every candidate HMAC is evaluated before returning the result, and the same pair flows through initial intake and installation-state re-verification. A third fallback secret, duplicate secrets, an empty set, or secrets outside the configured size bounds fail closed.
+
+Use this sequence for a coordinated webhook-secret rotation:
+
+1. Generate a new strong secret in the hosting secret manager.
+2. Roll SynSec with `webhookSecret: [newSecret, previousSecret]`. The deployment preflight should be green before accepting traffic.
+3. Change the GitHub App webhook secret to `newSecret`.
+4. Confirm normal authenticated deliveries are being accepted after the GitHub-side change.
+5. Roll SynSec again with only `webhookSecret: newSecret`.
+6. Remove the previous secret from the hosting secret manager after the deployment is confirmed healthy.
+
+The overlap is a deployment transition, not a permanent fallback mechanism. SynSec deliberately caps it at two secrets and does not persist which secret matched a delivery. Replay protection remains keyed to GitHub delivery id, so accepting the previous secret during the overlap does not create a second replay namespace.
+
+Private-key rotation is different because App JWT creation signs with one configured key. Create/activate the replacement GitHub App private key first, inject the replacement key into the runtime, roll/restart SynSec, confirm installation-token exchange succeeds, and only then revoke the previous key in GitHub. SynSec does not persist or multiplex App private keys, and scanners never receive them.
 
 ## Filesystem placement
 
@@ -102,7 +116,7 @@ const result = await runtime.runMaintenance();
 
 Operators may invoke maintenance from their existing supervised process loop or an external scheduler. SynSec deliberately does not create its own background timer because service scheduling and lifecycle belong to the hosting layer.
 
-Repository workspaces use ownership-based cleanup instead of an age sweep: failed acquisition removes its temporary workspace immediately, and workers clean acquired head/base workspaces after processing. SynSec does not recursively delete old `synsec-github-*` directories merely because their modification time is old, because that heuristic could race a legitimately long-running scan. If a process is killed before cleanup completes, orphan-workspace reconciliation remains a hosting/isolated-runtime concern until SynSec has a durable ownership marker that can prove a workspace is no longer active.
+Repository acquisition creates an identity-free `.synsec-workspace-owner.json` marker with restrictive permissions before Git is invoked. Normal acquisition/worker cleanup still removes owned workspaces immediately after failure or completion. If a process dies first, `runMaintenance()` can reconcile stale `synsec-github-*` directories only when a valid ownership marker proves SynSec created the workspace. Reconciliation is observation-only by default; deletion must be explicitly enabled and is bounded by both retention age and per-pass deletion count. Symlinks, missing/malformed markers, unrelated directories, and entries that cannot be revalidated immediately before deletion are skipped rather than removed.
 
 ## Sanitized runtime status
 
