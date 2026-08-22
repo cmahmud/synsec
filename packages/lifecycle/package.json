@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
-    "./review-comments": "./dist/review-comments.js"
+    "./review-comments": "./dist/review-comments.js",
+    "./triage-view": "./dist/triage-view.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
