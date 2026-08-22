@@ -162,7 +162,7 @@ An unanswered question stays `unknown`. A model should not fill gaps with invent
 
 ## Model routing
 
-Workflows should request a capability class rather than hard-code one vendor/model name. Examples:
+`@synsec/workflows/routing` provides a deterministic provider/model selection policy. Workflows request a task class rather than hard-code a vendor/model name:
 
 ```text
 fast-classifier
@@ -172,7 +172,9 @@ report-writer
 verifier
 ```
 
-A router can map each task to an available model based on cost, latency, privacy, and capability. This keeps SynSec usable with cloud models, local models, or a mixed deployment.
+Candidates declare supported task classes, cost tier, latency tier, privacy class, source-context support, and enabled state. A routing request can cap cost, require local execution, prefer local execution, and require source-context compatibility. Ineligible candidates are filtered before ranking; if no model satisfies the requested constraints, routing fails closed instead of silently widening privacy or cost policy.
+
+This keeps SynSec usable with cloud models, local models, or mixed deployments while preserving explicit privacy and budget boundaries.
 
 ## Human approval boundaries
 
