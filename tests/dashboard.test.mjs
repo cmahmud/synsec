@@ -139,7 +139,7 @@ test("project dashboard optionally includes the existing trend-safe history view
     dashboardInput.history = historyFor(dashboardInput.report);
     const indexHtml = renderProjectDashboardIndex(dashboardInput);
     assert.match(indexHtml, /href="history\.html"/);
-    assert.match(indexHtml, /2 historical scans/);
+    assert.match(indexHtml, /<div class=value>2<\/div><div>historical scans<\/div>/);
 
     const paths = await writeProjectDashboard(destination, dashboardInput);
     assert.ok(paths.history);
