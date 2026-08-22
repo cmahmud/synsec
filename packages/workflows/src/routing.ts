@@ -30,6 +30,11 @@ export interface ModelRoutingDecision {
   reason: string[];
 }
 
+export interface ModelSetRoutingDecision {
+  candidates: ModelCandidate[];
+  reason: string[];
+}
+
 function privacyRank(privacy: ModelPrivacy): number {
   if (privacy === "local") return 0;
   if (privacy === "private-remote") return 1;
@@ -45,22 +50,17 @@ function eligible(candidate: ModelCandidate, request: ModelRoutingRequest): bool
   return true;
 }
 
-export function routeModel(
-  candidates: readonly ModelCandidate[],
-  request: ModelRoutingRequest,
-): ModelRoutingDecision {
-  const matching = candidates.filter((candidate) => eligible(candidate, request));
-  if (matching.length === 0) {
-    const constraints = [
-      `task=${request.task}`,
-      `sourceContext=${request.sourceContextRequested ? "required" : "not-required"}`,
-      request.maxCostTier !== undefined ? `maxCostTier=${request.maxCostTier}` : undefined,
-      request.requireLocal ? "privacy=local-only" : undefined,
-    ].filter((value): value is string => value !== undefined);
-    throw new Error(`No model candidate satisfies routing constraints: ${constraints.join(", ")}.`);
-  }
+function constraints(request: ModelRoutingRequest): string[] {
+  return [
+    `task=${request.task}`,
+    `sourceContext=${request.sourceContextRequested ? "required" : "not-required"}`,
+    request.maxCostTier !== undefined ? `maxCostTier=${request.maxCostTier}` : undefined,
+    request.requireLocal ? "privacy=local-only" : undefined,
+  ].filter((value): value is string => value !== undefined);
+}
 
-  const ranked = [...matching].sort((left, right) => {
+function rankedEligible(candidates: readonly ModelCandidate[], request: ModelRoutingRequest): ModelCandidate[] {
+  return candidates.filter((candidate) => eligible(candidate, request)).sort((left, right) => {
     if (request.preferLocal) {
       const privacyDifference = privacyRank(left.privacy) - privacyRank(right.privacy);
       if (privacyDifference !== 0) return privacyDifference;
@@ -70,6 +70,16 @@ export function routeModel(
       || privacyRank(left.privacy) - privacyRank(right.privacy)
       || left.id.localeCompare(right.id);
   });
+}
+
+export function routeModel(
+  candidates: readonly ModelCandidate[],
+  request: ModelRoutingRequest,
+): ModelRoutingDecision {
+  const ranked = rankedEligible(candidates, request);
+  if (ranked.length === 0) {
+    throw new Error(`No model candidate satisfies routing constraints: ${constraints(request).join(", ")}.`);
+  }
 
   const candidate = ranked[0];
   if (!candidate) throw new Error("Model routing produced no candidate after eligibility filtering.");
@@ -84,4 +94,43 @@ export function routeModel(
   if (request.preferLocal && candidate.privacy === "local") reason.push("local preference satisfied");
 
   return { candidate, reason };
+}
+
+/**
+ * Select a deterministic set of distinct model identities for reviewer/verifier consensus.
+ * The request's privacy, source-context, and cost constraints are applied to every member.
+ * Insufficient eligible models fail closed instead of silently reducing reviewer count.
+ */
+export function routeModelSet(
+  candidates: readonly ModelCandidate[],
+  request: ModelRoutingRequest,
+  count = 2,
+): ModelSetRoutingDecision {
+  if (!Number.isInteger(count) || count < 2 || count > 10) {
+    throw new Error("Consensus model count must be an integer between 2 and 10.");
+  }
+
+  const seen = new Set<string>();
+  const ranked = rankedEligible(candidates, request).filter((candidate) => {
+    const id = candidate.id.trim();
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  if (ranked.length < count) {
+    throw new Error(
+      `Only ${ranked.length} distinct model candidate(s) satisfy consensus routing constraints; ${count} required: ${constraints(request).join(", ")}.`,
+    );
+  }
+
+  const selected = ranked.slice(0, count);
+  return {
+    candidates: selected,
+    reason: [
+      `selected ${count} distinct models for ${request.task}`,
+      request.sourceContextRequested ? "all permit source context" : "source context not required",
+      request.requireLocal ? "all are local" : request.preferLocal ? "local preference applied" : "standard privacy ranking applied",
+      "cost/latency constraints preserved for every reviewer",
+    ],
+  };
 }
