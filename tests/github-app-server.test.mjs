@@ -19,7 +19,13 @@ test("hosted App server exposes aggregate-only health on loopback", async () => 
       response.end();
     },
     getStatus: async () => ({
-      installations: { total: 2, active: 1, suspended: 1 },
+      installations: {
+        total: 2,
+        active: 1,
+        suspended: 1,
+        allRepositories: 1,
+        selectedRepositories: 1,
+      },
       queue: { total: 4, pending: 1, leased: 1, failed: 2 },
     }),
   });
@@ -30,7 +36,13 @@ test("hosted App server exposes aggregate-only health on loopback", async () => 
     assert.equal(result.status, 200);
     assert.deepEqual(result.body, {
       status: "ok",
-      installations: { total: 2, active: 1, suspended: 1 },
+      installations: {
+        total: 2,
+        active: 1,
+        suspended: 1,
+        allRepositories: 1,
+        selectedRepositories: 1,
+      },
       queue: { total: 4, pending: 1, leased: 1, failed: 2 },
     });
     assert.equal(result.headers.get("cache-control"), "no-store");
