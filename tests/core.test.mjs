@@ -22,7 +22,7 @@ test("correlates the same dependency advisory across scanners despite different 
       severity: "critical",
       confidence: 0.95,
       location: { path: "package-lock.json" },
-      identifiers: { cve: ["CVE-2026-1234"], ghsa: ["GHSA-demo-demo-demo"] },
+      identifiers: { cve: ["CVE-2026-1234"] },
       title: "Second scanner uses a different title",
       scanner: { name: "grype", ruleId: "GHSA-demo-demo-demo" },
       metadata: { package: "demo-package" },
