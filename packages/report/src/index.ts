@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   CorrelatedFinding,
@@ -13,6 +13,7 @@ import type {
 import { correlateFindings, findingFingerprint } from "@synsec/core";
 
 export const SYNSEC_REPORT_SCHEMA_VERSION = "1.0" as const;
+const MAX_REPORT_BYTES = 64 * 1024 * 1024;
 
 export interface SeverityCounts {
   critical: number;
@@ -172,9 +173,17 @@ export function isSynSecReport(value: unknown): value is SynSecReport {
 }
 
 export async function readReport(path: string): Promise<SynSecReport> {
-  const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (!isSynSecReport(parsed)) throw new Error(`Not a supported SynSec report: ${path}`);
-  return parsed;
+  const handle = await open(path, "r");
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error(`SynSec report path is not a regular file: ${path}`);
+    if (metadata.size > MAX_REPORT_BYTES) throw new Error(`SynSec report exceeds ${MAX_REPORT_BYTES} bytes: ${path}`);
+    const parsed = JSON.parse(await handle.readFile("utf8")) as unknown;
+    if (!isSynSecReport(parsed)) throw new Error(`Not a supported SynSec report: ${path}`);
+    return parsed;
+  } finally {
+    await handle.close();
+  }
 }
 
 async function writePrivateFile(path: string, content: string): Promise<void> {
