@@ -128,6 +128,25 @@ Confirm:
 checkov --version
 ```
 
+## Syft
+
+Project: https://github.com/anchore/syft
+
+Anchore publishes an installation helper for Linux/macOS. Installing into a user-writable bin directory avoids requiring `sudo`:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl -sSfL https://get.anchore.io/syft | sh -s -- -b "$HOME/.local/bin"
+```
+
+Make sure `$HOME/.local/bin` is in `PATH`, then confirm:
+
+```bash
+syft version
+```
+
+SynSec runs Syft against the repository filesystem and stores a normalized SBOM artifact containing package identity, version, package type, PURL, licenses, and known package locations. Syft does not create vulnerability findings by itself; vulnerability engines remain separate.
+
 ## OpenSSF Scorecard
 
 Project: https://github.com/ossf/scorecard
@@ -166,6 +185,7 @@ OK        OSV-Scanner        ...
 OK        Trivy              ...
 OK        Grype              ...
 OK        Checkov            ...
+OK        Syft               ...
 OK        OpenSSF Scorecard  ...
 ```
 
