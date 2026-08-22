@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   buildSynSecGitHubAppSetupContract,
+  buildSynSecGitHubAppSetupRecoveryPlan,
   evaluateSynSecGitHubAppSetup,
   type SynSecGitHubAppSetupOptions,
 } from "@synsec/github/app-setup";
@@ -29,10 +30,12 @@ function printHelp(): void {
 Usage:
   synsec-github-app requirements [--sarif] [--remediation] [--json]
   synsec-github-app evaluate <setup.json> [--sarif] [--remediation] [--json] [--strict]
+  synsec-github-app recover <setup.json> [--sarif] [--remediation] [--json] [--strict]
 
 Commands:
   requirements  Print the minimum GitHub App permissions and webhook events for enabled features.
   evaluate      Compare an exported/declarative App setup with SynSec's minimum requirements.
+  recover       Print deterministic operator actions for missing capability and least-privilege drift.
 
 Feature flags:
   --sarif        Require security_events:write for SARIF/code-scanning publication.
@@ -40,16 +43,16 @@ Feature flags:
 
 Output flags:
   --json         Emit machine-readable JSON only.
-  --strict       For evaluate, exit 3 when least-privilege drift exists even if required capability is present.
+  --strict       For evaluate/recover, exit 3 when least-privilege drift exists even if required capability is present.
 
-Evaluation exit codes:
+Evaluation/recovery exit codes:
   0  Required capability is present and, unless --strict is used, any extra privilege is advisory only.
   2  Required permissions or webhook events are missing.
   3  --strict was requested and extra write permissions or webhook events were detected.
 
-The setup evaluator is offline. It does not contact GitHub, inspect installation tokens,
-read repositories, mutate App settings, or accept credentials. Runtime GitHub authorization
-and installation-token permission checks remain authoritative.
+The setup evaluator and recovery planner are offline. They do not contact GitHub, inspect
+installation tokens, read repositories, mutate App settings, or accept credentials. Runtime GitHub
+authorization and installation-token permission checks remain authoritative.
 `);
 }
 
@@ -110,6 +113,17 @@ function printRequirements(): void {
   for (const note of contract.notes) console.log(`Note: ${note}`);
 }
 
+function applyEvaluationExitCode(input: {
+  ready: boolean;
+  hasLeastPrivilegeDrift: boolean;
+}): void {
+  if (!input.ready) {
+    process.exitCode = 2;
+    return;
+  }
+  if (flag("--strict") && input.hasLeastPrivilegeDrift) process.exitCode = 3;
+}
+
 async function evaluate(): Promise<void> {
   const path = args[1];
   if (!path || path.startsWith("--")) {
@@ -146,16 +160,47 @@ async function evaluate(): Promise<void> {
     console.log(`Interpretation: ${evaluation.interpretation}`);
   }
 
-  if (!evaluation.ready) {
-    process.exitCode = 2;
-    return;
+  applyEvaluationExitCode({
+    ready: evaluation.ready,
+    hasLeastPrivilegeDrift:
+      evaluation.excessiveWritePermissions.length > 0 || evaluation.extraEvents.length > 0,
+  });
+}
+
+async function recover(): Promise<void> {
+  const path = args[1];
+  if (!path || path.startsWith("--")) {
+    throw new Error("Usage: synsec-github-app recover <setup.json> [--sarif] [--remediation] [--json] [--strict]");
   }
-  if (
-    flag("--strict")
-    && (evaluation.excessiveWritePermissions.length > 0 || evaluation.extraEvents.length > 0)
-  ) {
-    process.exitCode = 3;
+  const setup = await readSetupFile(path);
+  const plan = buildSynSecGitHubAppSetupRecoveryPlan({
+    ...setup,
+    options: setupOptions(),
+  });
+
+  if (flag("--json")) {
+    console.log(JSON.stringify(plan, null, 2));
+  } else {
+    console.log(`Required capability: ${plan.ready ? "ready" : "missing"}`);
+    if (plan.requiredActions.length > 0) {
+      console.log("Required operator actions:");
+      for (const action of plan.requiredActions) console.log(`  - ${action}`);
+    } else {
+      console.log("Required operator actions: none");
+    }
+    if (plan.leastPrivilegeReview.length > 0) {
+      console.log("Least-privilege review:");
+      for (const action of plan.leastPrivilegeReview) console.log(`  - ${action}`);
+    } else {
+      console.log("Least-privilege review: none");
+    }
+    console.log(`Interpretation: ${plan.interpretation}`);
   }
+
+  applyEvaluationExitCode({
+    ready: plan.ready,
+    hasLeastPrivilegeDrift: plan.leastPrivilegeReview.length > 0,
+  });
 }
 
 async function main(): Promise<void> {
@@ -165,6 +210,9 @@ async function main(): Promise<void> {
       break;
     case "evaluate":
       await evaluate();
+      break;
+    case "recover":
+      await recover();
       break;
     case "help":
     case "--help":
