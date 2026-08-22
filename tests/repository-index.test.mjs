@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   buildRepositoryIndex,
   findDependencyUsage,
+  findingRepositoryContext,
   packageNameFromPurl,
   readRepositoryIndex,
   routeSecurityContext,
@@ -49,6 +50,14 @@ execFile("echo", ["fixture"]);
     const context = routeSecurityContext(index, route);
     assert.ok(context.nearbyAuthSignals.some((signal) => signal.kind === "authentication"));
     assert.ok(context.nearbySinks.some((sink) => sink.kind === "database"));
+
+    const findingContext = findingRepositoryContext(index, "./src/app.ts", 7, 5);
+    assert.equal(findingContext.interpretation, "proximity-signals-only");
+    assert.ok(findingContext.nearbyRoutes.some((signal) => signal.route === "/users/:id"));
+    assert.ok(findingContext.nearbyAuthSignals.some((signal) => signal.kind === "authentication"));
+    assert.ok(findingContext.nearbySinks.some((signal) => signal.kind === "database"));
+    assert.equal("evidence" in findingContext.nearbyAuthSignals[0], false);
+    assert.equal("evidence" in findingContext.nearbySinks[0], false);
 
     const output = join(root, ".synsec", "repository-index.json");
     await writeRepositoryIndex(output, index);
