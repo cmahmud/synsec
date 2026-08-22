@@ -11,6 +11,7 @@
     { "path": "./packages/scanner-sdk" },
     { "path": "./packages/scanners" },
     { "path": "./packages/engine" },
+    { "path": "./packages/github" },
     { "path": "./apps/cli" }
   ]
 }
