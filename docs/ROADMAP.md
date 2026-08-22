@@ -1,75 +1,108 @@
 # SynSec Roadmap
 
+This roadmap separates what is already usable in the repository from the deeper analysis and hosted-product work that follows it.
+
 ## Phase 0 — Foundation
 
 - [x] Standalone public repository
 - [x] Normalized finding model
 - [x] Scanner adapter SDK
-- [x] CLI skeleton
-- [x] First real scanner integration: Trivy
-- [x] Initial correlation layer
-- [ ] CI green on Node 24
-- [ ] Stable configuration file format
+- [x] CLI foundation
+- [x] Initial Trivy integration
+- [x] Deterministic correlation layer
+- [x] CI on Node 20 and Node 24
+- [x] Versioned configuration format
 
-## Phase 1 — Repository scanner MVP
+## Phase 1 — Repository scanner MVP (v0.2)
 
-- [ ] Opengrep adapter
-- [ ] Gitleaks adapter
-- [ ] OSV-Scanner adapter
-- [ ] Checkov adapter
-- [ ] Syft + Grype adapters
+- [x] Opengrep adapter
+- [x] Betterleaks adapter
+- [x] Gitleaks fallback adapter
+- [x] OSV-Scanner adapter
+- [x] Trivy adapter
+- [x] Grype adapter
+- [x] Checkov adapter
+- [x] Bounded parallel scanner orchestration
+- [x] Scanner failure isolation
+- [x] Versioned JSON report format
+- [x] SARIF 2.1 export
+- [x] Self-contained HTML report/dashboard
+- [x] Stronger cross-scanner advisory and source-location correlation
+- [x] Configurable CI severity threshold
+- [x] Baseline support with new/fixed/persisting findings
+- [x] Secret redaction in normalized output
+- [ ] Syft SBOM adapter
 - [ ] OpenSSF Scorecard adapter
-- [ ] SARIF import/export
-- [ ] JSON report format with schema versioning
-- [ ] Better cross-scanner deduplication
-- [ ] Severity and confidence policy engine
-- [ ] Ignore/baseline support
-- [ ] Scan only changed files when appropriate
+- [ ] Generic SARIF import
+- [ ] Changed-files-only scan mode
 
 ## Phase 2 — Repository intelligence
 
-- [ ] Language/framework detection
-- [ ] Repository index
-- [ ] Import/call graph
+- [x] Language/framework inventory
+- [x] Safe bounded finding-to-code context retrieval
+- [ ] Persistent repository index
+- [ ] Import/module graph
+- [ ] Function/call graph
 - [ ] Routes and externally reachable entry points
 - [ ] Authentication/authorization context
-- [ ] Database and filesystem sinks
-- [ ] Dependency reachability
-- [ ] Finding-to-code context retrieval
+- [ ] Database, filesystem, process, and network sinks
+- [ ] Dependency reachability beyond scanner-provided call analysis
+- [ ] Test ownership and coverage context around findings
 
 ## Phase 3 — Contextual security review
 
-- [ ] AI-assisted finding triage
-- [ ] Explain why a finding matters in this repository
-- [ ] Distinguish deterministic evidence from model inference
-- [ ] Suggested code patch
-- [ ] Suggested tests
-- [ ] Rescan after remediation
-- [ ] Finding states: new, confirmed, false positive, accepted risk, fixed, regressed
+- [x] Provider-agnostic OpenAI-compatible AI review adapter
+- [x] Explicit opt-in for model review
+- [x] Separate deterministic scanner evidence from model inference
+- [x] Seven-question evidence gate for model review
+- [x] Source-code context disabled by default and separately opt-in
+- [ ] Multi-model reviewer/verifier consensus
+- [ ] Repository-aware explanation of reachability and impact
+- [ ] Suggested patch generation
+- [ ] Suggested regression/security tests
+- [ ] Safe rescan-after-remediation workflow
+- [ ] Finding lifecycle: new, confirmed, false positive, accepted risk, fixed, regressed
 
-## Phase 4 — Git hosting and CI
+## Phase 4 — Reusable workflows / skills
+
+The orchestration layer should be able to expose small reusable defensive workflows rather than hard-coding one giant agent prompt.
+
+- [ ] Repository review workflow
+- [ ] Dependency review workflow
+- [ ] Secrets review workflow
+- [ ] IaC review workflow
+- [ ] Fix verification workflow
+- [ ] Report-writing workflow
+- [ ] Provider/model routing policy by task and cost
+- [ ] User-defined workflow/skill format with explicit capabilities
+- [ ] Human approval boundaries for any action that changes a repository
+
+These workflows operate on repository evidence and scanner results. They are not a mechanism for silently expanding into external targets.
+
+## Phase 5 — Git hosting and CI
 
 - [ ] GitHub App
 - [ ] Repository installation flow
 - [ ] Pull-request scanning
 - [ ] Commit status / checks
-- [ ] Inline findings
-- [ ] Scheduled scans
-- [ ] Optional remediation pull requests
+- [ ] Inline SARIF/code-scanning findings
+- [ ] Scheduled repository scans
+- [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
-## Phase 5 — Web application
+## Phase 6 — Persistent web application
 
 - [ ] Project/repository dashboard
 - [ ] Scan history
-- [ ] Security score
-- [ ] New/fixed/regressed findings
+- [ ] Security-score history
+- [ ] New/fixed/regressed views
 - [ ] Finding detail page with source evidence
 - [ ] Dependency and SBOM views
 - [ ] Repository posture view
 - [ ] Team triage workflow
+- [ ] Finding comments/ownership
 
-## Phase 6 — Isolated scan workers
+## Phase 7 — Isolated scan workers
 
 - [ ] Containerized scanner images
 - [ ] Job queue
@@ -78,7 +111,8 @@
 - [ ] Network policy
 - [ ] Horizontal workers
 - [ ] Artifact retention policy
+- [ ] Secrets/credential minimization for private repository clones
 
-## Later
+## Later — explicitly authorized external assessment
 
-Authorized attack-surface and bug-bounty workflows can be added later as a separate product mode. They should not define the core architecture or weaken the repository-first authorization model.
+External attack-surface or bug-bounty workflows may be explored as a separate mode only after scope/authorization controls exist. They should not define the core architecture, should never silently expand target scope, and should not weaken the repository-first defensive defaults.
