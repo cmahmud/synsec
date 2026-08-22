@@ -37,6 +37,8 @@ export interface GitHubScanJob {
   attempts: number;
   status: GitHubScanJobStatus;
   leaseUntil?: string;
+  /** Unique fencing identity for the current lease. Legacy persisted leases may omit it until reclaim. */
+  leaseId?: string;
 }
 
 export interface GitHubScanQueueOptions {
@@ -87,6 +89,12 @@ function jobId(value: unknown): string {
   return normalized;
 }
 
+function leaseIdentity(value: unknown): string {
+  const normalized = boundedString(value, "GitHub scan job lease id", 64).toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(normalized)) throw new Error("GitHub scan job lease id is invalid.");
+  return normalized;
+}
+
 function leaseMs(value: number | undefined): number {
   const lease = value ?? DEFAULT_LEASE_MS;
   if (!Number.isSafeInteger(lease) || lease < MIN_LEASE_MS || lease > MAX_LEASE_MS) {
@@ -112,8 +120,9 @@ function validateJob(value: unknown): GitHubScanJob {
   if (event === "pull_request" && (!baseSha || !pullRequestNumber)) throw new Error("Pull request scan jobs require base SHA and pull request number.");
   if (event === "push" && (baseSha || pullRequestNumber)) throw new Error("Push scan jobs must not contain pull request metadata.");
   const leaseUntil = record.leaseUntil === undefined ? undefined : timestamp(record.leaseUntil, "GitHub scan job leaseUntil");
+  const leaseId = record.leaseId === undefined ? undefined : leaseIdentity(record.leaseId);
   if (status === "leased" && !leaseUntil) throw new Error("Leased GitHub scan jobs require leaseUntil.");
-  if (status !== "leased" && leaseUntil) throw new Error("Only leased GitHub scan jobs may contain leaseUntil.");
+  if (status !== "leased" && (leaseUntil || leaseId)) throw new Error("Only leased GitHub scan jobs may contain lease metadata.");
   return {
     version: 1,
     jobId: jobId(record.jobId),
@@ -128,6 +137,7 @@ function validateJob(value: unknown): GitHubScanJob {
     attempts,
     status,
     ...(leaseUntil ? { leaseUntil } : {}),
+    ...(leaseId ? { leaseId } : {}),
   };
 }
 
@@ -231,6 +241,7 @@ export class FileGitHubScanQueue {
     if (candidate.attempts >= MAX_ATTEMPTS) {
       const failed = { ...candidate, status: "failed" as const };
       delete failed.leaseUntil;
+      delete failed.leaseId;
       await writeJob(this.directory, failed);
       return this.claimNext();
     }
@@ -239,19 +250,18 @@ export class FileGitHubScanQueue {
       attempts: candidate.attempts + 1,
       status: "leased",
       leaseUntil: new Date(now + this.leaseMs).toISOString(),
+      leaseId: randomBytes(16).toString("hex"),
     };
     await writeJob(this.directory, leased);
     return leased;
   }
 
-  async assertLease(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
+  async assertLease(jobIdValue: string, expectedLeaseId: string): Promise<GitHubScanJob> {
     const current = await this.require(jobIdValue);
     const now = this.now();
     if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub scan-queue clock must be a positive timestamp.");
-    if (!Number.isSafeInteger(expectedAttempts) || expectedAttempts <= 0) {
-      throw new Error("GitHub scan job lease generation must be a positive integer.");
-    }
-    if (current.status !== "leased" || current.attempts !== expectedAttempts) {
+    const expected = leaseIdentity(expectedLeaseId);
+    if (current.status !== "leased" || !current.leaseId || current.leaseId !== expected) {
       throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     }
     if (Date.parse(current.leaseUntil ?? "") <= now) {
@@ -260,24 +270,37 @@ export class FileGitHubScanQueue {
     return current;
   }
 
-  async release(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
-    const current = await this.assertLease(jobIdValue, expectedAttempts);
+  async renew(jobIdValue: string, expectedLeaseId: string): Promise<GitHubScanJob> {
+    const current = await this.assertLease(jobIdValue, expectedLeaseId);
+    const now = this.now();
+    const renewed: GitHubScanJob = {
+      ...current,
+      leaseUntil: new Date(now + this.leaseMs).toISOString(),
+    };
+    await writeJob(this.directory, renewed);
+    return renewed;
+  }
+
+  async release(jobIdValue: string, expectedLeaseId: string): Promise<GitHubScanJob> {
+    const current = await this.assertLease(jobIdValue, expectedLeaseId);
     const pending: GitHubScanJob = { ...current, status: "pending" };
     delete pending.leaseUntil;
+    delete pending.leaseId;
     await writeJob(this.directory, pending);
     return pending;
   }
 
-  async fail(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
-    const current = await this.assertLease(jobIdValue, expectedAttempts);
+  async fail(jobIdValue: string, expectedLeaseId: string): Promise<GitHubScanJob> {
+    const current = await this.assertLease(jobIdValue, expectedLeaseId);
     const failed: GitHubScanJob = { ...current, status: "failed" };
     delete failed.leaseUntil;
+    delete failed.leaseId;
     await writeJob(this.directory, failed);
     return failed;
   }
 
-  async complete(jobIdValue: string, expectedAttempts: number): Promise<boolean> {
-    const current = await this.assertLease(jobIdValue, expectedAttempts);
+  async complete(jobIdValue: string, expectedLeaseId: string): Promise<boolean> {
+    const current = await this.assertLease(jobIdValue, expectedLeaseId);
     try {
       await stat(pathFor(this.directory, current.jobId));
     } catch (error) {
