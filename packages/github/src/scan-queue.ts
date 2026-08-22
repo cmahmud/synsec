@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { lstat, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ensurePrivateDirectory } from "./private-directory.js";
 
@@ -147,8 +147,10 @@ function pathFor(directory: string, id: string): string {
 }
 
 async function readJob(path: string): Promise<GitHubScanJob> {
-  const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size > MAX_JOB_BYTES) throw new Error("Stored GitHub scan job is invalid or oversized.");
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_JOB_BYTES) {
+    throw new Error("Stored GitHub scan job is invalid, symlinked, or oversized.");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(await readFile(path, "utf8"));
