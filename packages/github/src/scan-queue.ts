@@ -184,6 +184,8 @@ export class FileGitHubScanQueue {
   readonly directory: string;
   readonly leaseMs: number;
   private readonly now: () => number;
+  /** Serialize enqueue duplicate/capacity checks within this instance. Cross-process atomicity is not claimed. */
+  private enqueueTail: Promise<void> = Promise.resolve();
   /** Serialize claims within this queue instance. Cross-process/multi-host atomicity is intentionally not claimed. */
   private claimTail: Promise<void> = Promise.resolve();
 
@@ -196,6 +198,18 @@ export class FileGitHubScanQueue {
   }
 
   async enqueue(input: GitHubScanJobInput): Promise<GitHubScanJob> {
+    let release!: () => void;
+    const previous = this.enqueueTail;
+    this.enqueueTail = new Promise<void>((resolveEnqueue) => { release = resolveEnqueue; });
+    await previous;
+    try {
+      return await this.enqueueSerialized(input);
+    } finally {
+      release();
+    }
+  }
+
+  private async enqueueSerialized(input: GitHubScanJobInput): Promise<GitHubScanJob> {
     const now = this.now();
     if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub scan-queue clock must be a positive timestamp.");
     const event = input.event;
