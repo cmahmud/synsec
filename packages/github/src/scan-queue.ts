@@ -288,6 +288,18 @@ export class FileGitHubScanQueue {
     return true;
   }
 
+  async deleteFailed(jobIdValue: string): Promise<boolean> {
+    const current = await this.require(jobIdValue);
+    if (current.status !== "failed") throw new Error("Only failed GitHub scan jobs can be deleted by retention.");
+    try {
+      await rm(pathFor(this.directory, current.jobId));
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) return false;
+      throw error;
+    }
+  }
+
   private async require(jobIdValue: string): Promise<GitHubScanJob> {
     const id = jobId(jobIdValue);
     try {
