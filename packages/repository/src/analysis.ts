@@ -57,6 +57,31 @@ export interface RouteSecurityContext {
   nearbySinks: SinkSignal[];
 }
 
+export interface NearbyRouteSignal {
+  line: number;
+  distance: number;
+  method: string;
+  route: string;
+  frameworkHint?: string;
+}
+
+export interface NearbySecuritySignal {
+  line: number;
+  distance: number;
+  kind: AuthSignal["kind"] | SinkSignal["kind"];
+}
+
+export interface FindingRepositoryContext {
+  path: string;
+  line?: number;
+  radius: number;
+  nearbyRoutes: NearbyRouteSignal[];
+  nearbyAuthSignals: NearbySecuritySignal[];
+  nearbySinks: NearbySecuritySignal[];
+  /** These are lexical proximity signals, not proof of data flow or reachability. */
+  interpretation: "proximity-signals-only";
+}
+
 const analyzableExtensions = new Set([
   ".js", ".mjs", ".cjs", ".jsx",
   ".ts", ".mts", ".cts", ".tsx",
@@ -252,6 +277,71 @@ export function findDependencyUsage(index: RepositoryIndex, packageName: string,
     status: evidence.length > 0 ? "observed-import" : "unknown",
     evidence,
   };
+}
+
+function normalizeIndexPath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
+}
+
+function distanceFrom(line: number | undefined, signalLine: number): number {
+  return line === undefined ? 0 : Math.abs(signalLine - line);
+}
+
+export function findingRepositoryContext(
+  index: RepositoryIndex,
+  path: string,
+  line?: number,
+  radius = 40,
+  maxPerKind = 5,
+): FindingRepositoryContext {
+  const normalizedPath = normalizeIndexPath(path);
+  const boundedRadius = Math.max(0, radius);
+  const limit = Math.max(1, maxPerKind);
+  const sameFile = (signalPath: string): boolean => normalizeIndexPath(signalPath) === normalizedPath;
+  const nearby = (signalLine: number): boolean => line === undefined || distanceFrom(line, signalLine) <= boundedRadius;
+
+  const nearbyRoutes = index.routes
+    .filter((signal) => sameFile(signal.path) && nearby(signal.line))
+    .map((signal): NearbyRouteSignal => ({
+      line: signal.line,
+      distance: distanceFrom(line, signal.line),
+      method: signal.method,
+      route: signal.route,
+      ...(signal.frameworkHint ? { frameworkHint: signal.frameworkHint } : {}),
+    }))
+    .sort((a, b) => a.distance - b.distance || a.line - b.line)
+    .slice(0, limit);
+
+  const nearbyAuthSignals = index.authSignals
+    .filter((signal) => sameFile(signal.path) && nearby(signal.line))
+    .map((signal): NearbySecuritySignal => ({
+      line: signal.line,
+      distance: distanceFrom(line, signal.line),
+      kind: signal.kind,
+    }))
+    .sort((a, b) => a.distance - b.distance || a.line - b.line)
+    .slice(0, limit);
+
+  const nearbySinks = index.sinks
+    .filter((signal) => sameFile(signal.path) && nearby(signal.line))
+    .map((signal): NearbySecuritySignal => ({
+      line: signal.line,
+      distance: distanceFrom(line, signal.line),
+      kind: signal.kind,
+    }))
+    .sort((a, b) => a.distance - b.distance || a.line - b.line)
+    .slice(0, limit);
+
+  const context: FindingRepositoryContext = {
+    path,
+    radius: boundedRadius,
+    nearbyRoutes,
+    nearbyAuthSignals,
+    nearbySinks,
+    interpretation: "proximity-signals-only",
+  };
+  if (line !== undefined) context.line = line;
+  return context;
 }
 
 export function routeSecurityContext(index: RepositoryIndex, route: RouteSignal, radius = 30): RouteSecurityContext {
