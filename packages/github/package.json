@@ -15,6 +15,7 @@
     "./app-intake": "./dist/app-intake.js",
     "./app-dispatch": "./dist/app-dispatch.js",
     "./app-handler": "./dist/app-handler.js",
+    "./app-worker": "./dist/app-worker.js",
     "./replay-store": "./dist/replay-store.js",
     "./installation-store": "./dist/installation-store.js",
     "./installation-sync": "./dist/installation-sync.js",
