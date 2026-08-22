@@ -23,6 +23,10 @@
     "./history-html": {
       "types": "./dist/history-html.d.ts",
       "import": "./dist/history-html.js"
+    },
+    "./sbom-html": {
+      "types": "./dist/sbom-html.d.ts",
+      "import": "./dist/sbom-html.js"
     }
   },
   "types": "./dist/index.d.ts",
