@@ -37,12 +37,14 @@ test("lifecycle creates new findings and preserves explicit triage state", () =>
   let store = reconcileLifecycle(report, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
   const fingerprint = report.findings[0].fingerprint;
   assert.equal(store.records[fingerprint].state, "new");
+  assert.equal(store.records[fingerprint].lastSeenPath, "src/A.ts");
 
   store = setFindingState(store, fingerprint, "confirmed", {
     note: "Reviewed by maintainer",
     reportId: report.reportId,
     updatedAt: "2026-01-02T00:00:00.000Z",
   });
+  assert.equal(store.records[fingerprint].lastSeenPath, "src/A.ts");
   const next = reconcileLifecycle(report, store, "2026-01-03T00:00:00.000Z");
   assert.equal(next.records[fingerprint].state, "confirmed");
   assert.equal(next.records[fingerprint].note, "Reviewed by maintainer");
@@ -60,6 +62,22 @@ test("lifecycle marks disappeared confirmed findings fixed and returning finding
   const regressed = reconcileLifecycle(initial, fixed, "2026-01-04T00:00:00.000Z");
   assert.equal(regressed.records[fingerprint].state, "regressed");
   assert.equal(lifecycleSummary(regressed).regressed, 1);
+});
+
+test("changed-file scans do not mark out-of-scope findings fixed", () => {
+  const initial = reportWith(["A", "B"]);
+  const [a, b] = initial.findings.map((finding) => finding.fingerprint);
+  let store = reconcileLifecycle(initial, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
+  store = setFindingState(store, a, "confirmed", { updatedAt: "2026-01-02T00:00:00.000Z" });
+  store = setFindingState(store, b, "confirmed", { updatedAt: "2026-01-02T00:00:00.000Z" });
+
+  const incremental = reportWith([], {
+    scope: { mode: "changed-files", baseRef: "main", changedFiles: ["src/A.ts"] },
+  });
+  const next = reconcileLifecycle(incremental, store, "2026-01-03T00:00:00.000Z");
+  assert.equal(next.records[a].state, "fixed");
+  assert.equal(next.records[b].state, "confirmed");
+  assert.equal(next.records[b].reportId, store.records[b].reportId);
 });
 
 test("false-positive and accepted-risk decisions are not rewritten just because a later scan omits the finding", () => {
