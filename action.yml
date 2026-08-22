@@ -41,6 +41,9 @@ outputs:
   baseline-source:
     description: Baseline provenance used for the scan (base-scan, file, provided, or none).
     value: ${{ steps.scan.outputs.baseline-source }}
+  report-path:
+    description: Local path to the completed JSON report in RUNNER_TEMP for optional artifact retention.
+    value: ${{ steps.scan.outputs.report-path }}
 runs:
   using: composite
   steps:
