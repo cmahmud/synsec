@@ -5,6 +5,7 @@ import type {
   CorrelatedFinding,
   Finding,
   ScanArtifact,
+  ScannerExecutionScope,
   ScanResult,
   ScanTarget,
   Severity,
@@ -29,6 +30,7 @@ export interface ScannerRunSummary {
   findingCount: number;
   artifactCount: number;
   diagnostics: string[];
+  executionScope?: ScannerExecutionScope;
 }
 
 export interface BaselineDelta {
@@ -127,6 +129,7 @@ export function buildReport(input: {
       findingCount: scan.findings.length,
       artifactCount: scan.artifacts?.length ?? 0,
       diagnostics: scan.diagnostics,
+      ...(scan.executionScope ? { executionScope: scan.executionScope } : {}),
     })),
     rawFindingCount: rawFindings.length,
     findingCount: findings.length,
