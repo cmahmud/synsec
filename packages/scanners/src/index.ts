@@ -6,6 +6,7 @@ import { GrypeAdapter } from "./grype.js";
 import { OpengrepAdapter } from "./opengrep.js";
 import { OsvScannerAdapter } from "./osv.js";
 import { ScorecardAdapter } from "./scorecard.js";
+import { SyftAdapter } from "./syft.js";
 import { TrivyAdapter } from "./trivy.js";
 
 export { BetterleaksAdapter, parseBetterleaksJson } from "./betterleaks.js";
@@ -15,6 +16,7 @@ export { GrypeAdapter, parseGrypeJson } from "./grype.js";
 export { OpengrepAdapter, parseOpengrepJson } from "./opengrep.js";
 export { OsvScannerAdapter, parseOsvJson } from "./osv.js";
 export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
+export { SyftAdapter, parseSyftJson } from "./syft.js";
 export { TrivyAdapter, parseTrivyJson } from "./trivy.js";
 
 export function builtInScanners(): ScannerAdapter[] {
@@ -26,6 +28,7 @@ export function builtInScanners(): ScannerAdapter[] {
     new TrivyAdapter(),
     new GrypeAdapter(),
     new CheckovAdapter(),
+    new SyftAdapter(),
     new ScorecardAdapter(),
   ];
 }
