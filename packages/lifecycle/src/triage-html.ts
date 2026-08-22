@@ -30,6 +30,7 @@ export function renderFindingTriageHtml(view: FindingTriageView): string {
         <div><dt>State</dt><dd>${escapeHtml(stateLabel(item.state))}</dd></div>
         <div><dt>Owner</dt><dd>${escapeHtml(item.owner ?? "unassigned")}</dd></div>
         <div><dt>Updated</dt><dd>${escapeHtml(item.updatedAt)}</dd></div>
+        ${item.reviewAt ? `<div><dt>Review by</dt><dd>${escapeHtml(item.reviewAt)}</dd></div>` : ""}
       </dl>
       ${item.note ? `<p class=note>${escapeHtml(item.note)}</p>` : ""}
       <details><summary>Review comments (${item.comments.length})</summary>${comments}</details>
