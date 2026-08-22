@@ -49,7 +49,7 @@ test("AI review uses the OpenAI-compatible boundary and normalizes the seven-que
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       model: "fixture-model",
       apiKey: "test-key",
-    });
+    }, undefined, "Prefer deterministic fixture evidence and do not overstate reachability.");
 
     assert.equal(review.verdict, "likely");
     assert.equal(review.model, "fixture-model");
@@ -58,6 +58,7 @@ test("AI review uses the OpenAI-compatible boundary and normalizes the seven-que
     assert.equal(review.gate.find((item) => item.id === "reachable")?.answer, "unknown");
     assert.match(observedBody, /fixture-model/);
     assert.match(observedBody, /No source excerpt was provided/);
+    assert.match(observedBody, /Prefer deterministic fixture evidence/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
