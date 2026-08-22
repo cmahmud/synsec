@@ -1,7 +1,7 @@
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import type { LocalGitHubAppStatus } from "./runtime-status.js";
+import type { GitHubAppRuntimeStatus } from "./app-status.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -26,7 +26,7 @@ export interface GitHubAppServerOptions {
   webhookHandler(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse): Promise<void>;
   tls?: GitHubAppServerTlsOptions;
   healthPath?: string;
-  getStatus?: () => Promise<LocalGitHubAppStatus>;
+  getStatus?: () => Promise<GitHubAppRuntimeStatus>;
   requestTimeoutMs?: number;
   headersTimeoutMs?: number;
   keepAliveTimeoutMs?: number;
@@ -86,13 +86,15 @@ function sendJson(response: import("node:http").ServerResponse, statusCode: numb
   response.end(body);
 }
 
-function safeStatus(status: LocalGitHubAppStatus): Record<string, unknown> {
+function safeStatus(status: GitHubAppRuntimeStatus): Record<string, unknown> {
   return {
     status: "ok",
     installations: {
       total: status.installations.total,
       active: status.installations.active,
       suspended: status.installations.suspended,
+      allRepositories: status.installations.allRepositories,
+      selectedRepositories: status.installations.selectedRepositories,
     },
     queue: {
       total: status.queue.total,
