@@ -2,8 +2,13 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
+    { "path": "./packages/config" },
+    { "path": "./packages/report" },
+    { "path": "./packages/repository" },
+    { "path": "./packages/ai" },
     { "path": "./packages/scanner-sdk" },
     { "path": "./packages/scanners" },
+    { "path": "./packages/engine" },
     { "path": "./apps/cli" }
   ]
 }
