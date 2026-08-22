@@ -46,6 +46,14 @@ function validatedRetention(value: number | undefined): number {
   return retention;
 }
 
+function validatedReceivedAt(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || !Number.isFinite(Date.parse(normalized))) {
+    throw new Error("GitHub webhook replay receivedAt must be an ISO timestamp.");
+  }
+  return normalized;
+}
+
 function recordPath(directory: string, deliveryId: string): string {
   const digest = createHash("sha256").update(deliveryId, "utf8").digest("hex");
   return join(directory, `${digest}.json`);
@@ -69,9 +77,8 @@ function parseRecord(text: string, expectedDeliveryId?: string): ReplayRecord {
   if (expectedDeliveryId !== undefined && deliveryId !== expectedDeliveryId) {
     throw new Error("Stored GitHub webhook replay record has an invalid shape.");
   }
-  const timestamp = Date.parse(record.receivedAt);
-  if (!Number.isFinite(timestamp)) throw new Error("Stored GitHub webhook replay timestamp is invalid.");
-  return { version: 1, deliveryId, receivedAt: record.receivedAt };
+  const receivedAt = validatedReceivedAt(record.receivedAt);
+  return { version: 1, deliveryId, receivedAt };
 }
 
 async function readRecord(path: string, expectedDeliveryId?: string): Promise<ReplayRecord> {
@@ -86,6 +93,12 @@ function isAlreadyExists(error: unknown): boolean {
   return error instanceof Error
     && Object.prototype.hasOwnProperty.call(error, "code")
     && (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+function isNotFound(error: unknown): boolean {
+  return error instanceof Error
+    && Object.prototype.hasOwnProperty.call(error, "code")
+    && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 /**
@@ -147,6 +160,30 @@ export class FileGitHubWebhookReplayStore {
     }
 
     throw new Error("Unable to claim expired GitHub webhook delivery id safely.");
+  }
+
+  /**
+   * Release only the still-current accepted claim after downstream processing fails.
+   * The original receivedAt value binds the release to this claim and an expired claim
+   * is never removed, preventing a late worker from deleting a newer reclaimed marker.
+   */
+  async release(deliveryIdValue: string, receivedAtValue: string): Promise<boolean> {
+    const deliveryId = validatedDeliveryId(deliveryIdValue);
+    const receivedAt = validatedReceivedAt(receivedAtValue);
+    const now = this.now();
+    if (!Number.isFinite(now) || now <= 0) throw new Error("Webhook replay-store clock must be a positive timestamp.");
+    const path = recordPath(this.directory, deliveryId);
+    let existing: ReplayRecord;
+    try {
+      existing = await readRecord(path, deliveryId);
+    } catch (error) {
+      if (isNotFound(error)) return false;
+      throw error;
+    }
+    if (existing.receivedAt !== receivedAt) return false;
+    if (now - Date.parse(existing.receivedAt) >= this.retentionMs) return false;
+    await rm(path);
+    return true;
   }
 
   async pruneExpired(): Promise<number> {
