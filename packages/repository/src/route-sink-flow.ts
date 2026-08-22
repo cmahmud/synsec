@@ -75,6 +75,7 @@ function owningReachableFunction(
   });
   if (candidates.length !== 1) return undefined;
   const node = candidates[0];
+  if (!node) return undefined;
   const depth = depths.get(node.id);
   return depth === undefined ? undefined : { node, depth };
 }
