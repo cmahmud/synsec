@@ -4,6 +4,7 @@ import { runConfiguredGitHubAppWorkerOnce } from "@synsec/github/app-worker-runn
 
 const headSha = "0123456789abcdef0123456789abcdef01234567";
 const baseSha = "abcdef0123456789abcdef0123456789abcdef01";
+const leaseId = "e".repeat(32);
 
 function report(commitSha, baseline = false, scope) {
   return {
@@ -38,22 +39,23 @@ function job() {
     attempts: 1,
     status: "leased",
     leaseUntil: "2026-08-22T19:05:00.000Z",
+    leaseId,
   };
 }
 
 function queueFor(jobValue) {
   return {
     async claimNext() { return jobValue; },
-    async assertLease(id, attempts) {
+    async assertLease(id, expectedLeaseId) {
       assert.equal(id, jobValue.jobId);
-      assert.equal(attempts, jobValue.attempts);
+      assert.equal(expectedLeaseId, jobValue.leaseId);
       return jobValue;
     },
     async release() { throw new Error("must not release successful job"); },
     async fail() { throw new Error("must not fail successful job"); },
-    async complete(id, attempts) {
+    async complete(id, expectedLeaseId) {
       assert.equal(id, jobValue.jobId);
-      assert.equal(attempts, jobValue.attempts);
+      assert.equal(expectedLeaseId, jobValue.leaseId);
       return true;
     },
   };
@@ -84,25 +86,18 @@ test("hosted PR worker passes exact changed paths and base SHA into the head sca
     getInstallationToken: async () => "token",
     acquire: async (input) => acquisition(input),
     deriveChangedFiles: async () => ({
-      mode: "changed-files",
-      reason: "exact-tree-diff",
-      changedFiles: ["src/a.ts", "src/b.ts"],
-      deletedFiles: [],
+      mode: "changed-files", reason: "exact-tree-diff", changedFiles: ["src/a.ts", "src/b.ts"], deletedFiles: [],
       interpretation: "exact-commit-tree-comparison-with-conservative-full-scan-fallback",
     }),
     scan: async (input) => {
       scanInputs.push(input);
       const isBase = input.rootPath === "/tmp/base";
       return {
-        report: report(
-          isBase ? baseSha : headSha,
-          Boolean(input.baseline),
-          input.changedOnly ? { mode: "changed-files", baseRef: input.changedBase, changedFiles: [...input.changedFiles] } : { mode: "repository" },
-        ),
+        report: report(isBase ? baseSha : headSha, Boolean(input.baseline), input.changedOnly
+          ? { mode: "changed-files", baseRef: input.changedBase, changedFiles: [...input.changedFiles] }
+          : { mode: "repository" }),
         repositoryIndex: { schemaVersion: 1, generatedAt: "2026-08-22T19:00:00.000Z", indexedFileCount: 0, moduleEdges: [], routes: [], authSignals: [], sinks: [] },
-        statuses: [],
-        failures: [],
-        shouldFail: false,
+        statuses: [], failures: [], shouldFail: false,
       };
     },
     fetch: checkFetch,
@@ -125,10 +120,7 @@ test("hosted PR worker keeps SARIF publication on a full head scan even when an 
     getInstallationToken: async () => "token",
     acquire: async (input) => acquisition(input),
     deriveChangedFiles: async () => ({
-      mode: "changed-files",
-      reason: "exact-tree-diff",
-      changedFiles: ["src/a.ts"],
-      deletedFiles: [],
+      mode: "changed-files", reason: "exact-tree-diff", changedFiles: ["src/a.ts"], deletedFiles: [],
       interpretation: "exact-commit-tree-comparison-with-conservative-full-scan-fallback",
     }),
     scan: async (input) => {
