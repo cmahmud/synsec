@@ -32,18 +32,29 @@ Decorator-style routes continue to use the existing bounded nearest-following-fu
 
 For a resolved handler, SynSec may expose the existing bounded lexical call neighborhood. Those calls are still regex/lexical relationships. Dynamic dispatch, framework dependency injection, callbacks, aliases, imported functions, and runtime control flow can make the static neighborhood incomplete.
 
+## Structural route-to-sink flow
+
+`@synsec/repository/route-sink-flow` combines three already bounded repository signals: a resolved route entrypoint, its same-file lexical call neighborhood, and normalized sensitive-sink lines. A sink is linked to a route only when its line belongs to exactly one function in that bounded reachable node set. Ambiguous function containment is omitted rather than resolved heuristically.
+
+The flow context contains only route identity, handler/function identity, sink category, line, and call depth. It deliberately excludes the sink source-line evidence stored in the repository index. The interpretation is always `structural-route-call-sink-evidence-only`.
+
+The scan engine consumes this evidence conservatively. For non-secret findings, `metadata.routeFlow` is attached only when the finding's normalized repository path and exact start line match a linked sink line. A finding elsewhere in the same handler, file, or route neighborhood does not inherit route-flow metadata merely by proximity. Secret findings never receive this enrichment and remain on their narrower metadata boundary.
+
+The engine builds the bounded call graph for this purpose only when the repository index contains both route and sink signals. This avoids an additional analysis pass for repositories where route-to-sink evidence cannot exist.
+
 ## Security interpretation
 
-A resolved route-to-handler relationship means only that the repository contains a route registration and an unambiguous function declaration matching SynSec's conservative static rule. It must not be interpreted as any of the following:
+A resolved route-to-handler or route-to-sink relationship means only that the repository contains static structures matching SynSec's conservative rules. It must not be interpreted as any of the following:
 
 - proof that the application starts or registers the route in production;
 - proof that the route is internet-accessible;
 - proof that authentication or authorization is present or absent;
-- proof that a security-sensitive sink is reachable from attacker-controlled input;
+- proof that attacker-controlled input reaches the sink;
+- proof that the sink is executable on a real request;
 - proof that an unresolved route is safe or unreachable; or
 - permission to make network requests against the route.
 
-Route authentication/sink proximity, call-graph edges, test coverage, dependency usage, and scanner findings remain separate evidence sources. Uncertainty in one source is not silently converted into certainty by another.
+Route authentication/sink proximity, route-flow metadata, call-graph edges, test coverage, dependency usage, and scanner findings remain separate evidence sources. Uncertainty in one source is not silently converted into certainty by another.
 
 ## Repository-first boundary
 
