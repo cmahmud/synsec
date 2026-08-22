@@ -5,9 +5,9 @@ import { join, resolve } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
-import { asArray, asNumber, asRecord, asString, commandAvailability, safeJson } from "./utils.js";
+import { asArray, asNumber, asRecord, asString, commandAvailability, relativeLike, safeJson } from "./utils.js";
 
-export function parseBetterleaksJson(raw: string): Finding[] {
+export function parseBetterleaksJson(raw: string, root = ""): Finding[] {
   const parsed = safeJson(raw);
   const findings: Finding[] = [];
   for (const value of asArray(parsed)) {
@@ -16,7 +16,8 @@ export function parseBetterleaksJson(raw: string): Finding[] {
     const ruleId = asString(item.RuleID);
     const description = asString(item.Description) ?? ruleId ?? "Potential secret detected";
     const attributes = asRecord(item.Attributes);
-    const file = asString(item.File) ?? asString(attributes?.path) ?? asString(attributes?.Path);
+    const rawFile = asString(item.File) ?? asString(attributes?.path) ?? asString(attributes?.Path);
+    const file = relativeLike(rawFile, root);
     const startLine = asNumber(item.StartLine);
     const fingerprint = asString(item.Fingerprint);
     const validationStatus = asString(item.ValidationStatus);
@@ -95,7 +96,7 @@ export class BetterleaksAdapter implements ScannerAdapter {
         startedAt,
         completedAt: new Date().toISOString(),
         target: context.target,
-        findings: parseBetterleaksJson(raw),
+        findings: parseBetterleaksJson(raw, context.target.path),
         diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
       };
     } finally {
