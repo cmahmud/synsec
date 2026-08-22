@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
-    "./publisher": "./dist/publisher.js"
+    "./publisher": "./dist/publisher.js",
+    "./orchestrator": "./dist/orchestrator.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
