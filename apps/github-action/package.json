@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@synsec/config": "0.2.0",
-    "@synsec/github": "0.2.0"
+    "@synsec/github": "0.2.0",
+    "@synsec/report": "0.2.0"
   }
 }
