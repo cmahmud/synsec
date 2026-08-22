@@ -77,12 +77,16 @@ export function buildReportHistory(reports: readonly SynSecReport[]): ReportHist
   }
 
   const ids = new Set<string>();
+  const timestamps = new Map<string, number>();
   for (const report of reports) {
     if (ids.has(report.reportId)) throw new Error(`Duplicate report id in history: ${report.reportId}`);
     ids.add(report.reportId);
+    timestamps.set(report.reportId, timestamp(report));
   }
 
-  const ordered = [...reports].sort((a, b) => timestamp(a) - timestamp(b) || a.reportId.localeCompare(b.reportId));
+  const ordered = [...reports].sort(
+    (a, b) => (timestamps.get(a.reportId) ?? 0) - (timestamps.get(b.reportId) ?? 0) || a.reportId.localeCompare(b.reportId),
+  );
   const points: ReportHistoryPoint[] = [];
   const findingMap = new Map<string, FindingHistory>();
   let previous: SynSecReport | undefined;
