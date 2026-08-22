@@ -7,6 +7,7 @@ import {
   parseOpengrepJson,
   parseOsvJson,
   parseScorecardJson,
+  parseSyftJson,
 } from "../packages/scanners/dist/index.js";
 
 test("Betterleaks parser redacts normalized evidence by design", () => {
@@ -88,4 +89,28 @@ test("Scorecard parser creates posture findings only for non-perfect checks", ()
   assert.equal(findings[0].category, "repository-posture");
   assert.equal(findings[0].severity, "high");
   assert.equal(findings[0].scanner.ruleId, "Branch-Protection");
+});
+
+test("Syft parser normalizes packages, licenses, and repository-relative locations", () => {
+  const artifact = parseSyftJson(JSON.stringify({
+    descriptor: { name: "syft", version: "1.31.0" },
+    source: { id: "source-id", name: "/repo" },
+    artifacts: [
+      {
+        name: "demo-package",
+        version: "1.2.3",
+        type: "npm",
+        purl: "pkg:npm/demo-package@1.2.3",
+        licenses: [{ value: "MIT", spdxExpression: "MIT" }],
+        locations: [{ path: "/repo/package-lock.json" }],
+      },
+    ],
+  }), "/repo", "2026-08-22T00:00:00.000Z");
+
+  assert.equal(artifact.type, "sbom");
+  assert.equal(artifact.packageCount, 1);
+  assert.equal(artifact.packages[0].name, "demo-package");
+  assert.deepEqual(artifact.packages[0].licenses, ["MIT"]);
+  assert.deepEqual(artifact.packages[0].locations, ["package-lock.json"]);
+  assert.equal(artifact.metadata.syftVersion, "1.31.0");
 });
