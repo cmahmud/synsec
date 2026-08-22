@@ -29,6 +29,29 @@ test("hosted deployment readiness accepts separated state, TLS termination, and 
   assert.doesNotThrow(() => assertGitHubAppDeploymentReady(validConfig));
 });
 
+test("deployment readiness accepts exactly two strong distinct webhook secrets during rotation", () => {
+  const result = validateGitHubAppDeployment({
+    ...validConfig,
+    webhookSecret: ["n".repeat(32), "o".repeat(32)],
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("deployment readiness rejects empty, duplicate, or over-broad webhook secret sets without echoing values", () => {
+  const marker = "rotation-secret-marker".padEnd(32, "x");
+  for (const webhookSecret of [
+    [],
+    [marker, marker],
+    [marker, "b".repeat(32), "c".repeat(32)],
+  ]) {
+    const result = validateGitHubAppDeployment({ ...validConfig, webhookSecret });
+    assert.equal(result.ready, false);
+    assert.ok(result.issues.some((issue) => issue.code === "invalid-webhook-secret-set"));
+    assert.equal(result.issues.some((issue) => issue.message.includes(marker)), false);
+  }
+});
+
 test("scanner isolation is warning-only by default but can be required for production startup", () => {
   const { scannerIsolation, ...withoutIsolation } = validConfig;
   const advisory = validateGitHubAppDeployment(withoutIsolation);
