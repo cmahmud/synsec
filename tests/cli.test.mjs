@@ -22,6 +22,13 @@ test("CLI lists capability-scoped defensive workflows", async () => {
   assert.match(stdout, /external network assessment: forbidden/);
 });
 
+test("CLI help documents finding lifecycle triage", async () => {
+  const { stdout } = await exec(process.execPath, [cli.pathname, "help"]);
+  assert.match(stdout, /synsec triage <report\.json>/);
+  assert.match(stdout, /false-positive/);
+  assert.match(stdout, /accepted-risk/);
+});
+
 test("CLI init writes a safe default configuration", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-cli-test-"));
   try {
@@ -64,6 +71,64 @@ test("CLI imports SARIF into a native SynSec report", async () => {
     assert.equal(report.findingCount, 1);
     assert.equal(report.findings[0].primary.scanner.name, "FixtureScanner");
     assert.equal(report.findings[0].primary.severity, "medium");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI triage persists explicit lifecycle decisions and lists them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-triage-test-"));
+  try {
+    const input = join(root, "external.sarif");
+    const reportPath = join(root, "report.json");
+    const storePath = join(root, "lifecycle.json");
+    await writeFile(input, JSON.stringify({
+      version: "2.1.0",
+      runs: [{
+        tool: { driver: { name: "FixtureScanner", rules: [{ id: "FIX-2", shortDescription: { text: "Review me" } }] } },
+        results: [{ ruleId: "FIX-2", level: "error", message: { text: "Review me" } }],
+      }],
+    }), "utf8");
+
+    await exec(process.execPath, [
+      cli.pathname,
+      "import-sarif",
+      input,
+      "--root",
+      root,
+      "--output",
+      reportPath,
+    ]);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    const fingerprint = report.findings[0].fingerprint;
+
+    const updated = await exec(process.execPath, [
+      cli.pathname,
+      "triage",
+      reportPath,
+      fingerprint,
+      "confirmed",
+      "--note",
+      "reviewed",
+      "--store",
+      storePath,
+    ]);
+    assert.match(updated.stdout, /-> confirmed/);
+
+    const stored = JSON.parse(await readFile(storePath, "utf8"));
+    assert.equal(stored.records[fingerprint].state, "confirmed");
+    assert.equal(stored.records[fingerprint].note, "reviewed");
+
+    const listed = await exec(process.execPath, [
+      cli.pathname,
+      "triage",
+      reportPath,
+      "--list",
+      "--store",
+      storePath,
+    ]);
+    assert.match(listed.stdout, /confirmed/);
+    assert.match(listed.stdout, /Review me/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
