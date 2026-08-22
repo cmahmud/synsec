@@ -12,10 +12,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "synsec": "npm run dev -w @synsec/cli --"
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "node --test",
+    "synsec": "npm run build && node --enable-source-maps apps/cli/dist/index.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
