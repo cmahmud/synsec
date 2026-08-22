@@ -55,7 +55,8 @@ async function recordModifiedAt(queue: FileGitHubScanQueue, jobId: string): Prom
  * marks a job failed. Pending and leased work is never deleted, even when old. Deletion is capped
  * per invocation so operator maintenance cannot turn into an unbounded filesystem sweep. The queue
  * validates every record before this function sees it, so malformed durable state continues to fail
- * closed.
+ * closed. Failed-record deletion is deliberately separate from leased-job completion so retention
+ * can never bypass lease fencing.
  */
 export async function pruneGitHubAppFailedJobs(
   queue: FileGitHubScanQueue,
@@ -77,7 +78,7 @@ export async function pruneGitHubAppFailedJobs(
       retainedFailed += 1;
       continue;
     }
-    if (await queue.complete(job.jobId)) deleted += 1;
+    if (await queue.deleteFailed(job.jobId)) deleted += 1;
   }
 
   return { inspected: jobs.length, deleted, retainedFailed };
