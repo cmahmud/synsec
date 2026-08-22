@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
-import { asArray, asNumber, asRecord, asString, commandAvailability, safeJson } from "./utils.js";
+import { asArray, asNumber, asRecord, asString, commandAvailability, relativeLike, safeJson } from "./utils.js";
 
-export function parseGitleaksJson(raw: string): Finding[] {
+export function parseGitleaksJson(raw: string, root = ""): Finding[] {
   const parsed = safeJson(raw);
   const findings: Finding[] = [];
   for (const value of asArray(parsed)) {
@@ -15,7 +15,7 @@ export function parseGitleaksJson(raw: string): Finding[] {
     if (!item) continue;
     const ruleId = asString(item.RuleID);
     const description = asString(item.Description) ?? ruleId ?? "Potential secret detected";
-    const file = asString(item.File);
+    const file = relativeLike(asString(item.File), root);
     const startLine = asNumber(item.StartLine);
     const fingerprint = asString(item.Fingerprint);
     findings.push({
@@ -51,14 +51,28 @@ export class GitleaksAdapter implements ScannerAdapter {
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
+    if (context.changedFiles && context.changedFiles.length === 0) {
+      return {
+        scanner: this.id,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        target: context.target,
+        findings: [],
+        diagnostics: ["Changed-file scope is empty; Gitleaks was not invoked."],
+      };
+    }
+
     const temp = await mkdtemp(join(tmpdir(), "synsec-gitleaks-"));
     const report = join(temp, "report.json");
     try {
       const gitRepo = await stat(join(context.target.path, ".git")).then(() => true).catch(() => false);
-      const mode = gitRepo ? "git" : "dir";
+      const mode = context.changedFiles ? "dir" : gitRepo ? "git" : "dir";
+      const targets = context.changedFiles
+        ? context.changedFiles.map((path) => resolve(context.target.path, path))
+        : [context.target.path];
       const output = await runProcess(
         "gitleaks",
-        [mode, "--report-format", "json", "--report-path", report, "--redact=100", "--no-banner", "--exit-code", "0", context.target.path],
+        [mode, "--report-format", "json", "--report-path", report, "--redact=100", "--no-banner", "--exit-code", "0", ...targets],
         { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
       );
       if (output.exitCode !== 0) throw new Error(`Gitleaks scan failed (${output.exitCode}): ${output.stderr.trim()}`);
@@ -68,7 +82,7 @@ export class GitleaksAdapter implements ScannerAdapter {
         startedAt,
         completedAt: new Date().toISOString(),
         target: context.target,
-        findings: parseGitleaksJson(raw),
+        findings: parseGitleaksJson(raw, context.target.path),
         diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
       };
     } finally {
