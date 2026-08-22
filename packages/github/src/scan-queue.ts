@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 const MAX_JOB_BYTES = 16 * 1024;
 const MAX_QUEUE_ENTRIES = 10_000;
@@ -158,7 +159,7 @@ async function readJob(path: string): Promise<GitHubScanJob> {
 }
 
 async function writeJob(directory: string, record: GitHubScanJob): Promise<void> {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await ensurePrivateDirectory(directory);
   const path = pathFor(directory, record.jobId);
   const tempPath = join(directory, `.job-${record.jobId}-${randomBytes(8).toString("hex")}.tmp`);
   const handle = await open(tempPath, "wx", 0o600);
@@ -236,7 +237,7 @@ export class FileGitHubScanQueue {
   }
 
   async list(): Promise<GitHubScanJob[]> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(this.directory);
     const entries = (await readdir(this.directory, { withFileTypes: true })).filter((entry) => entry.isFile() && /^[a-f0-9]{32}\.json$/.test(entry.name));
     if (entries.length > MAX_QUEUE_ENTRIES) throw new Error(`GitHub scan queue exceeds the ${MAX_QUEUE_ENTRIES}-job limit.`);
     const jobs: GitHubScanJob[] = [];
