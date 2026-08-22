@@ -9,7 +9,8 @@
     "./module-graph": "./dist/module-graph.js",
     "./call-graph": "./dist/call-graph.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
-    "./route-auth-context": "./dist/route-auth-context.js"
+    "./route-auth-context": "./dist/route-auth-context.js",
+    "./route-sink-context": "./dist/route-sink-context.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
