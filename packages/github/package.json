@@ -8,7 +8,8 @@
     "./publisher": "./dist/publisher.js",
     "./orchestrator": "./dist/orchestrator.js",
     "./actions-runner": "./dist/actions-runner.js",
-    "./sarif-publisher": "./dist/sarif-publisher.js"
+    "./sarif-publisher": "./dist/sarif-publisher.js",
+    "./baseline": "./dist/baseline.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
