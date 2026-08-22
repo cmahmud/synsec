@@ -244,32 +244,47 @@ export class FileGitHubScanQueue {
     return leased;
   }
 
-  async release(jobIdValue: string): Promise<GitHubScanJob> {
+  async assertLease(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
     const current = await this.require(jobIdValue);
-    if (current.status !== "leased") throw new Error("Only leased GitHub scan jobs can be released.");
+    const now = this.now();
+    if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub scan-queue clock must be a positive timestamp.");
+    if (!Number.isSafeInteger(expectedAttempts) || expectedAttempts <= 0) {
+      throw new Error("GitHub scan job lease generation must be a positive integer.");
+    }
+    if (current.status !== "leased" || current.attempts !== expectedAttempts) {
+      throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
+    }
+    if (Date.parse(current.leaseUntil ?? "") <= now) {
+      throw new Error("GitHub scan job lease has expired.");
+    }
+    return current;
+  }
+
+  async release(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
+    const current = await this.assertLease(jobIdValue, expectedAttempts);
     const pending: GitHubScanJob = { ...current, status: "pending" };
     delete pending.leaseUntil;
     await writeJob(this.directory, pending);
     return pending;
   }
 
-  async fail(jobIdValue: string): Promise<GitHubScanJob> {
-    const current = await this.require(jobIdValue);
+  async fail(jobIdValue: string, expectedAttempts: number): Promise<GitHubScanJob> {
+    const current = await this.assertLease(jobIdValue, expectedAttempts);
     const failed: GitHubScanJob = { ...current, status: "failed" };
     delete failed.leaseUntil;
     await writeJob(this.directory, failed);
     return failed;
   }
 
-  async complete(jobIdValue: string): Promise<boolean> {
-    const id = jobId(jobIdValue);
+  async complete(jobIdValue: string, expectedAttempts: number): Promise<boolean> {
+    const current = await this.assertLease(jobIdValue, expectedAttempts);
     try {
-      await stat(pathFor(this.directory, id));
+      await stat(pathFor(this.directory, current.jobId));
     } catch (error) {
       if (isNotFound(error)) return false;
       throw error;
     }
-    await rm(pathFor(this.directory, id));
+    await rm(pathFor(this.directory, current.jobId));
     return true;
   }
 
