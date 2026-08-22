@@ -12,6 +12,7 @@
     "./baseline": "./dist/baseline.js",
     "./base-scan": "./dist/base-scan.js",
     "./app": "./dist/app.js",
+    "./app-intake": "./dist/app-intake.js",
     "./replay-store": "./dist/replay-store.js"
   },
   "types": "./dist/index.d.ts",
