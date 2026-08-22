@@ -27,7 +27,32 @@ test("buildReport produces a versioned correlated report and security score", ()
   assert.equal(report.rawFindingCount, 1);
   assert.equal(report.findingCount, 1);
   assert.equal(report.summary.high, 1);
+  assert.equal(report.scanners[0].artifactCount, 0);
   assert.ok(report.securityScore < 100);
+});
+
+test("buildReport preserves scanner artifacts and renders SBOM inventory", () => {
+  const sbomScan = {
+    scanner: "syft",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:01.000Z",
+    target: { path: "/repo" },
+    diagnostics: [],
+    findings: [],
+    artifacts: [{
+      type: "sbom",
+      format: "syft-json",
+      producer: "syft",
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      packageCount: 2,
+      packages: [{ name: "a", version: "1.0.0" }, { name: "b", version: "2.0.0" }],
+    }],
+  };
+  const report = buildReport({ target: { path: "/repo" }, scans: [sbomScan] });
+  assert.equal(report.artifacts.length, 1);
+  assert.equal(report.artifacts[0].packageCount, 2);
+  assert.equal(report.scanners[0].artifactCount, 1);
+  assert.match(renderHtml(report), /2 package\(s\) inventoried/);
 });
 
 test("baseline delta identifies new and fixed findings", () => {
