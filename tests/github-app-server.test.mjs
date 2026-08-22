@@ -26,7 +26,7 @@ test("hosted App server exposes aggregate-only health on loopback", async () => 
         allRepositories: 1,
         selectedRepositories: 1,
       },
-      queue: { total: 4, pending: 1, leased: 1, failed: 2 },
+      queue: { total: 4, pending: 1, leased: 1, expiredLeases: 1, failed: 2 },
     }),
   });
 
@@ -43,7 +43,7 @@ test("hosted App server exposes aggregate-only health on loopback", async () => 
         allRepositories: 1,
         selectedRepositories: 1,
       },
-      queue: { total: 4, pending: 1, leased: 1, failed: 2 },
+      queue: { total: 4, pending: 1, leased: 1, expiredLeases: 1, failed: 2 },
     });
     assert.equal(result.headers.get("cache-control"), "no-store");
     assert.equal(result.headers.get("x-content-type-options"), "nosniff");
