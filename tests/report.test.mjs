@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildReport, applyBaseline, renderHtml, toSarif } from "../packages/report/dist/index.js";
+import { renderMarkdown } from "../packages/report/dist/markdown.js";
 
 function scan(ruleId, severity = "high") {
   return {
@@ -17,6 +18,7 @@ function scan(ruleId, severity = "high") {
       confidence: 0.9,
       scanner: { name: "fixture", ruleId },
       location: { path: "src/app.ts", startLine: 10 },
+      remediation: "Use a safer implementation.",
     }],
   };
 }
@@ -43,6 +45,8 @@ test("buildReport preserves changed-file scan scope in JSON and HTML", () => {
   const html = renderHtml(report);
   assert.match(html, /2 changed file\(s\)/);
   assert.match(html, /since main/);
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /changed files since main \(2 files\)/);
 });
 
 test("buildReport preserves scanner artifacts and renders SBOM inventory", () => {
@@ -67,6 +71,7 @@ test("buildReport preserves scanner artifacts and renders SBOM inventory", () =>
   assert.equal(report.artifacts[0].packageCount, 2);
   assert.equal(report.scanners[0].artifactCount, 1);
   assert.match(renderHtml(report), /2 package\(s\) inventoried/);
+  assert.match(renderMarkdown(report), /SBOM packages inventoried:\*\* 2/);
 });
 
 test("baseline delta identifies new and fixed findings", () => {
@@ -78,11 +83,15 @@ test("baseline delta identifies new and fixed findings", () => {
   assert.equal(compared.baseline.persisting.length, 0);
 });
 
-test("SARIF and HTML exports preserve findings without executable report content", () => {
+test("SARIF, HTML, and Markdown exports preserve findings", () => {
   const report = buildReport({ target: { path: "/repo" }, scans: [scan("RULE-1")] });
   const sarif = toSarif(report);
   assert.equal(sarif.version, "2.1.0");
   const html = renderHtml(report);
   assert.match(html, /SynSec repository security/);
   assert.match(html, /Finding RULE-1/);
+  const markdown = renderMarkdown(report);
+  assert.match(markdown, /# SynSec Security Report/);
+  assert.match(markdown, /\[HIGH\] Finding RULE-1/);
+  assert.match(markdown, /Use a safer implementation/);
 });
