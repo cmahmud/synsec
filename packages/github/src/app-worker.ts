@@ -8,9 +8,10 @@ import type { GitHubScanJob } from "./scan-queue.js";
 
 export interface GitHubAppWorkerQueue {
   claimNext(): Promise<GitHubScanJob | undefined>;
-  release(jobId: string): Promise<GitHubScanJob>;
-  fail(jobId: string): Promise<GitHubScanJob>;
-  complete(jobId: string): Promise<boolean>;
+  assertLease(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
+  release(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
+  fail(jobId: string, expectedAttempts: number): Promise<GitHubScanJob>;
+  complete(jobId: string, expectedAttempts: number): Promise<boolean>;
 }
 
 export interface GitHubAppWorkerAuthorizer {
@@ -51,7 +52,9 @@ function safeError(error: unknown): string {
  * obtained only in the transport layer: one short-lived token for exact-commit acquisition and a
  * fresh token for publication. For PR jobs, acquisition can also materialize the exact queued base
  * commit in a second isolated workspace without exposing credentials to the scanner. Reports must
- * bind to the exact queued head SHA before publication or completion.
+ * bind to the exact queued head SHA before publication or completion. The queue lease generation is
+ * revalidated immediately before publication and on every retry/terminal mutation so an expired,
+ * reclaimed worker cannot publish or mutate a newer worker's lease.
  */
 export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): Promise<GitHubAppWorkerResult> {
   const job = await options.queue.claimNext();
@@ -61,7 +64,7 @@ export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): 
   try {
     const allowed = await options.installationStore.isRepositoryAllowed(job.installationId, job.repository);
     if (!allowed) {
-      await options.queue.fail(job.jobId);
+      await options.queue.fail(job.jobId, job.attempts);
       return { status: "revoked", job };
     }
 
@@ -90,15 +93,16 @@ export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): 
       throw new Error("GitHub App worker report commit does not match the leased scan job head SHA.");
     }
 
+    await options.queue.assertLease(job.jobId, job.attempts);
     const publicationToken = await options.getInstallationToken(job.installationId, "publish");
     await options.publish(job, report, publicationToken);
-    if (!await options.queue.complete(job.jobId)) {
+    if (!await options.queue.complete(job.jobId, job.attempts)) {
       throw new Error("Completed GitHub App scan job disappeared before queue acknowledgement.");
     }
     return { status: "completed", job, reportId: report.reportId };
   } catch (error) {
     try {
-      await options.queue.release(job.jobId);
+      await options.queue.release(job.jobId, job.attempts);
     } catch (releaseError) {
       throw new Error(`${safeError(error)} Queue release also failed: ${safeError(releaseError)}`);
     }
