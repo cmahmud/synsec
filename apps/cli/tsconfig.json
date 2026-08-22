@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/scanner-sdk" },
+    { "path": "../../packages/scanners" }
+  ],
+  "include": ["src/**/*.ts"]
+}
