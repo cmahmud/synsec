@@ -1,3 +1,4 @@
+import { readFile, stat } from "node:fs/promises";
 import type { CorrelatedFinding, Severity } from "@synsec/core";
 import type { SynSecReport } from "@synsec/report";
 
@@ -50,6 +51,8 @@ interface GitHubEventPayload {
   ref?: unknown;
 }
 
+const MAX_GITHUB_EVENT_BYTES = 2 * 1024 * 1024;
+
 const severityRank: Record<Severity, number> = {
   critical: 5,
   high: 4,
@@ -90,7 +93,7 @@ function asGitHubEventPayload(value: unknown): GitHubEventPayload | undefined {
  *
  * For pull_request events, the event payload is authoritative for the head SHA. GitHub exposes
  * GITHUB_SHA as the synthetic merge ref for many PR workflows, which is not the commit a check
- * run should be attached to. Callers should parse GITHUB_EVENT_PATH and pass the payload here.
+ * run should be attached to.
  */
 export function detectGitHubContext(
   env: NodeJS.ProcessEnv,
@@ -119,6 +122,29 @@ export function detectGitHubContext(
     ...(headRef ? { headRef } : {}),
     ...(pullRequestNumber ? { pullRequestNumber } : {}),
   };
+}
+
+/** Load and bound the local GitHub Actions event payload, then resolve the effective context. */
+export async function loadGitHubContext(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<GitHubPullRequestContext | undefined> {
+  const eventPath = nonEmptyString(env.GITHUB_EVENT_PATH);
+  if (!eventPath) return detectGitHubContext(env);
+
+  const eventStat = await stat(eventPath);
+  if (!eventStat.isFile()) throw new Error(`GITHUB_EVENT_PATH is not a file: ${eventPath}`);
+  if (eventStat.size > MAX_GITHUB_EVENT_BYTES) {
+    throw new Error(`GitHub event payload exceeds ${MAX_GITHUB_EVENT_BYTES} bytes.`);
+  }
+
+  const raw = await readFile(eventPath, "utf8");
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`GITHUB_EVENT_PATH does not contain valid JSON: ${eventPath}`);
+  }
+  return detectGitHubContext(env, payload);
 }
 
 function annotationLevel(severity: Severity): GitHubAnnotationLevel {
