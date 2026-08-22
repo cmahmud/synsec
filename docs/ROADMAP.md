@@ -86,14 +86,19 @@ These workflows operate on repository evidence and scanner results. They are not
 
 ## Phase 5 — Git hosting and CI
 
+- [x] GitHub Actions context/event parsing primitives
+- [x] Deterministic GitHub check-result and inline-annotation generation
+- [x] Baseline-aware PR annotation filtering and severity-threshold conclusions
 - [ ] GitHub App
 - [ ] Repository installation flow
-- [ ] Pull-request scanning
-- [ ] Commit status / checks
-- [ ] Inline SARIF/code-scanning findings
+- [ ] Pull-request scanning transport/orchestration
+- [ ] Commit status / checks API publication
+- [ ] Inline SARIF/code-scanning upload
 - [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
+
+See [GITHUB.md](./GITHUB.md) for the current integration contract and security boundaries.
 
 ## Phase 6 — Persistent web application
 
