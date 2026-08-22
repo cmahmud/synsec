@@ -111,15 +111,17 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Packaged Actions entrypoint / workflow template
 - [x] Inline SARIF/code-scanning upload
 - [x] Provenance-safe pull-request baseline acquisition from the exact local base commit
+- [x] Scheduled full-repository workflow template with explicit report-artifact retention
 - [ ] GitHub App
 - [ ] Repository installation flow
-- [ ] Scheduled repository scans
 - [ ] Optional remediation pull requests with explicit approval
 - [ ] GitLab and Bitbucket adapters
 
-The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, push contexts default to full repository scans, and publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated. The packaged Action keeps explicit config/baseline file inputs inside the real checked-out workspace, including symlink resolution, before those files are read.
+The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, while push, schedule, workflow-dispatch, and other non-PR contexts default to full repository scans. Publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated. The packaged Action keeps explicit config/baseline file inputs inside the real checked-out workspace, including symlink resolution, before those files are read.
 
 For PRs without an explicit baseline, the Action can scan the exact event-provided base commit in a temporary detached worktree. The base commit must already be present locally; SynSec does not implicitly fetch a remote or substitute a nearby revision. The resulting report is accepted only when its commit identity matches the requested base SHA, then the temporary worktree is removed.
+
+The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
 See [GITHUB.md](./GITHUB.md) for the current integration contract and security boundaries.
 
