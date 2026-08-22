@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
-import { asArray, asRecord, asString, commandAvailability, identifiersFrom, normalizeSeverity, safeJson } from "./utils.js";
+import { asArray, asRecord, asString, commandAvailability, identifiersFrom, normalizeSeverity, relativeLike, safeJson } from "./utils.js";
 
-export function parseGrypeJson(raw: string): Finding[] {
+export function parseGrypeJson(raw: string, root = ""): Finding[] {
   const parsed = asRecord(safeJson(raw));
   if (!parsed) return [];
   const findings: Finding[] = [];
@@ -24,7 +24,7 @@ export function parseGrypeJson(raw: string): Finding[] {
       .map((entry) => asString(entry?.id))
       .filter((item): item is string => Boolean(item));
     const firstLocation = asRecord(asArray(artifact.locations)[0]);
-    const path = asString(firstLocation?.path);
+    const path = relativeLike(asString(firstLocation?.path), root);
     findings.push({
       id: randomUUID(),
       title: `${vulnId} in ${packageName}`,
@@ -73,7 +73,7 @@ export class GrypeAdapter implements ScannerAdapter {
       startedAt,
       completedAt: new Date().toISOString(),
       target: context.target,
-      findings: parseGrypeJson(output.stdout),
+      findings: parseGrypeJson(output.stdout, context.target.path),
       diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
     };
   }
