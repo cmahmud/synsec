@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import type {
   CorrelatedFinding,
   Finding,
+  ScanArtifact,
   ScanResult,
   ScanTarget,
   Severity,
@@ -26,6 +27,7 @@ export interface ScannerRunSummary {
   startedAt: string;
   completedAt: string;
   findingCount: number;
+  artifactCount: number;
   diagnostics: string[];
 }
 
@@ -53,6 +55,7 @@ export interface SynSecReport {
   summary: SeverityCounts;
   securityScore: number;
   findings: CorrelatedFinding[];
+  artifacts?: ScanArtifact[];
   baseline?: BaselineDelta;
   repository?: RepositoryMetadata;
 }
@@ -98,6 +101,7 @@ export function buildReport(input: {
   repository?: RepositoryMetadata;
 }): SynSecReport {
   const rawFindings = input.scans.flatMap((scan) => scan.findings);
+  const artifacts = input.scans.flatMap((scan) => scan.artifacts ?? []);
   const findings = correlateFindings(rawFindings);
   const summary = countSeverities(findings);
   const generatedAt = new Date().toISOString();
@@ -113,6 +117,7 @@ export function buildReport(input: {
       startedAt: scan.startedAt,
       completedAt: scan.completedAt,
       findingCount: scan.findings.length,
+      artifactCount: scan.artifacts?.length ?? 0,
       diagnostics: scan.diagnostics,
     })),
     rawFindingCount: rawFindings.length,
@@ -122,6 +127,7 @@ export function buildReport(input: {
     findings,
   };
 
+  if (artifacts.length > 0) report.artifacts = artifacts;
   if (input.repository) report.repository = input.repository;
   return report;
 }
@@ -296,6 +302,12 @@ export function renderHtml(report: SynSecReport): string {
   const baseline = report.baseline
     ? `<div class="baseline"><strong>Since baseline:</strong> ${report.baseline.new.length} new · ${report.baseline.fixed.length} fixed · ${report.baseline.persisting.length} persisting</div>`
     : "";
+  const sbomPackageCount = (report.artifacts ?? [])
+    .filter((artifact) => artifact.type === "sbom")
+    .reduce((total, artifact) => total + artifact.packageCount, 0);
+  const artifactSummary = sbomPackageCount > 0
+    ? `<div class="baseline"><strong>SBOM:</strong> ${sbomPackageCount} package(s) inventoried</div>`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -308,7 +320,7 @@ export function renderHtml(report: SynSecReport): string {
 </style>
 </head>
 <body><main>
-<div class="top"><div><div class="brand">SynSec repository security</div><h1>${escapeHtml(report.target.repositoryUrl ?? report.target.path)}</h1><div class="muted">Generated ${escapeHtml(report.generatedAt)} · ${report.findingCount} correlated finding(s) from ${report.rawFindingCount} raw result(s)</div>${baseline}</div><div><div class="muted">Security score</div><div class="score">${report.securityScore}</div></div></div>
+<div class="top"><div><div class="brand">SynSec repository security</div><h1>${escapeHtml(report.target.repositoryUrl ?? report.target.path)}</h1><div class="muted">Generated ${escapeHtml(report.generatedAt)} · ${report.findingCount} correlated finding(s) from ${report.rawFindingCount} raw result(s)</div>${baseline}${artifactSummary}</div><div><div class="muted">Security score</div><div class="score">${report.securityScore}</div></div></div>
 <div class="stats">
 <div class="stat"><span>Critical</span><strong>${report.summary.critical}</strong></div><div class="stat"><span>High</span><strong>${report.summary.high}</strong></div><div class="stat"><span>Medium</span><strong>${report.summary.medium}</strong></div><div class="stat"><span>Low</span><strong>${report.summary.low}</strong></div><div class="stat"><span>Info</span><strong>${report.summary.info}</strong></div><div class="stat"><span>Unknown</span><strong>${report.summary.unknown}</strong></div>
 </div>
