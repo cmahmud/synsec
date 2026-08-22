@@ -13,13 +13,74 @@ const validConfig = {
   tlsMode: "terminated-upstream",
   stateDirectory: "/var/lib/synsec/state",
   workspaceDirectory: "/var/lib/synsec/workspaces",
+  scannerIsolation: {
+    processBoundary: "container",
+    cpuLimit: true,
+    memoryLimit: true,
+    networkPolicy: "none",
+    repositoryFilesystem: "read-only",
+  },
 };
 
-test("hosted deployment readiness accepts separated state with explicit TLS termination", () => {
+test("hosted deployment readiness accepts separated state, TLS termination, and declared scanner isolation", () => {
   const result = validateGitHubAppDeployment(validConfig);
   assert.equal(result.ready, true);
   assert.deepEqual(result.issues, []);
   assert.doesNotThrow(() => assertGitHubAppDeploymentReady(validConfig));
+});
+
+test("scanner isolation is warning-only by default but can be required for production startup", () => {
+  const { scannerIsolation, ...withoutIsolation } = validConfig;
+  const advisory = validateGitHubAppDeployment(withoutIsolation);
+  assert.equal(advisory.ready, true);
+  assert.deepEqual(advisory.issues.map((issue) => [issue.level, issue.code]), [
+    ["warning", "scanner-isolation-missing"],
+  ]);
+
+  const strict = validateGitHubAppDeployment({ ...withoutIsolation, requireScannerIsolation: true });
+  assert.equal(strict.ready, false);
+  assert.deepEqual(strict.issues.map((issue) => [issue.level, issue.code]), [
+    ["error", "scanner-isolation-missing"],
+  ]);
+  assert.throws(() => assertGitHubAppDeploymentReady({ ...withoutIsolation, requireScannerIsolation: true }), /scanner-isolation-missing/);
+});
+
+test("strict scanner isolation rejects host execution, missing resources, host networking, and writable source", () => {
+  const result = validateGitHubAppDeployment({
+    ...validConfig,
+    requireScannerIsolation: true,
+    scannerIsolation: {
+      processBoundary: "host",
+      cpuLimit: false,
+      memoryLimit: false,
+      networkPolicy: "host",
+      repositoryFilesystem: "writable",
+    },
+  });
+  assert.equal(result.ready, false);
+  assert.deepEqual(new Set(result.issues.map((issue) => issue.code)), new Set([
+    "scanner-process-unisolated",
+    "scanner-resource-limits-missing",
+    "scanner-network-unrestricted",
+    "scanner-repository-writable",
+  ]));
+  assert.equal(result.issues.every((issue) => issue.level === "error"), true);
+});
+
+test("egress-filtered sandbox execution satisfies the isolation contract", () => {
+  const result = validateGitHubAppDeployment({
+    ...validConfig,
+    requireScannerIsolation: true,
+    scannerIsolation: {
+      processBoundary: "sandbox",
+      cpuLimit: true,
+      memoryLimit: true,
+      networkPolicy: "egress-filtered",
+      repositoryFilesystem: "read-only",
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.issues, []);
 });
 
 test("hosted deployment readiness rejects a plaintext non-loopback listener", () => {
