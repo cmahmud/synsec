@@ -6,8 +6,12 @@
     "rootDir": "src"
   },
   "references": [
+    { "path": "../../packages/ai" },
+    { "path": "../../packages/config" },
     { "path": "../../packages/core" },
-    { "path": "../../packages/scanner-sdk" },
+    { "path": "../../packages/engine" },
+    { "path": "../../packages/report" },
+    { "path": "../../packages/repository" },
     { "path": "../../packages/scanners" }
   ],
   "include": ["src/**/*.ts"]
