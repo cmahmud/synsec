@@ -66,7 +66,7 @@ The current call graph is deliberately labeled lexical evidence rather than runt
 
 Route authentication and sink context are similarly conservative. They record bounded same-file security signals near indexed routes and label the results `lexical-auth-signals-only` or `lexical-sink-signals-only`. Absence of nearby auth is reported only as `no-auth-signal-observed`, and nearby sinks are not treated as proven data-flow or call reachability. The repository posture summary aggregates these bounded signals for prioritization while explicitly remaining `bounded-lexical-posture-only`.
 
-Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. The LCOV primitive can now ingest caller-supplied test coverage and classify a concrete finding line as executed, not executed, or lacking data. SynSec does not run target tests to generate that coverage, and the result is explicitly labeled `observed-test-coverage-not-runtime-reachability`; normal report persistence/UI integration remains future work.
+Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. The LCOV primitive can ingest caller-supplied test coverage and classify a concrete finding line as executed, not executed, or lacking data. SynSec does not run target tests to generate that coverage, and the result is explicitly labeled `observed-test-coverage-not-runtime-reachability`; normal report persistence/UI integration remains future work.
 
 ## Phase 3 — Contextual security review
 
@@ -130,9 +130,10 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Authorization-aware local scan worker with commit-bound report verification
 - [x] Local worker composition through the existing scan engine and Checks/SARIF publishers
 - [x] Memory-only App installation-token provider with purpose-specific permission checks
+- [x] Deterministic worker-permission diagnostic model for acquisition, Checks, and optional SARIF
 - [x] Single-host local runtime composition with separate durable-state/workspace trees
 - [ ] Production TLS/listener deployment, supervision, and operational secret rotation
-- [ ] Repository installation/setup UX and richer permission diagnostics
+- [ ] Repository installation/setup UX and recovery flows
 - [ ] Native changed-file execution for hosted PR workers using exact provenance
 - [ ] Transactional shared App state/queue for multi-host deployment
 - [ ] Optional remediation pull requests with explicit approval
@@ -144,7 +145,7 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. Hosted PR execution is still full-repository at each commit; native changed-file optimization remains future work. See [GITHUB_APP.md](./GITHUB_APP.md).
+GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. A separate deterministic diagnostic explains whether GitHub-reported token permissions satisfy `contents:read`, `checks:write`, and optional `security_events:write`; unavailable metadata fails closed rather than being treated as authorization. Hosted PR execution is still full-repository at each commit; native changed-file optimization remains future work. See [GITHUB_APP.md](./GITHUB_APP.md).
 
 See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
@@ -156,17 +157,24 @@ See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and se
 - [x] History-store → restrictive local dashboard file generation
 - [x] Bounded lifecycle finding-ownership metadata foundation
 - [x] Bounded append-only local finding review-comment store
-- [ ] Project/repository dashboard application
+- [x] Sanitized deterministic current-finding triage view model
+- [x] Self-contained restrictive local triage dashboard
+- [x] Self-contained normalized SBOM/dependency inventory dashboard
+- [x] Aggregate bounded-lexical repository-posture dashboard
+- [x] Local static project dashboard bundle composing triage, SBOM, posture, and optional trend-safe history
+- [ ] Authenticated project/repository web application
 - [ ] Multi-project/server persistence layer
-- [ ] Interactive security-score history UI
-- [ ] New/fixed/regressed views
-- [ ] Finding detail page with source evidence
-- [ ] Dependency and SBOM views
-- [ ] Interactive repository posture view
-- [ ] Team triage workflow
+- [ ] Interactive security-score history UI backed by server persistence
+- [ ] Interactive new/fixed/regressed views
+- [ ] Finding detail page with explicitly bounded source evidence
+- [ ] Interactive dependency and SBOM views
+- [ ] Interactive repository posture exploration
+- [ ] Multi-user team triage workflow
 - [ ] Multi-user comments and richer collaboration history
 
-The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. The self-contained history dashboard renders only this trend-safe model, escapes titles/content, and can be written with restrictive local permissions. Lifecycle ownership is separately bounded triage metadata preserved across state transitions/rescans. Review comments are stored in a separate restrictive append-only local store with bounded author/body/fingerprint fields and strict schema validation; SynSec does not automatically copy scanner diagnostics, source excerpts, tokens, or repository credentials into it. Neither primitive is scanner evidence or a multi-user collaboration database.
+The current dashboard work is intentionally local and static rather than a hosted collaboration product. The project bundle writes fixed local pages for current triage metadata, normalized SBOM inventory, aggregate lexical posture, and optional trend-safe history. It embeds no remote assets and does not copy source excerpts, scanner diagnostics, tokens, or arbitrary outbound URLs into the bundle. The triage model includes only current finding identity/title/severity plus lifecycle state, ownership, bounded notes, and append-only review comments. SBOM pages deliberately omit raw package locations and describe inventory rather than vulnerability/reachability. Posture pages remain aggregate and explicitly say that lexical proximity is not runtime exposure or authentication proof. Generated dashboard/history/triage/SBOM/posture files use restrictive local permissions where supported; history and Markdown writers also repair permissive existing file modes on overwrite. Core JSON/SARIF/general report HTML writers still need the same overwrite-permission hardening in a later safe code-edit pass.
+
+The local history store itself retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. Lifecycle ownership and review comments are separately bounded human triage metadata and are not scanner evidence or a multi-user collaboration database.
 
 ## Phase 7 — Isolated scan workers
 
