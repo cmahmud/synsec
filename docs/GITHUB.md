@@ -3,7 +3,7 @@
 SynSec's GitHub integration is intentionally split into two layers:
 
 1. **Repository security analysis** stays inside the normal scanner/report pipeline.
-2. **GitHub publication** converts a completed SynSec report into GitHub-native check output and annotations.
+2. **GitHub publication** converts a completed SynSec report into GitHub-native checks, annotations, and optional SARIF/code-scanning output.
 
 This keeps GitHub credentials out of scanners and prevents repository analysis from silently expanding into unrelated network targets.
 
@@ -14,36 +14,26 @@ This keeps GitHub credentials out of scanners and prevents repository analysis f
 - GitHub Actions context detection from environment variables.
 - Bounded parsing of `GITHUB_EVENT_PATH`.
 - Correct pull-request head SHA selection from the event payload instead of the synthetic merge SHA.
-- Pull-request number, base branch, and head branch resolution.
+- Pull-request number, base branch/SHA, and head branch resolution.
 - Conversion of a `SynSecReport` into a check-run result.
 - Source annotations for findings with file/line locations.
 - Severity-aware annotation levels.
 - Baseline-aware annotation filtering so PR checks can focus on new findings.
-- A hard 50-annotation cap per generated payload, matching GitHub's check-run annotation request limit.
-- CI threshold evaluation independent of scanner exit-code quirks.
+- A hard 50-annotation cap per generated payload.
+- CI threshold evaluation, including an explicit `none` threshold that never fails a check.
 - A narrow Checks API publisher with an injectable transport for testing.
-- A completed-report publication orchestrator that resolves local Actions context, validates report/commit binding, builds the deterministic check, and publishes it through the fixed-host transport.
-- A GitHub Actions repository scan runner that reuses the normal scan engine and then publishes the resulting report.
+- Completed-report publication orchestration with report/head commit binding.
+- A GitHub Actions repository scan runner that reuses the normal scan engine.
+- Bounded local baseline loading with optional PR-base commit validation.
+- Fixed-host gzip/base64 SARIF publication to GitHub code scanning.
 
-`@synsec/github/publisher` posts completed check runs only to `https://api.github.com/repos/<owner>/<repo>/check-runs`. The repository comes from validated GitHub context, scanner output cannot control the request URL, redirects are rejected, and bearer tokens are never copied into returned errors.
-
-`@synsec/github/orchestrator` provides `publishSynSecReportToGitHub()`. It accepts an already-completed `SynSecReport`, resolves the repository/commit from bounded local Actions context, validates that a report commit (when present) matches the selected GitHub head, builds the check, and invokes the publisher. It does not run scanners, discover targets, mutate repositories, or perform external assessment. Invalid context or stale report/commit binding fails before transport.
-
-`@synsec/github/actions-runner` provides `runGitHubActionsRepositoryScan()`. It invokes the existing repository scan engine for the current checkout and feeds the completed report through the orchestrator. Pull-request contexts default to changed-file scans; push/other contexts default to full repository scans. The runner requires the produced report to contain a commit SHA before publication.
-
-Token acquisition and installation authorization intentionally remain outside these primitives.
+The root `action.yml` packages these primitives as a composite GitHub Action. It builds the checked-in SynSec runtime, scans only the repository represented by `GITHUB_WORKSPACE`, and publishes the completed report using the caller-provided GitHub token.
 
 ## Pull-request SHA handling
 
 GitHub Actions commonly sets `GITHUB_SHA` to a synthetic merge commit for `pull_request` workflows. Publishing a check against that SHA can make the check appear on the wrong commit or disappear when the synthetic merge ref changes.
 
-For PR events, SynSec therefore prefers:
-
-```text
-pull_request.head.sha
-```
-
-from the local Actions event payload. `loadGitHubContext()` reads `GITHUB_EVENT_PATH`, rejects non-files, refuses event payloads larger than 2 MiB, parses JSON locally, and then resolves the effective repository/commit context.
+For PR events, SynSec therefore prefers `pull_request.head.sha` from the local Actions event payload and also retains `pull_request.base.sha` for baseline validation. `loadGitHubContext()` reads `GITHUB_EVENT_PATH`, rejects non-files, refuses event payloads larger than 2 MiB, parses JSON locally, and then resolves the effective repository/commit context.
 
 No network request is required for context detection.
 
@@ -51,24 +41,26 @@ No network request is required for context detection.
 
 `runGitHubActionsRepositoryScan()` accepts a normal `SynSecConfig`, optional baseline, checkout root, publication settings, and caller-supplied token. The scan path deliberately reuses `runScanEngine()` rather than creating GitHub-specific scanners.
 
-For pull requests, changed-file scanning defaults to:
+For pull requests, changed-file scanning defaults to `origin/<base branch>...HEAD`. Callers can override changed-file mode or the base ref explicitly. Push and other non-PR contexts default to a full repository scan.
 
-```text
-origin/<base branch>...HEAD
-```
-
-Callers can override changed-file mode or the base ref explicitly. Push and other non-PR contexts default to a full repository scan.
-
-Before publication, the runner requires the scan report to identify its commit. The publication layer then refuses a report whose commit differs from the GitHub commit being annotated. This prevents a stale report from being attached to a newer PR head.
+Before publication, the runner requires the scan report to identify its commit. The publication layer refuses a report whose commit differs from the GitHub commit being annotated. This prevents a stale report from being attached to a newer PR head.
 
 The runner does not clone arbitrary targets, expand repository scope, perform live-target probing, or create repository writes.
+
+## Baselines
+
+A caller can provide a baseline report in memory or as a local `baselinePath`. `loadValidatedGitHubBaseline()` bounds local baseline files to 20 MiB, parses them through the normal report reader, and by default requires the baseline report's commit to match the pull-request base SHA from the event payload. An explicit expected commit can be supplied for non-PR or synthetic contexts.
+
+A missing baseline commit, missing expected base commit, or stale baseline fails before scanning. SynSec does not silently treat an unverifiable baseline as trustworthy.
+
+The current baseline primitive deliberately does not fetch arbitrary URLs or repositories. Artifact/cache retrieval belongs in a future hosting adapter that can enforce provenance and repository scope before handing a local report to this loader.
 
 ## Check conclusions
 
 The generated check conclusion follows the configured severity threshold:
 
-- `failure` when at least one finding meets or exceeds the threshold.
-- `neutral` when findings exist but none meets the threshold.
+- `failure` when at least one finding meets or exceeds an enabled threshold.
+- `neutral` when findings exist but none meets the enabled threshold, or `failOn` is `none`.
 - `success` when the report contains no findings.
 
 This is deliberately separate from individual scanner process exit codes. Scanner failures and scan completeness remain engine/report concerns; GitHub publishing consumes the completed normalized report.
@@ -81,18 +73,59 @@ When a report includes a baseline, `buildGitHubCheck()` defaults to annotating o
 
 ## Checks API publication
 
-`publishGitHubCheck()` accepts a completed check result, validated GitHub context, and a caller-supplied token. The publisher:
+`publishGitHubCheck()` posts completed check runs only to `https://api.github.com/repos/<owner>/<repo>/check-runs`. The repository comes from validated GitHub context, scanner output cannot control the request URL, redirects are rejected, and bearer tokens are not copied into returned errors.
 
-- sends one `POST` to the repository Checks API endpoint;
-- uses GitHub API version `2022-11-28` by default;
-- sends the token only in the `Authorization` header;
+`publishSynSecReportToGitHub()` is the higher-level completed-report path. It resolves bounded local Actions context, validates report/head commit binding, builds the deterministic check, and invokes the fixed-host publisher. It never runs scanners or discovers targets itself.
+
+## SARIF/code scanning
+
+`publishGitHubSarif()` converts the already-completed SynSec report to SARIF 2.1, gzip-compresses and base64-encodes it, and posts it only to `https://api.github.com/repos/<owner>/<repo>/code-scanning/sarifs`.
+
+The publisher:
+
+- requires the report commit to match the selected GitHub commit;
+- uses `refs/pull/<number>/head` for pull requests so the ref corresponds to the PR head rather than the synthetic merge ref;
+- requires a fully qualified ref outside PR contexts;
+- enforces a 10 MiB compressed-payload bound;
 - rejects redirects;
-- validates the returned check-run id;
-- returns only publication metadata such as id, URL, status, and conclusion.
+- keeps the token in the authorization header and redacts it from reflected error text.
 
-`publishSynSecReportToGitHub()` is the higher-level completed-report path. It preserves the same transport restrictions while removing duplicate context/check/publisher glue from future Actions and GitHub App entrypoints.
+SARIF publication is opt-in in the Actions runner and composite Action because repositories may not grant `security-events: write`.
 
-Token acquisition is intentionally outside these functions. GitHub App installation tokens, Actions `GITHUB_TOKEN`, and any future enterprise-hosting transport should remain separate concerns so credentials never enter scanners or normalized reports.
+## Composite GitHub Action
+
+The root `action.yml` exposes:
+
+- `github-token` — required publication token;
+- `config-path` — optional path to `synsec.config.json` in the checked-out repository;
+- `baseline-path` — optional local commit-bound baseline report;
+- `changed-only` — `auto`, `true`, or `false`;
+- `publish-sarif` — optional code-scanning publication.
+
+It returns the security score, finding count, check-run id, and optional SARIF upload id.
+
+The Action intentionally does **not** silently download third-party scanner binaries. Selected scanners must already be available on `PATH`; this keeps scanner installation/version pinning explicit and avoids hiding supply-chain downloads inside the security scanner itself. A future containerized worker can improve scanner provisioning while retaining pinned artifacts and isolation.
+
+A minimal workflow should give SynSec only the permissions it needs:
+
+```yaml
+permissions:
+  contents: read
+  checks: write
+  security-events: write # only needed when publish-sarif is true
+
+steps:
+  - uses: actions/checkout@v7
+    with:
+      fetch-depth: 0
+  # Install/pin the scanners selected by synsec.config.json here.
+  - uses: cmahmud/synsec@<pinned-ref>
+    with:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+      publish-sarif: "true"
+```
+
+Use the normal `pull_request` event for scanning pull-request code. Do **not** switch to `pull_request_target` merely to obtain a write-capable token: that event executes in the base-repository security context and can expose elevated credentials to workflows that inspect untrusted contributor code. For fork pull requests where GitHub intentionally withholds write permissions, publication should be treated as unavailable rather than weakening the trust boundary.
 
 ## Security boundaries
 
@@ -102,20 +135,20 @@ GitHub integration must preserve the repository-first defensive model:
 - Report and annotation generation must not require network access.
 - Scanner output must never choose the GitHub API host or arbitrary publication URL.
 - A report must not be published onto a different commit than the one it represents.
+- A baseline must not be trusted for PR comparison without validated commit identity.
 - Source excerpts are not added to GitHub annotations unless already present in normalized deterministic finding fields.
 - Secret values must remain redacted before publication.
-- A future remediation pull-request flow must require explicit approval before repository writes.
+- Repository writes remain outside the scan/publication path and require explicit approval.
 - Repository installation must not authorize live-target exploitation, target expansion, persistence, or secret exfiltration.
 
 ## Next implementation steps
 
-The remaining Phase 5 work is packaging, baseline acquisition, and installation/authentication:
+The remaining Phase 5 work is primarily hosting/authentication and durable orchestration:
 
-1. Add a packaged GitHub Actions entrypoint/workflow template around the runner.
-2. Acquire/validate pull-request baselines without broadening repository scope.
-3. Add a GitHub App installation/authentication layer using the same runner/publication primitives.
-4. Upload SARIF to GitHub code scanning where repository permissions allow it.
-5. Add scheduled repository scans.
-6. Add explicitly approved remediation pull requests.
+1. Add a GitHub App installation/authentication layer using the same runner/publication primitives.
+2. Add provenance-aware baseline artifact/cache acquisition around the local validator.
+3. Add scheduled repository-scan workflow/orchestration support.
+4. Add explicitly approved remediation pull requests.
+5. Add GitLab and Bitbucket adapters without coupling the scanner core to one host.
 
-The deterministic package should remain usable from both a GitHub App and a GitHub Actions integration so the scanning core does not become hosting-provider-specific.
+The deterministic packages should remain usable from both a GitHub App and GitHub Actions so the scanning core does not become hosting-provider-specific.
