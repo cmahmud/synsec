@@ -2,7 +2,7 @@
 
 SynSec's hosted GitHub App modules are repository-security infrastructure, not a general-purpose target execution service. Production deployment must preserve the same fixed-host, commit-pinned, credential-minimized boundaries as the scan worker.
 
-`@synsec/github/app-deployment` provides a preflight validator for operator-controlled settings that are easy to misconfigure before the bounded webhook handler is mounted. It intentionally validates configuration only; it does not open sockets, provision certificates, fetch secrets, modify firewall rules, or widen repository authorization.
+`@synsec/github/app-deployment` provides a preflight validator for operator-controlled settings that are easy to misconfigure before the bounded webhook handler is mounted. It intentionally validates configuration only; it does not provision certificates, fetch secrets, modify firewall rules, or widen repository authorization.
 
 ## Preflight contract
 
@@ -40,9 +40,35 @@ assertGitHubAppDeploymentReady({
 
 A reverse proxy or ingress that terminates TLS should forward only to a private/loopback listener and should preserve the exact webhook request body. SynSec verifies `X-Hub-Signature-256` over the original bytes, so middleware must not parse and reserialize the body before the bounded webhook handler receives it.
 
+## Bounded listener
+
+`@synsec/github/app-server` provides the framework-free Node listener used to mount the webhook handler and optional aggregate status health endpoint. It is deliberately a small transport primitive rather than a process supervisor.
+
+```ts
+import { createGitHubAppServer } from "@synsec/github/app-server";
+
+const server = createGitHubAppServer({
+  host: "127.0.0.1",
+  port: 3210,
+  tlsMode: "terminated-upstream",
+  webhookHandler: runtime.webhookHandler,
+  getStatus: runtime.getStatus,
+});
+
+await server.start();
+// During supervised shutdown:
+await server.close();
+```
+
+The listener enforces bounded request, header, keep-alive, and shutdown timeouts and limits each socket to a bounded number of requests. Plaintext `tlsMode: "none"` is restricted to loopback. `tlsMode: "local"` requires an in-memory key/certificate pair and creates an HTTPS listener. `tlsMode: "terminated-upstream"` records the explicit operator decision that TLS is handled before traffic reaches this process; deployments using that mode should still bind SynSec to a private or loopback interface whenever possible.
+
+The built-in `/healthz` route accepts only `GET`, disables caching, and returns either `{ "status": "ok" }` or the sanitized aggregate runtime status when `getStatus` is supplied. Status-collection failures return `503` with only `{ "status": "unavailable" }`; exception messages and durable-record contents are not reflected to callers. The listener does not add a second webhook parser, so the exact raw request body still reaches SynSec's signature-verifying webhook handler unchanged.
+
+`port: 0` is supported for tests and other operator-controlled ephemeral listeners. Production deployments should configure a fixed service port at the hosting layer.
+
 ## What this does not certify
 
-A successful preflight does **not** mean the hosted service is production-complete. Operators still need process/container isolation for scanner subprocesses, OS CPU/memory limits, outbound network policy, listener/server timeouts, health supervision, secret injection and rotation, log retention, and a transactional shared state backend before horizontally scaling across hosts.
+A successful preflight and bounded listener do **not** mean the hosted service is production-complete. Operators still need process/container isolation for scanner subprocesses, OS CPU/memory limits, outbound network policy, service supervision, secret injection and rotation, log retention, and a transactional shared state backend before horizontally scaling across hosts.
 
 The validator also does not test whether GitHub currently grants an installation the permissions needed for a specific operation. Runtime installation-token exchange remains authoritative for `contents:read`, `checks:write`, and optional `security_events:write` diagnostics.
 
@@ -80,7 +106,7 @@ Repository workspaces use ownership-based cleanup instead of an age sweep: faile
 
 ## Sanitized runtime status
 
-`runtime.getStatus()` returns an aggregate-only snapshot that a hosting layer can safely adapt into a local health/readiness endpoint. It reports installation totals split by active/suspended and repository-selection mode, plus queue totals split by pending/leased/failed status.
+`runtime.getStatus()` returns an aggregate-only snapshot that the bounded listener can expose through its local health endpoint. It reports installation totals split by active/suspended and repository-selection mode, plus queue totals split by pending/leased/failed status.
 
 The status contract intentionally excludes installation ids, account logins, repository names, commit SHAs, delivery ids, source paths, scanner output, credentials, and arbitrary durable-record fields. Durable stores are still fully parsed and validated before aggregation; malformed persisted state makes status collection fail rather than silently reporting a healthy snapshot.
 
