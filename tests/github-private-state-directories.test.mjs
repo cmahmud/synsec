@@ -9,6 +9,8 @@ import { FileGitHubWebhookReplayStore } from "@synsec/github/replay-store";
 import { FileGitHubScanQueue } from "@synsec/github/scan-queue";
 import { ensurePrivateDirectory } from "../packages/github/dist/private-directory.js";
 
+const symlinkError = /real directory|EEXIST|not a directory/i;
+
 test("GitHub durable stores repair permissive pre-existing directories where supported", async () => {
   if (process.platform === "win32") return;
   const root = await mkdtemp(join(tmpdir(), "synsec-private-state-"));
@@ -60,10 +62,35 @@ test("private durable directory handling refuses a symlink final path", async ()
   try {
     await mkdir(realDirectory, { mode: 0o755 });
     await symlink(realDirectory, linkedDirectory, "dir");
+    await assert.rejects(() => ensurePrivateDirectory(linkedDirectory), symlinkError);
+    assert.equal((await stat(realDirectory)).mode & 0o777, 0o755);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("durable stores validate a symlink directory even when the first operation is a read or release", async () => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "synsec-private-state-first-access-"));
+  const realDirectory = join(root, "real");
+  const linkedDirectory = join(root, "linked");
+  try {
+    await mkdir(realDirectory, { mode: 0o755 });
+    await symlink(realDirectory, linkedDirectory, "dir");
+
+    const installations = new FileGitHubInstallationStore(linkedDirectory);
+    await assert.rejects(() => installations.get(1), symlinkError);
+    await assert.rejects(() => installations.remove(1), symlinkError);
+
+    const replay = new FileGitHubWebhookReplayStore(linkedDirectory);
     await assert.rejects(
-      () => ensurePrivateDirectory(linkedDirectory),
-      /real directory|EEXIST|not a directory/i,
+      () => replay.release("delivery-first-access", "2026-08-22T21:00:00.000Z"),
+      symlinkError,
     );
+
+    const queue = new FileGitHubScanQueue(linkedDirectory);
+    await assert.rejects(() => queue.deleteFailed("a".repeat(32)), symlinkError);
+
     assert.equal((await stat(realDirectory)).mode & 0o777, 0o755);
   } finally {
     await rm(root, { recursive: true, force: true });
