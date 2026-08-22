@@ -110,6 +110,58 @@ test("GitHub App setup CLI can enforce least-privilege drift in strict mode", as
   }
 });
 
+test("GitHub App setup recovery CLI prints required fixes without mutating configuration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-setup-recover-"));
+  try {
+    const setupPath = join(root, "setup.json");
+    const original = JSON.stringify({
+      permissions: {
+        contents: "write",
+        checks: "read",
+        issues: "write",
+      },
+      events: ["push", "pull_request", "issues"],
+    }, null, 2);
+    await writeFile(setupPath, original, "utf8");
+
+    const error = await runExpectingExit(["recover", setupPath, "--json"], 2);
+    const output = JSON.parse(error.stdout);
+    assert.equal(output.ready, false);
+    assert.ok(output.requiredActions.includes("Upgrade GitHub App permission checks from read to write."));
+    assert.ok(output.requiredActions.includes("Subscribe the GitHub App to the installation event."));
+    assert.ok(output.leastPrivilegeReview.some((item) => item.includes("contents:write")));
+    assert.ok(output.leastPrivilegeReview.some((item) => item.includes("issues event subscription")));
+    assert.equal(output.interpretation, "operator-guidance-not-runtime-authorization");
+
+    const { readFile } = await import("node:fs/promises");
+    assert.equal(await readFile(setupPath, "utf8"), original);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitHub App setup recovery CLI shares strict least-privilege exit semantics", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-setup-recover-strict-"));
+  try {
+    const setupPath = join(root, "setup.json");
+    await writeFile(setupPath, JSON.stringify({
+      permissions: {
+        contents: "write",
+        checks: "write",
+      },
+      events: ["installation", "installation_repositories", "pull_request", "push"],
+    }), "utf8");
+
+    const error = await runExpectingExit(["recover", setupPath, "--json", "--strict"], 3);
+    const output = JSON.parse(error.stdout);
+    assert.equal(output.ready, true);
+    assert.deepEqual(output.requiredActions, []);
+    assert.ok(output.leastPrivilegeReview.some((item) => item.includes("contents:write")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitHub App setup CLI rejects credential-shaped or malformed setup documents by schema", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-app-setup-invalid-"));
   try {
