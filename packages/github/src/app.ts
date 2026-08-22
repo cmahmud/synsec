@@ -205,74 +205,101 @@ export function parseVerifiedGitHubAppWebhook(input: {
     };
   }
 
-  if (!installationId || !action) {
-    throw new Error("GitHub installation webhook is missing required installation identity or action.");
-  }
+  if (!installationId) throw new Error(`GitHub ${eventName} webhook is missing installation identity.`);
   return {
-    event: eventName,
-    action,
+    event: eventName as "installation" | "installation_repositories",
+    ...(action ? { action } : {}),
     ...(deliveryId ? { deliveryId } : {}),
     installationId,
     ...(repository ? { repository } : {}),
   };
 }
 
-export function shouldScanGitHubAppWebhook(webhook: GitHubAppWebhook): boolean {
-  if (webhook.event === "push") return true;
-  return webhook.event === "pull_request" && Boolean(webhook.action && SCANNABLE_PULL_REQUEST_ACTIONS.has(webhook.action));
+/**
+ * Decide whether a verified App event may enqueue a repository scan.
+ * Installation-management events are bookkeeping only and PR scans use an explicit action allowlist.
+ */
+export function shouldScanGitHubAppWebhook(event: GitHubAppWebhook): boolean {
+  if (event.event === "push") return Boolean(event.repository && event.headSha && event.installationId);
+  if (event.event !== "pull_request") return false;
+  return Boolean(
+    event.repository
+      && event.headSha
+      && event.baseSha
+      && event.pullRequestNumber
+      && event.installationId
+      && event.action
+      && SCANNABLE_PULL_REQUEST_ACTIONS.has(event.action),
+  );
 }
 
-export function createGitHubAppJwt(
-  appId: string | number,
-  privateKey: string,
-  nowSeconds = Math.floor(Date.now() / 1000),
-): string {
-  const issuer = nonEmpty(String(appId), "GitHub App id");
-  if (!Number.isSafeInteger(nowSeconds) || nowSeconds <= 0) throw new Error("GitHub App JWT timestamp must be a positive integer.");
-  const issuedAt = nowSeconds - 60;
+/** Create a short-lived RS256 GitHub App JWT. */
+export function createGitHubAppJwt(appId: string | number, privateKey: string, now = Date.now()): string {
+  const issuer = String(appId).trim();
+  if (!/^\d+$/.test(issuer) || issuer === "0") throw new Error("GitHub App id must be a positive integer.");
+  const key = nonEmpty(privateKey, "GitHub App private key");
+  if (!Number.isFinite(now) || now <= 0) throw new Error("JWT clock must be a positive timestamp.");
+
+  const issuedAt = Math.floor(now / 1000) - 30;
   const expiresAt = issuedAt + APP_JWT_LIFETIME_SECONDS;
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const payload = base64url(JSON.stringify({ iat: issuedAt, exp: expiresAt, iss: issuer }));
   const signingInput = `${header}.${payload}`;
-  const signature = cryptoSign("RSA-SHA256", Buffer.from(signingInput), privateKey);
+  const signature = cryptoSign("RSA-SHA256", Buffer.from(signingInput), key);
   return `${signingInput}.${base64url(signature)}`;
 }
 
+/** Exchange an app JWT for one installation token using GitHub's fixed API host. */
 export async function createGitHubInstallationToken(
-  appId: string | number,
-  privateKey: string,
   installationId: number,
+  appJwt: string,
   options: GitHubAppTokenOptions = {},
 ): Promise<GitHubInstallationToken> {
   const id = positiveInteger(installationId, "GitHub installation id");
+  const jwt = nonEmpty(appJwt, "GitHub App JWT");
   const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) throw new Error("No fetch implementation is available for GitHub App authentication.");
+
   const response = await fetchImpl(`https://api.github.com/app/installations/${id}/access_tokens`, {
     method: "POST",
+    redirect: "error",
     headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${createGitHubAppJwt(appId, privateKey)}`,
-      "x-github-api-version": options.apiVersion ?? "2022-11-28",
-      "user-agent": options.userAgent ?? "synsec/0.2",
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${jwt}`,
+      "Content-Type": "application/json",
+      "User-Agent": options.userAgent?.trim() || "synsec/0.2",
+      "X-GitHub-Api-Version": options.apiVersion?.trim() || "2022-11-28",
     },
+    body: "{}",
   });
+
+  const text = await response.text();
   if (!response.ok) {
-    const detail = (await response.text()).replace(/[\r\n]+/g, " ").trim().slice(0, 500);
-    throw new Error(`GitHub installation-token request failed (${response.status})${detail ? `: ${detail}` : "."}`);
+    const detail = text.replace(/[\r\n]+/g, " ").slice(0, 500).trim();
+    throw new Error(`GitHub installation-token API returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
   }
-  const payload = await response.json() as Record<string, unknown>;
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = objectValue(text ? JSON.parse(text) : {}) ?? {};
+  } catch {
+    throw new Error("GitHub installation-token API returned invalid JSON.");
+  }
   const token = stringValue(payload.token);
   const expiresAt = stringValue(payload.expires_at);
-  if (!token || !expiresAt || !Number.isFinite(Date.parse(expiresAt))) {
-    throw new Error("GitHub installation-token API returned an invalid token response.");
+  if (!token || !expiresAt) throw new Error("GitHub installation-token API response is missing token metadata.");
+  if (!Number.isFinite(Date.parse(expiresAt))) {
+    throw new Error("GitHub installation-token API returned an invalid expiration timestamp.");
   }
   const permissions = installationPermissions(payload.permissions);
-  const repositorySelection = payload.repository_selection === "all" || payload.repository_selection === "selected"
-    ? payload.repository_selection
-    : undefined;
+  const selection = payload.repository_selection;
+  if (selection !== undefined && selection !== "all" && selection !== "selected") {
+    throw new Error("GitHub installation-token API returned invalid repository-selection metadata.");
+  }
   return {
     token,
     expiresAt,
     ...(permissions ? { permissions } : {}),
-    ...(repositorySelection ? { repositorySelection } : {}),
+    ...(selection ? { repositorySelection: selection } : {}),
   };
 }
