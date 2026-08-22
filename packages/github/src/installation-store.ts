@@ -1,4 +1,4 @@
-import { open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { lstat, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { ensurePrivateDirectory } from "./private-directory.js";
@@ -96,9 +96,9 @@ function recordPath(directory: string, installationId: number): string {
 }
 
 async function readRecord(path: string): Promise<GitHubInstallationRecord> {
-  const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size > MAX_RECORD_BYTES) {
-    throw new Error("Stored GitHub installation record is invalid or oversized.");
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_RECORD_BYTES) {
+    throw new Error("Stored GitHub installation record is invalid, symlinked, or oversized.");
   }
   let parsed: unknown;
   try {
@@ -174,7 +174,10 @@ export class FileGitHubInstallationStore {
     await ensurePrivateDirectory(this.directory);
     const path = recordPath(this.directory, installationId);
     try {
-      await stat(path);
+      const metadata = await lstat(path);
+      if (metadata.isSymbolicLink() || !metadata.isFile()) {
+        throw new Error("Stored GitHub installation record is invalid or symlinked.");
+      }
     } catch (error) {
       if (isNotFound(error)) return false;
       throw error;
