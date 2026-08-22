@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asNumber, asRecord, asString, commandAvailability, normalizeSeverity, relativeLike, safeJson } from "./utils.js";
+
+const MAX_CHANGED_FILES = 500;
 
 function runnerObjects(parsed: unknown): Record<string, unknown>[] {
   if (Array.isArray(parsed)) return parsed.map(asRecord).filter((value): value is Record<string, unknown> => Boolean(value));
@@ -13,6 +16,47 @@ function runnerObjects(parsed: unknown): Record<string, unknown>[] {
 function checkovRepositoryPath(value: unknown): string | undefined {
   const raw = asString(value)?.replace(/^\/+/, "");
   return relativeLike(raw, "");
+}
+
+function safeChangedFiles(files: readonly string[] | undefined): string[] | undefined {
+  if (files === undefined) return undefined;
+  if (files.length === 0) return undefined;
+  if (files.length > MAX_CHANGED_FILES) {
+    throw new Error(`Checkov changed-file scope exceeds the ${MAX_CHANGED_FILES}-file adapter limit.`);
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of files) {
+    const path = value.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    if (
+      !path ||
+      isAbsolute(path) ||
+      /^[A-Za-z]:\//.test(path) ||
+      path === ".." ||
+      path.startsWith("../") ||
+      path.includes("/../") ||
+      path.includes("\0")
+    ) {
+      throw new Error("Checkov changed-file scope contains an unsafe repository path.");
+    }
+    if (!seen.has(path)) {
+      seen.add(path);
+      result.push(path);
+    }
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+export function buildCheckovArguments(context: ScannerContext): string[] {
+  const files = safeChangedFiles(context.changedFiles);
+  if (!files) return ["-d", context.target.path, "-o", "json", "--quiet", "--compact"];
+  return [
+    "-o",
+    "json",
+    "--quiet",
+    "--compact",
+    ...files.flatMap((path) => ["-f", path]),
+  ];
 }
 
 export function parseCheckovJson(raw: string): Finding[] {
@@ -64,8 +108,12 @@ export class CheckovAdapter implements ScannerAdapter {
     const startedAt = new Date().toISOString();
     const output = await runProcess(
       "checkov",
-      ["-d", context.target.path, "-o", "json", "--quiet", "--compact"],
-      { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
+      buildCheckovArguments(context),
+      {
+        cwd: context.target.path,
+        timeoutMs: context.timeoutMs ?? 10 * 60_000,
+        signal: context.signal,
+      },
     );
     if (output.exitCode !== 0 && output.exitCode !== 1) {
       throw new Error(`Checkov scan failed (${output.exitCode}): ${output.stderr.trim()}`);
