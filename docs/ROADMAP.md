@@ -22,6 +22,7 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Trivy adapter
 - [x] Grype adapter
 - [x] Checkov adapter
+- [x] OpenSSF Scorecard adapter
 - [x] Bounded parallel scanner orchestration
 - [x] Scanner failure isolation
 - [x] Versioned JSON report format
@@ -32,7 +33,6 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Baseline support with new/fixed/persisting findings
 - [x] Secret redaction in normalized output
 - [ ] Syft SBOM adapter
-- [ ] OpenSSF Scorecard adapter
 - [ ] Generic SARIF import
 - [ ] Changed-files-only scan mode
 
