@@ -34,6 +34,14 @@ export interface SynSecGitHubAppSetupEvaluation {
   interpretation: "setup-comparison-not-runtime-authorization";
 }
 
+export interface SynSecGitHubAppSetupRecoveryPlan {
+  version: 1;
+  ready: boolean;
+  requiredActions: string[];
+  leastPrivilegeReview: string[];
+  interpretation: "operator-guidance-not-runtime-authorization";
+}
+
 function mergePermission(
   permissions: Record<string, GitHubInstallationPermissionLevel>,
   permission: string,
@@ -54,8 +62,10 @@ function permissionSatisfies(
 function normalizedPermissions(
   value: Record<string, GitHubInstallationPermissionLevel | undefined>,
 ): Record<string, GitHubInstallationPermissionLevel> {
+  const entries = Object.entries(value);
+  if (entries.length > 100) throw new Error("GitHub App setup permission list exceeds 100 entries.");
   const result: Record<string, GitHubInstallationPermissionLevel> = {};
-  for (const [name, level] of Object.entries(value)) {
+  for (const [name, level] of entries) {
     const permission = name.trim();
     if (!permission || permission.length > 128 || !/^[a-z0-9_]+$/i.test(permission)) {
       throw new Error("GitHub App setup contains an invalid permission name.");
@@ -164,5 +174,44 @@ export function evaluateSynSecGitHubAppSetup(input: {
     missingEvents,
     extraEvents,
     interpretation: "setup-comparison-not-runtime-authorization",
+  };
+}
+
+/**
+ * Turn the bounded setup comparison into deterministic operator recovery guidance.
+ *
+ * Required actions address capabilities SynSec needs to operate. Least-privilege review items are
+ * intentionally separate: they may be required by another operator-approved integration and are
+ * never removed automatically. This helper is guidance only and does not contact or mutate GitHub.
+ */
+export function buildSynSecGitHubAppSetupRecoveryPlan(input: {
+  permissions: Record<string, GitHubInstallationPermissionLevel | undefined>;
+  events: readonly string[];
+  options?: SynSecGitHubAppSetupOptions;
+}): SynSecGitHubAppSetupRecoveryPlan {
+  const evaluation = evaluateSynSecGitHubAppSetup(input);
+  const requiredActions = [
+    ...evaluation.missingPermissions.map(({ permission, required, actual }) =>
+      actual
+        ? `Upgrade GitHub App permission ${permission} from ${actual} to ${required}.`
+        : `Add GitHub App permission ${permission}:${required}.`,
+    ),
+    ...evaluation.missingEvents.map((event) => `Subscribe the GitHub App to the ${event} event.`),
+  ];
+  const leastPrivilegeReview = [
+    ...evaluation.excessiveWritePermissions.map(
+      (permission) => `Review ${permission}:write and remove it if no other operator-approved feature requires it.`,
+    ),
+    ...evaluation.extraEvents.map(
+      (event) => `Review the ${event} event subscription and remove it if no other operator-approved feature requires it.`,
+    ),
+  ];
+
+  return {
+    version: 1,
+    ready: evaluation.ready,
+    requiredActions,
+    leastPrivilegeReview,
+    interpretation: "operator-guidance-not-runtime-authorization",
   };
 }
