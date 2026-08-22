@@ -87,11 +87,18 @@ export function sanitizeOperationalText(value: string, maxLength = DEFAULT_MAX_O
     .replace(/\0/g, "")
     .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@")
+    .replace(/([?&](?:access[_-]?token|auth[_-]?token|api[_-]?key|password|passwd|token)=)[^&#\s]+/gi, "$1[REDACTED]")
     .replace(/\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+)\b/g, "[REDACTED_TOKEN]")
     .replace(/\bAKIA[A-Z0-9]{16}\b/g, "[REDACTED_ACCESS_KEY]")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[REDACTED_JWT]")
-    .replace(/(\b(?:authorization|proxy-authorization)\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, "$1[REDACTED]")
-    .replace(/(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(
+      /(\b(?:authorization|proxy-authorization)\s*[:=]\s*)(?:bearer\s+)?(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+      "$1[REDACTED]",
+    )
     .trim();
   if (text.length > maxLength) text = `${text.slice(0, maxLength)}…[truncated]`;
   return text;
@@ -212,7 +219,11 @@ export async function runProcess(
 
     child.once("error", (error) => {
       cleanup();
-      finish(() => reject(error));
+      finish(() => {
+        const sanitized = new Error(sanitizeOperationalText(error.message));
+        sanitized.name = error.name;
+        reject(sanitized);
+      });
     });
 
     child.once("close", (code) => {
