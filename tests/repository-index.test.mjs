@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildRepositoryIndex,
+  findDependencyUsage,
+  packageNameFromPurl,
   readRepositoryIndex,
+  routeSecurityContext,
   writeRepositoryIndex,
 } from "../packages/repository/dist/analysis.js";
 
@@ -15,6 +18,7 @@ test("repository index extracts imports, routes, auth context, and sensitive sin
     await mkdir(join(root, "src"));
     const source = `import express from "express";
 import { execFile } from "node:child_process";
+import lodash from "lodash/fp";
 const app = express();
 function requireAuth(req, res, next) { return next(); }
 app.get("/users/:id", requireAuth, async (req, res) => {
@@ -33,6 +37,18 @@ execFile("echo", ["fixture"]);
     assert.ok(index.authSignals.some((signal) => signal.kind === "authentication"));
     assert.ok(index.sinks.some((sink) => sink.kind === "database"));
     assert.ok(index.sinks.some((sink) => sink.kind === "process"));
+
+    const lodashUsage = findDependencyUsage(index, "lodash");
+    assert.equal(lodashUsage.status, "observed-import");
+    assert.equal(lodashUsage.evidence[0].specifier, "lodash/fp");
+    assert.equal(findDependencyUsage(index, "not-imported").status, "unknown");
+    assert.equal(packageNameFromPurl("pkg:npm/%40scope/demo@1.2.3"), "@scope/demo");
+
+    const route = index.routes.find((item) => item.route === "/users/:id");
+    assert.ok(route);
+    const context = routeSecurityContext(index, route);
+    assert.ok(context.nearbyAuthSignals.some((signal) => signal.kind === "authentication"));
+    assert.ok(context.nearbySinks.some((sink) => sink.kind === "database"));
 
     const output = join(root, ".synsec", "repository-index.json");
     await writeRepositoryIndex(output, index);
