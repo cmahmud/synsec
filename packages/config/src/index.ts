@@ -38,6 +38,7 @@ export const defaultConfig: SynSecConfig = {
     "trivy",
     "grype",
     "checkov",
+    "syft",
     "scorecard",
   ],
   parallelism: 3,
