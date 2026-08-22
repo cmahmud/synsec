@@ -18,6 +18,8 @@ export interface FindingLifecycleRecord {
   note?: string;
   /** Optional human/team assignment metadata. This is triage state, not scanner evidence. */
   owner?: string;
+  /** Optional human re-review deadline. This is governance metadata, not scanner evidence. */
+  reviewAt?: string;
   reportId?: string;
   /** Last source path observed for scope-aware incremental reconciliation. */
   lastSeenPath?: string;
@@ -93,6 +95,14 @@ function validTimestamp(value: unknown): value is string {
   return boundedString(value, 128, true) && Number.isFinite(Date.parse(value));
 }
 
+function normalizedReviewAt(value: string | null | undefined, previous?: string): string | undefined {
+  if (value === undefined) return previous;
+  if (value === null || !value.trim()) return undefined;
+  const normalized = value.trim();
+  if (!validTimestamp(normalized)) throw new Error("Finding review deadline must be a valid timestamp.");
+  return normalized;
+}
+
 function isLifecycleRecord(value: unknown, key: string): value is FindingLifecycleRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -100,6 +110,7 @@ function isLifecycleRecord(value: unknown, key: string): value is FindingLifecyc
   if (!isFindingState(record.state) || !validTimestamp(record.updatedAt)) return false;
   if (record.note !== undefined && !boundedString(record.note, MAX_NOTE_LENGTH)) return false;
   if (record.owner !== undefined && !validOwner(record.owner)) return false;
+  if (record.reviewAt !== undefined && !validTimestamp(record.reviewAt)) return false;
   if (record.reportId !== undefined && !boundedString(record.reportId, MAX_REPORT_ID_LENGTH, true)) return false;
   if (record.lastSeenPath !== undefined && !boundedString(record.lastSeenPath, MAX_PATH_LENGTH, true)) return false;
   return true;
@@ -157,9 +168,11 @@ export function setFindingState(
   store: FindingLifecycleStore,
   fingerprint: string,
   state: FindingState,
-  options: { note?: string; reportId?: string; updatedAt?: string } = {},
+  options: { note?: string; reportId?: string; updatedAt?: string; reviewAt?: string | null } = {},
 ): FindingLifecycleStore {
   if (!fingerprint.trim()) throw new Error("Finding fingerprint cannot be empty.");
+  const updatedAt = options.updatedAt ?? new Date().toISOString();
+  if (!validTimestamp(updatedAt)) throw new Error("Finding lifecycle timestamp must be a valid timestamp.");
   const updated: FindingLifecycleStore = {
     schemaVersion: 1,
     records: { ...store.records },
@@ -168,11 +181,13 @@ export function setFindingState(
   const record: FindingLifecycleRecord = {
     fingerprint,
     state,
-    updatedAt: options.updatedAt ?? new Date().toISOString(),
+    updatedAt,
   };
   const note = options.note?.trim() || previous?.note;
   if (note) record.note = note;
   if (previous?.owner) record.owner = previous.owner;
+  const reviewAt = normalizedReviewAt(options.reviewAt, previous?.reviewAt);
+  if (reviewAt) record.reviewAt = reviewAt;
   const reportId = options.reportId ?? previous?.reportId;
   if (reportId) record.reportId = reportId;
   if (previous?.lastSeenPath) record.lastSeenPath = previous.lastSeenPath;
@@ -209,6 +224,33 @@ export function setFindingOwner(
   };
   if (normalizedOwner) nextRecord.owner = normalizedOwner;
   else delete nextRecord.owner;
+  return {
+    schemaVersion: 1,
+    records: {
+      ...store.records,
+      [key]: nextRecord,
+    },
+  };
+}
+
+/** Set or clear a human re-review deadline without changing finding state or scanner evidence. */
+export function setFindingReviewAt(
+  store: FindingLifecycleStore,
+  fingerprint: string,
+  reviewAt?: string | null,
+  updatedAt = new Date().toISOString(),
+): FindingLifecycleStore {
+  const key = fingerprint.trim();
+  if (!key) throw new Error("Finding fingerprint cannot be empty.");
+  const previous = store.records[key];
+  if (!previous) throw new Error(`Finding lifecycle record does not exist: ${key}`);
+  if (!validTimestamp(updatedAt)) throw new Error("Finding review metadata timestamp must be a valid timestamp.");
+  const normalized = normalizedReviewAt(reviewAt);
+  if (previous.reviewAt === normalized) return store;
+
+  const nextRecord: FindingLifecycleRecord = { ...previous, updatedAt };
+  if (normalized) nextRecord.reviewAt = normalized;
+  else delete nextRecord.reviewAt;
   return {
     schemaVersion: 1,
     records: {
@@ -273,6 +315,7 @@ export function reconcileLifecycle(
     else if (prior?.reportId) record.reportId = prior.reportId;
     if (prior?.note) record.note = prior.note;
     if (prior?.owner) record.owner = prior.owner;
+    if (prior?.reviewAt) record.reviewAt = prior.reviewAt;
     const lastSeenPath = current?.primary.location?.path ?? prior?.lastSeenPath;
     if (lastSeenPath) record.lastSeenPath = lastSeenPath;
     next.records[fingerprint] = record;
