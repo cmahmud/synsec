@@ -28,6 +28,19 @@ export interface RouteSinkFlowContext {
   interpretation: "structural-route-call-sink-evidence-only";
 }
 
+export interface FindingRouteSinkFlowEvidence {
+  method: string;
+  route: string;
+  frameworkHint?: string;
+  resolution: Exclude<RouteEntrypointResolution, "unresolved">;
+  handler: string;
+  sinkKind: SinkSignal["kind"];
+  functionName: string;
+  depth: number;
+  /** Exact-line structural linkage only; never runtime or attacker reachability proof. */
+  interpretation: "structural-route-call-sink-evidence-only";
+}
+
 function normalizePath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
 }
@@ -126,6 +139,39 @@ export function repositoryRouteSinkFlowContexts(
   for (const entrypoint of entrypoints.slice(0, maxRoutes)) {
     const context = routeSinkFlowContext(index, entrypoint, graph, options);
     if (context) output.push(context);
+  }
+  return output;
+}
+
+/** Return sanitized structural route-flow evidence only when the finding location exactly matches a linked sink line. */
+export function findingRouteSinkFlowEvidence(
+  contexts: readonly RouteSinkFlowContext[],
+  path: string,
+  line: number | undefined,
+  maxRoutes = 3,
+): FindingRouteSinkFlowEvidence[] {
+  if (!Number.isSafeInteger(line) || (line ?? 0) <= 0) return [];
+  const normalized = normalizePath(path);
+  const limit = Math.max(1, Math.min(10, maxRoutes));
+  const output: FindingRouteSinkFlowEvidence[] = [];
+
+  for (const context of contexts) {
+    const match = context.evidence.find(
+      (evidence) => normalizePath(evidence.path) === normalized && evidence.line === line,
+    );
+    if (!match) continue;
+    output.push({
+      method: context.route.method,
+      route: context.route.route,
+      ...(context.route.frameworkHint ? { frameworkHint: context.route.frameworkHint } : {}),
+      resolution: context.resolution,
+      handler: context.handler.name,
+      sinkKind: match.kind,
+      functionName: match.functionName,
+      depth: match.depth,
+      interpretation: "structural-route-call-sink-evidence-only",
+    });
+    if (output.length >= limit) break;
   }
   return output;
 }
