@@ -31,6 +31,20 @@ test("buildReport produces a versioned correlated report and security score", ()
   assert.ok(report.securityScore < 100);
 });
 
+test("buildReport preserves changed-file scan scope in JSON and HTML", () => {
+  const report = buildReport({
+    target: { path: "/repo" },
+    scans: [scan("RULE-1")],
+    scope: { mode: "changed-files", baseRef: "main", changedFiles: ["src/app.ts", "package.json"] },
+  });
+  assert.equal(report.scope.mode, "changed-files");
+  assert.equal(report.scope.baseRef, "main");
+  assert.deepEqual(report.scope.changedFiles, ["src/app.ts", "package.json"]);
+  const html = renderHtml(report);
+  assert.match(html, /2 changed file\(s\)/);
+  assert.match(html, /since main/);
+});
+
 test("buildReport preserves scanner artifacts and renders SBOM inventory", () => {
   const sbomScan = {
     scanner: "syft",
