@@ -4,13 +4,13 @@ import {
 } from "./app-intake.js";
 import {
   dispatchGitHubAppWebhookScan,
-  type GitHubAppDispatchResult,
   type GitHubScanJobEnqueuer,
 } from "./app-dispatch.js";
 import {
   synchronizeVerifiedGitHubInstallationWebhook,
   type GitHubInstallationStateStore,
 } from "./installation-sync.js";
+import type { GitHubScanJob } from "./scan-queue.js";
 
 export interface GitHubAppInstallationStore extends GitHubInstallationStateStore {
   isRepositoryAllowed(installationId: number, repository: string): Promise<boolean>;
@@ -19,7 +19,7 @@ export interface GitHubAppInstallationStore extends GitHubInstallationStateStore
 export type GitHubAppWebhookHandleResult =
   | { status: "ignored"; reason: "duplicate" | "non_scan_event" }
   | { status: "rejected"; reason: "installation_not_authorized" }
-  | { status: "queued"; job: GitHubAppDispatchResult extends { status: "queued"; job: infer Job } ? Job : never }
+  | { status: "queued"; job: GitHubScanJob }
   | { status: "installation_updated"; installationId: number }
   | { status: "installation_removed"; installationId: number; existed: boolean };
 
