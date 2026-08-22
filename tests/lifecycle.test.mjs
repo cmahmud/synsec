@@ -10,6 +10,7 @@ import {
   lifecycleSummary,
   readLifecycleStore,
   reconcileLifecycle,
+  setFindingOwner,
   setFindingState,
   verifyRemediation,
   writeLifecycleStore,
@@ -56,6 +57,34 @@ test("lifecycle creates new findings and preserves explicit triage state", () =>
   assert.equal(next.records[fingerprint].note, "Reviewed by maintainer");
 });
 
+test("finding ownership is bounded triage metadata and survives state/reconciliation changes", () => {
+  const report = reportWith(["A"]);
+  const fingerprint = report.findings[0].fingerprint;
+  let store = reconcileLifecycle(report, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
+  store = setFindingOwner(store, fingerprint, "security-team", "2026-01-01T12:00:00.000Z");
+  assert.equal(store.records[fingerprint].owner, "security-team");
+  assert.equal(store.records[fingerprint].updatedAt, "2026-01-01T12:00:00.000Z");
+
+  store = setFindingState(store, fingerprint, "confirmed", { updatedAt: "2026-01-02T00:00:00.000Z" });
+  assert.equal(store.records[fingerprint].owner, "security-team");
+  const next = reconcileLifecycle(report, store, "2026-01-03T00:00:00.000Z");
+  assert.equal(next.records[fingerprint].owner, "security-team");
+
+  const cleared = setFindingOwner(next, fingerprint, "", "2026-01-04T00:00:00.000Z");
+  assert.equal(cleared.records[fingerprint].owner, undefined);
+  assert.equal(cleared.records[fingerprint].state, "confirmed");
+});
+
+test("finding ownership rejects unknown records, control characters, oversized values, and invalid timestamps", () => {
+  const report = reportWith(["A"]);
+  const fingerprint = report.findings[0].fingerprint;
+  const store = reconcileLifecycle(report, emptyLifecycleStore());
+  assert.throws(() => setFindingOwner(store, "missing", "team"), /does not exist/);
+  assert.throws(() => setFindingOwner(store, fingerprint, "team\nother"), /control line breaks/);
+  assert.throws(() => setFindingOwner(store, fingerprint, "x".repeat(256)), /at most 255/);
+  assert.throws(() => setFindingOwner(store, fingerprint, "team", "not-a-time"), /valid timestamp/);
+});
+
 test("lifecycle store validation rejects malformed record shapes", () => {
   assert.equal(isLifecycleStore({ schemaVersion: 1, records: {} }), true);
   assert.equal(isLifecycleStore({
@@ -76,6 +105,12 @@ test("lifecycle store validation rejects malformed record shapes", () => {
       abc: { fingerprint: "abc", state: "new", updatedAt: "not-a-date" },
     },
   }), false);
+  assert.equal(isLifecycleStore({
+    schemaVersion: 1,
+    records: {
+      abc: { fingerprint: "abc", state: "new", updatedAt: "2026-01-01T00:00:00.000Z", owner: "bad\nowner" },
+    },
+  }), false);
 });
 
 test("lifecycle persistence is restrictive, round-trippable, and rejects corrupt stores", async () => {
@@ -83,11 +118,14 @@ test("lifecycle persistence is restrictive, round-trippable, and rejects corrupt
   const path = join(root, "state", "lifecycle.json");
   try {
     const report = reportWith(["A"]);
-    const store = reconcileLifecycle(report, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
+    const fingerprint = report.findings[0].fingerprint;
+    let store = reconcileLifecycle(report, emptyLifecycleStore(), "2026-01-01T00:00:00.000Z");
+    store = setFindingOwner(store, fingerprint, "appsec");
     await writeLifecycleStore(path, store);
     assert.deepEqual(await readLifecycleStore(path), store);
     const serialized = await readFile(path, "utf8");
     assert.equal(JSON.parse(serialized).schemaVersion, 1);
+    assert.equal(JSON.parse(serialized).records[fingerprint].owner, "appsec");
     if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
 
     await writeFile(path, JSON.stringify({
