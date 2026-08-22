@@ -57,8 +57,10 @@ function pathsOverlap(a: string, b: string): boolean {
  *
  * State and source workspaces must be separate directory trees so scanner working copies are never
  * created inside durable authorization/queue storage. App credentials remain in the returned
- * token-provider closure only; they are not written to any local store. The caller still owns TLS,
- * listener binding, process/container isolation, network policy, and secret injection/rotation.
+ * token-provider closure only; they are not written to any local store. The token provider also
+ * fails closed when GitHub reports that the installation lacks the permissions required for
+ * repository acquisition or publication. The caller still owns TLS, listener binding,
+ * process/container isolation, network policy, and secret injection/rotation.
  */
 export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntimeOptions): Promise<LocalGitHubAppRuntime> {
   const stateDirectory = requiredDirectory(options.stateDirectory, "GitHub App state directory");
@@ -83,6 +85,13 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
   const getInstallationToken = createGitHubAppInstallationTokenProvider({
     appId: options.appId,
     privateKey: options.privateKey,
+    requiredPermissionsByPurpose: {
+      acquire: { contents: "read" },
+      publish: {
+        checks: "write",
+        ...(options.publishSarif ? { security_events: "write" as const } : {}),
+      },
+    },
     ...(options.apiVersion ? { apiVersion: options.apiVersion } : {}),
     ...(options.userAgent ? { userAgent: options.userAgent } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
