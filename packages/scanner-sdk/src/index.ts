@@ -80,7 +80,9 @@ export async function runProcess(
       ? setTimeout(() => child.kill("SIGTERM"), options.timeoutMs)
       : undefined;
 
-    const onAbort = (): void => child.kill("SIGTERM");
+    const onAbort = (): void => {
+      child.kill("SIGTERM");
+    };
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.once("error", (error) => {
