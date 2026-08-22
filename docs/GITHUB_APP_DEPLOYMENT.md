@@ -1,0 +1,59 @@
+# GitHub App deployment readiness
+
+SynSec's hosted GitHub App modules are repository-security infrastructure, not a general-purpose target execution service. Production deployment must preserve the same fixed-host, commit-pinned, credential-minimized boundaries as the scan worker.
+
+`@synsec/github/app-deployment` provides a preflight validator for operator-controlled settings that are easy to misconfigure before the bounded webhook handler is mounted. It intentionally validates configuration only; it does not open sockets, provision certificates, fetch secrets, modify firewall rules, or widen repository authorization.
+
+## Preflight contract
+
+Call `validateGitHubAppDeployment()` before starting the listener and fail startup when `ready` is false. `assertGitHubAppDeploymentReady()` is provided for callers that prefer an exception-based startup guard.
+
+The preflight currently requires:
+
+- a positive integer GitHub App id;
+- a PEM-shaped App private key;
+- a webhook secret of at least 32 UTF-8 bytes;
+- a host/IP value rather than a URL-shaped listener setting;
+- local TLS or explicit upstream TLS termination for any non-loopback listener;
+- absolute durable-state and repository-workspace paths; and
+- separate, non-nested state and workspace directory trees.
+
+Plain HTTP is accepted only on loopback so local development can mount the handler without pretending that an externally reachable plaintext listener is production-ready.
+
+Diagnostics are categorical and deliberately do not echo private keys, webhook secrets, token values, repository credentials, or filesystem contents. Startup logs may record issue codes, but operators should still avoid dumping the original configuration object.
+
+## Example
+
+```ts
+import { assertGitHubAppDeploymentReady } from "@synsec/github/app-deployment";
+
+assertGitHubAppDeploymentReady({
+  appId: process.env.SYNSEC_GITHUB_APP_ID ?? "",
+  privateKey: process.env.SYNSEC_GITHUB_APP_PRIVATE_KEY ?? "",
+  webhookSecret: process.env.SYNSEC_GITHUB_WEBHOOK_SECRET ?? "",
+  listenHost: "127.0.0.1",
+  tlsMode: "terminated-upstream",
+  stateDirectory: "/var/lib/synsec/state",
+  workspaceDirectory: "/var/lib/synsec/workspaces",
+});
+```
+
+A reverse proxy or ingress that terminates TLS should forward only to a private/loopback listener and should preserve the exact webhook request body. SynSec verifies `X-Hub-Signature-256` over the original bytes, so middleware must not parse and reserialize the body before the bounded webhook handler receives it.
+
+## What this does not certify
+
+A successful preflight does **not** mean the hosted service is production-complete. Operators still need process/container isolation for scanner subprocesses, OS CPU/memory limits, outbound network policy, listener/server timeouts, health supervision, secret injection and rotation, log retention, and a transactional shared state backend before horizontally scaling across hosts.
+
+The validator also does not test whether GitHub currently grants an installation the permissions needed for a specific operation. Runtime installation-token exchange remains authoritative for `contents:read`, `checks:write`, and optional `security_events:write` diagnostics.
+
+## Secret rotation
+
+Treat App private keys and webhook secrets as hosting credentials, never scanner inputs. Rotation should replace injected credentials through the deployment platform, restart or roll the listener/runtime in a controlled way, and avoid writing either secret into SynSec state, reports, queue records, scanner environments, or repository workspaces.
+
+Webhook-secret rotation requires coordination with the GitHub App configuration because GitHub signs deliveries with the configured secret. Do not silently accept multiple indefinitely valid secrets as a convenience fallback; if an overlap window is implemented by a hosting layer, keep it explicit, bounded, and observable.
+
+## Filesystem placement
+
+Durable authorization/replay/queue state and repository workspaces must not be the same tree or ancestors of one another. This prevents checkout cleanup, scanner traversal, or workspace retention policy from reaching durable App authorization state, and prevents durable state from being exposed as repository scan input.
+
+A shared parent is fine. For example, `/var/lib/synsec/state` and `/var/lib/synsec/workspaces` are separate sibling trees. `/var/lib/synsec` and `/var/lib/synsec/workspaces` are not.
