@@ -5,6 +5,7 @@
     { "path": "./packages/config" },
     { "path": "./packages/report" },
     { "path": "./packages/repository" },
+    { "path": "./packages/workflows" },
     { "path": "./packages/ai" },
     { "path": "./packages/scanner-sdk" },
     { "path": "./packages/scanners" },
