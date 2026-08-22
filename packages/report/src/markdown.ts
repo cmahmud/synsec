@@ -108,9 +108,17 @@ export function renderMarkdown(report: SynSecReport): string {
       `- **Files inventoried:** ${report.repository.fileCount ?? "unknown"}`,
       `- **Languages:** ${languages || "unknown"}`,
       `- **Frameworks:** ${(report.repository.frameworks ?? []).join(", ") || "none detected"}`,
+      "",
     );
-    if (sbomPackages > 0) lines.push(`- **SBOM packages inventoried:** ${sbomPackages}`);
-    lines.push("");
+  }
+
+  if (sbomPackages > 0) {
+    lines.push(
+      "## SBOM",
+      "",
+      `- **SBOM packages inventoried:** ${sbomPackages}`,
+      "",
+    );
   }
 
   if (report.baseline) {
