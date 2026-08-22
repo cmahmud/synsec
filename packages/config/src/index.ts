@@ -33,7 +33,7 @@ export const defaultConfig: SynSecConfig = {
   schemaVersion: 1,
   scanners: [
     "opengrep",
-    "gitleaks",
+    "betterleaks",
     "osv-scanner",
     "trivy",
     "grype",
