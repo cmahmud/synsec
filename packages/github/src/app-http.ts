@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { GitHubWebhookSecret } from "./app.js";
 import {
   handleGitHubAppWebhook,
   type GitHubAppInstallationStore,
@@ -11,7 +12,7 @@ const MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PATH = "/github/webhooks";
 
 export interface GitHubAppWebhookHttpOptions {
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   replayStore: GitHubWebhookReplayManager;
   installationStore: GitHubAppInstallationStore;
   queue: GitHubScanJobEnqueuer;
@@ -79,7 +80,8 @@ export function createGitHubAppWebhookHttpHandler(options: GitHubAppWebhookHttpO
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
     throw new Error("GitHub App webhook path must be an absolute path without query or fragment components.");
   }
-  if (!options.webhookSecret.trim()) throw new Error("GitHub App webhook secret is required.");
+  const secretCount = typeof options.webhookSecret === "string" ? 1 : options.webhookSecret.length;
+  if (secretCount < 1) throw new Error("GitHub App webhook secret is required.");
 
   return async function githubAppWebhookHttpHandler(
     request: IncomingMessage,
