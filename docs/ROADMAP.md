@@ -43,7 +43,7 @@ This roadmap separates what is already usable in the repository from the deeper 
 
 - [x] Language/framework inventory
 - [x] Safe bounded finding-to-code context retrieval
-- [ ] Persistent repository index
+- [x] Persistent repository index
 - [ ] Import/module graph
 - [ ] Function/call graph
 - [ ] Routes and externally reachable entry points
@@ -63,8 +63,8 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [ ] Repository-aware explanation of reachability and impact
 - [ ] Suggested patch generation
 - [ ] Suggested regression/security tests
-- [ ] Safe rescan-after-remediation workflow
-- [ ] Finding lifecycle: new, confirmed, false positive, accepted risk, fixed, regressed
+- [x] Safe rescan-after-remediation verification primitive
+- [x] Finding lifecycle: new, confirmed, false positive, accepted risk, fixed, regressed
 
 ## Phase 4 — Reusable workflows / skills
 
@@ -74,8 +74,8 @@ The orchestration layer should expose small reusable defensive workflows rather 
 - [x] Dependency review workflow
 - [x] Secrets review workflow with source-context prohibition
 - [x] Infrastructure/IaC review workflow
-- [ ] Fix verification workflow
-- [ ] Report-writing workflow
+- [x] Fix verification workflow
+- [x] Report-writing workflow
 - [ ] Provider/model routing policy by task and cost
 - [ ] User-defined workflow/skill format with explicit capabilities
 - [x] Explicit capability declarations per built-in workflow
