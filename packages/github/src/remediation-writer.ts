@@ -189,7 +189,9 @@ function parseRemoteRef(result: RemediationGitResult, expectedRef: string): stri
   if (result.exitCode !== 0) throw failure("remote ref lookup", result);
   const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length !== 1) throw new Error("GitHub remediation remote ref lookup returned ambiguous output.");
-  const [sha, ref, ...extra] = lines[0].split(/\s+/);
+  const line = lines[0];
+  if (line === undefined) throw new Error("GitHub remediation remote ref lookup returned malformed output.");
+  const [sha, ref, ...extra] = line.split(/\s+/);
   if (!sha || ref !== expectedRef || extra.length > 0) throw new Error("GitHub remediation remote ref lookup returned malformed output.");
   return validateGitHubCommitSha(sha);
 }
@@ -203,7 +205,9 @@ function assertStagedChanges(output: string, changes: readonly RemediationChange
   for (const line of output.split(/\r?\n/).filter(Boolean)) {
     const match = /^([AM])\t(.+)$/.exec(line);
     if (!match) throw new Error("GitHub remediation staged an unsupported change type.");
-    const [, status, path] = match;
+    const status = match[1];
+    const path = match[2];
+    if (!status || !path) throw new Error("GitHub remediation staged malformed path metadata.");
     if (actual.has(path)) throw new Error("GitHub remediation staged a duplicate path.");
     actual.set(path, status);
   }
