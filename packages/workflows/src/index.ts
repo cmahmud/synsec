@@ -7,6 +7,8 @@ export type WorkflowCapability =
   | "read-dependency-metadata"
   | "read-redacted-secret-metadata"
   | "read-infrastructure-config"
+  | "read-scan-reports"
+  | "read-lifecycle-state"
   | "propose-remediation"
   | "propose-tests";
 
@@ -91,6 +93,40 @@ const workflows: readonly WorkflowDefinition[] = [
       "propose-tests",
     ],
     sourceContextAllowed: true,
+    repositoryWriteRequiresApproval: true,
+    externalNetworkAssessment: "forbidden",
+  },
+  {
+    id: "fix-verification",
+    version: 1,
+    displayName: "Fix Verification",
+    description: "Verify remediation against before/after scan evidence without treating model inference as proof that a finding is fixed.",
+    reviewInstructions: "Treat deterministic remediation verification and scanner reruns as authoritative. A missing finding is only fixed when the after scan covered the affected scope and reran a detecting scanner. Otherwise report the result as inconclusive. Source context may explain a change but must not override deterministic coverage gaps.",
+    categories: "all",
+    capabilities: [
+      "read-normalized-findings",
+      "read-scan-reports",
+      "read-lifecycle-state",
+      "read-bounded-source-context",
+      "propose-tests",
+    ],
+    sourceContextAllowed: true,
+    repositoryWriteRequiresApproval: true,
+    externalNetworkAssessment: "forbidden",
+  },
+  {
+    id: "report-writing",
+    version: 1,
+    displayName: "Report Writing",
+    description: "Turn normalized evidence and lifecycle state into concise developer-facing security reports.",
+    reviewInstructions: "Summarize deterministic evidence first, clearly distinguish scanner facts from model interpretation, preserve uncertainty, and reference affected locations without reproducing secret values. Do not claim exploitability or remediation success beyond the available evidence.",
+    categories: "all",
+    capabilities: [
+      "read-normalized-findings",
+      "read-scan-reports",
+      "read-lifecycle-state",
+    ],
+    sourceContextAllowed: false,
     repositoryWriteRequiresApproval: true,
     externalNetworkAssessment: "forbidden",
   },
