@@ -4,14 +4,13 @@ import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { reviewFinding, type AiFindingReview } from "@synsec/ai";
 import {
-  defaultConfig,
   loadConfig,
   resolveReportPaths,
   SYNSEC_CONFIG_FILENAME,
   writeDefaultConfig,
   type SynSecConfig,
 } from "@synsec/config";
-import type { CorrelatedFinding, Finding, Severity } from "@synsec/core";
+import type { CorrelatedFinding } from "@synsec/core";
 import { runScanEngine, scannerStatuses } from "@synsec/engine";
 import {
   readReport,
@@ -89,6 +88,14 @@ Scan options:
   --ai-limit <n>           Maximum findings to review (default: 10).
   --ai-base-url <url>      OpenAI-compatible API base URL.
   --ai-model <model>       Model ID for AI triage.
+
+Review options:
+  --root <path>            Repository root when it differs from the saved report path.
+  --output <file>          AI review output path.
+  --ai-source              Allow bounded source excerpts to be sent.
+  --ai-limit <n>           Maximum findings to review.
+  --ai-base-url <url>      OpenAI-compatible API base URL.
+  --ai-model <model>       Model ID.
 
 AI environment variables:
   SYNSEC_AI_BASE_URL
@@ -192,9 +199,10 @@ async function reviewGroups(
   config: SynSecConfig,
   limit: number,
 ): Promise<Record<string, AiFindingReview>> {
-  const provider = aiProvider(config);
   const reviews: Record<string, AiFindingReview> = {};
   const candidates = report.findings.slice(0, limit);
+  if (candidates.length === 0) return reviews;
+  const provider = aiProvider(config);
 
   for (let index = 0; index < candidates.length; index += 1) {
     const group = candidates[index];
@@ -308,7 +316,8 @@ async function review(): Promise<void> {
   if (model) config.ai.model = model;
   const limit = integerOption("--ai-limit") ?? report.findings.length;
   const reviews = await reviewGroups(report, root, config, limit);
-  const outputPath = resolve(option("--output") ?? dirname(reportPath), option("--output") ? "." : "ai-review.json");
+  const explicitOutput = option("--output");
+  const outputPath = explicitOutput ? resolve(explicitOutput) : resolve(dirname(reportPath), "ai-review.json");
   await writeAiReviews(outputPath, report, reviews);
   console.log(`Wrote ${Object.keys(reviews).length} AI review(s) to ${outputPath}`);
 }
