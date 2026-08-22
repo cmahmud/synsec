@@ -15,6 +15,10 @@ import {
   type GitHubRemediationPullRequestResult,
 } from "./remediation-writer.js";
 import { FileGitHubScanQueue } from "./scan-queue.js";
+import {
+  reconcileGitHubOwnedWorkspaces,
+  type GitHubWorkspaceReconciliationResult,
+} from "./workspace-ownership.js";
 import type { GitHubCheckThreshold } from "./index.js";
 import type { GitHubPublisherOptions } from "./publisher.js";
 
@@ -30,6 +34,9 @@ export interface LocalGitHubAppRuntimeOptions extends GitHubPublisherOptions {
   queueLeaseMs?: number;
   failedJobRetentionMs?: number;
   retentionMaxDeletes?: number;
+  workspaceRetentionMs?: number;
+  workspaceMaxDeletes?: number;
+  deleteStaleOwnedWorkspaces?: boolean;
   threshold?: GitHubCheckThreshold;
   publishSarif?: boolean;
   toolVersion?: string;
@@ -40,6 +47,7 @@ export interface LocalGitHubAppRuntimeOptions extends GitHubPublisherOptions {
 export interface LocalGitHubAppMaintenanceResult {
   expiredReplayRecordsDeleted: number;
   failedJobs: GitHubAppRetentionResult;
+  workspaces: GitHubWorkspaceReconciliationResult;
 }
 
 export interface LocalGitHubAppRemediationInput {
@@ -84,9 +92,10 @@ function pathsOverlap(a: string, b: string): boolean {
  * created inside durable authorization/queue storage. App credentials remain in the returned
  * token-provider closure only; they are not written to any local store. The token provider also
  * fails closed when GitHub reports that the installation lacks the permissions required for
- * repository acquisition, publication, or an explicitly invoked approved remediation write. The
- * caller still owns TLS, listener binding, process/container isolation, network policy, and secret
- * injection/rotation.
+ * repository acquisition, publication, or an explicitly invoked approved remediation write.
+ * Workspace maintenance observes only marker-proven SynSec acquisition directories by default;
+ * deletion requires an explicit bounded runtime option. The caller still owns TLS, listener binding,
+ * process/container isolation, network policy, and secret injection/rotation.
  */
 export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntimeOptions): Promise<LocalGitHubAppRuntime> {
   const stateDirectory = requiredDirectory(options.stateDirectory, "GitHub App state directory");
@@ -142,7 +151,10 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
     installationStore,
     config: options.config,
     getInstallationToken,
-    acquisitionOptions: { workspaceRoot },
+    acquisitionOptions: {
+      workspaceRoot,
+      ...(options.now ? { now: options.now } : {}),
+    },
     ...(options.threshold ? { threshold: options.threshold } : {}),
     ...(options.publishSarif !== undefined ? { publishSarif: options.publishSarif } : {}),
     ...(options.toolVersion ? { toolVersion: options.toolVersion } : {}),
@@ -166,6 +178,12 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
         ...(options.retentionMaxDeletes !== undefined ? { maxDeletes: options.retentionMaxDeletes } : {}),
         ...(options.now ? { now: options.now } : {}),
       }),
+      workspaces: await reconcileGitHubOwnedWorkspaces(workspaceRoot, {
+        ...(options.workspaceRetentionMs !== undefined ? { retentionMs: options.workspaceRetentionMs } : {}),
+        ...(options.workspaceMaxDeletes !== undefined ? { maxDeletes: options.workspaceMaxDeletes } : {}),
+        ...(options.deleteStaleOwnedWorkspaces !== undefined ? { deleteOwned: options.deleteStaleOwnedWorkspaces } : {}),
+        ...(options.now ? { now: options.now } : {}),
+      }),
     }),
     getStatus: () => buildGitHubAppRuntimeStatus({ installationStore, queue }),
     createRemediationPullRequest: async (input) => {
@@ -177,7 +195,10 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
         repository: input.repository,
         commitSha: input.execution.targetCommitSha,
         installationToken: acquisitionToken,
-      }, { workspaceRoot });
+      }, {
+        workspaceRoot,
+        ...(options.now ? { now: options.now } : {}),
+      });
       try {
         const remediationToken = await getInstallationToken(input.installationId, "remediate");
         return await createApprovedGitHubRemediationPullRequest({
