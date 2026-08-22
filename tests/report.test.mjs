@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildReport, applyBaseline, renderHtml, toSarif, writeHtml, writeReport, writeSarif } from "../packages/report/dist/index.js";
+import { applyBaseline, buildReport, readReport, renderHtml, toSarif, writeHtml, writeReport, writeSarif } from "../packages/report/dist/index.js";
 import { renderMarkdown, writeMarkdown } from "../packages/report/dist/markdown.js";
 
 function scan(ruleId, severity = "high") {
@@ -97,6 +97,19 @@ test("SARIF, HTML, and Markdown exports preserve findings", () => {
   assert.match(markdown, /# SynSec Security Report/);
   assert.match(markdown, /\[HIGH\] Finding RULE-1/);
   assert.match(markdown, /Use a safer implementation/);
+});
+
+test("readReport rejects non-regular and oversized native report inputs before parsing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-report-read-bound-"));
+  const oversized = join(root, "oversized.json");
+  try {
+    await writeFile(oversized, "", "utf8");
+    await truncate(oversized, 64 * 1024 * 1024 + 1);
+    await assert.rejects(() => readReport(oversized), /exceeds 67108864 bytes/);
+    await assert.rejects(() => readReport(root), /not a regular file/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("core JSON, SARIF, and HTML writers repair permissive existing file modes where supported", async () => {
