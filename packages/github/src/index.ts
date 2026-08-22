@@ -4,6 +4,7 @@ import type { SynSecReport } from "@synsec/report";
 
 export type GitHubCheckConclusion = "success" | "failure" | "neutral";
 export type GitHubAnnotationLevel = "notice" | "warning" | "failure";
+export type GitHubCheckThreshold = Severity | "none";
 
 export interface GitHubPullRequestContext {
   repository: string;
@@ -207,13 +208,14 @@ export function buildGitHubAnnotations(
     .slice(0, maxAnnotations);
 }
 
-export function reportFailsThreshold(report: SynSecReport, threshold: Severity): boolean {
+export function reportFailsThreshold(report: SynSecReport, threshold: GitHubCheckThreshold): boolean {
+  if (threshold === "none") return false;
   const required = severityRank[threshold];
   if (required <= 0) return false;
   return report.findings.some((finding) => severityRank[finding.primary.severity] >= required);
 }
 
-function markdownSummary(report: SynSecReport, threshold: Severity): string {
+function markdownSummary(report: SynSecReport, threshold: GitHubCheckThreshold): string {
   const delta = report.baseline;
   const deltaLine = delta
     ? `New: **${delta.new.length}** · Fixed: **${delta.fixed.length}** · Persisting: **${delta.persisting.length}**`
@@ -230,7 +232,7 @@ function markdownSummary(report: SynSecReport, threshold: Severity): string {
 export function buildGitHubCheck(
   report: SynSecReport,
   context: GitHubPullRequestContext,
-  options: { threshold?: Severity; onlyNewAnnotations?: boolean; maxAnnotations?: number } = {},
+  options: { threshold?: GitHubCheckThreshold; onlyNewAnnotations?: boolean; maxAnnotations?: number } = {},
 ): GitHubCheckResult {
   const threshold = options.threshold ?? "high";
   const failed = reportFailsThreshold(report, threshold);
