@@ -45,9 +45,12 @@ export interface ProcessOptions {
   env?: NodeJS.ProcessEnv;
   /** Maximum bytes retained from each output stream. Defaults to 64 MiB per stream. */
   maxOutputBytes?: number;
+  /** Grace period between SIGTERM and SIGKILL. Defaults to 2 seconds. */
+  killGraceMs?: number;
 }
 
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_KILL_GRACE_MS = 2_000;
 
 export async function runProcess(
   command: string,
@@ -58,6 +61,10 @@ export async function runProcess(
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   if (!Number.isFinite(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("maxOutputBytes must be a positive finite number.");
+  }
+  const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  if (!Number.isFinite(killGraceMs) || killGraceMs < 0) {
+    throw new Error("killGraceMs must be a non-negative finite number.");
   }
 
   return await new Promise<ProcessOutput>((resolve, reject) => {
@@ -77,6 +84,7 @@ export async function runProcess(
     let timedOut = false;
     let aborted = false;
     let overflowError: Error | undefined;
+    let killEscalation: NodeJS.Timeout | undefined;
 
     const finish = (callback: () => void): void => {
       if (settled) return;
@@ -84,12 +92,22 @@ export async function runProcess(
       callback();
     };
 
+    const terminate = (): void => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGTERM");
+      if (!killEscalation) {
+        killEscalation = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        }, killGraceMs);
+      }
+    };
+
     const stopForOverflow = (stream: "stdout" | "stderr", bytes: number): void => {
       if (overflowError) return;
       overflowError = new Error(
         `Process ${command} exceeded the ${maxOutputBytes} byte ${stream} limit (${bytes} bytes observed).`,
       );
-      child.kill("SIGTERM");
+      terminate();
     };
 
     child.stdout.setEncoding("utf8");
@@ -114,18 +132,19 @@ export async function runProcess(
     const timeout = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          child.kill("SIGTERM");
+          terminate();
         }, options.timeoutMs)
       : undefined;
 
     const onAbort = (): void => {
       aborted = true;
-      child.kill("SIGTERM");
+      terminate();
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     const cleanup = (): void => {
       if (timeout) clearTimeout(timeout);
+      if (killEscalation) clearTimeout(killEscalation);
       options.signal?.removeEventListener("abort", onAbort);
     };
 
