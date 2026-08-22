@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
@@ -74,9 +75,23 @@ export class OpengrepAdapter implements ScannerAdapter {
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
+    if (context.changedFiles && context.changedFiles.length === 0) {
+      return {
+        scanner: this.id,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        target: context.target,
+        findings: [],
+        diagnostics: ["Changed-file scope is empty; Opengrep was not invoked."],
+      };
+    }
+
+    const targets = context.changedFiles
+      ? context.changedFiles.map((path) => resolve(context.target.path, path))
+      : [context.target.path];
     const output = await runProcess(
       "opengrep",
-      ["scan", "--json", "--config", "auto", "--metrics", "off", "--taint-intrafile", context.target.path],
+      ["scan", "--json", "--config", "auto", "--metrics", "off", "--taint-intrafile", ...targets],
       { timeoutMs: context.timeoutMs ?? 15 * 60_000, signal: context.signal },
     );
     if (output.exitCode !== 0) throw new Error(`Opengrep scan failed (${output.exitCode}): ${output.stderr.trim()}`);
