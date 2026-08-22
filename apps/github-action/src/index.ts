@@ -2,27 +2,12 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadConfig } from "@synsec/config";
 import { runGitHubActionsRepositoryScan } from "@synsec/github/actions-runner";
-
-function nonEmpty(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed || undefined;
-}
-
-function booleanInput(value: string | undefined, fallback: boolean): boolean {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) return fallback;
-  if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
-  if (normalized === "false" || normalized === "0" || normalized === "no") return false;
-  throw new Error(`Expected a boolean action input, received: ${normalized.slice(0, 32)}`);
-}
-
-function changedOnlyInput(value: string | undefined): boolean | undefined {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized || normalized === "auto") return undefined;
-  if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
-  if (normalized === "false" || normalized === "0" || normalized === "no") return false;
-  throw new Error("changed-only must be auto, true, or false.");
-}
+import {
+  booleanInput,
+  changedOnlyInput,
+  nonEmpty,
+  resolveWorkspaceFileInput,
+} from "./inputs.js";
 
 async function writeOutput(name: string, value: string | number | undefined): Promise<void> {
   const path = nonEmpty(process.env.GITHUB_OUTPUT);
@@ -37,10 +22,14 @@ async function main(): Promise<void> {
   if (!token) throw new Error("The SynSec GitHub Action requires a GitHub token.");
 
   const configInput = nonEmpty(process.env.SYNSEC_CONFIG_PATH);
-  const configPath = configInput ? resolve(workspace, configInput) : undefined;
+  const configPath = configInput
+    ? await resolveWorkspaceFileInput(workspace, configInput, "config-path")
+    : undefined;
   const { config } = await loadConfig(workspace, configPath);
   const baselineInput = nonEmpty(process.env.SYNSEC_BASELINE_PATH);
-  const baselinePath = baselineInput ? resolve(workspace, baselineInput) : undefined;
+  const baselinePath = baselineInput
+    ? await resolveWorkspaceFileInput(workspace, baselineInput, "baseline-path")
+    : undefined;
   const publishSarif = booleanInput(process.env.SYNSEC_PUBLISH_SARIF, false);
   const changedOnly = changedOnlyInput(process.env.SYNSEC_CHANGED_ONLY);
 
