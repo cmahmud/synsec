@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "references": [
+    { "path": "../report" },
+    { "path": "../repository" },
+    { "path": "../lifecycle" }
+  ],
+  "include": ["src/**/*.ts"]
+}
