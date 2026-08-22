@@ -24,13 +24,16 @@ export function renderFindingTriageHtml(view: FindingTriageView): string {
     const comments = item.comments.length === 0
       ? "<span class=muted>No review comments</span>"
       : `<ol>${item.comments.map((comment) => `<li><div>${escapeHtml(comment.body)}</div><small>${escapeHtml(comment.author ?? "unattributed")} · ${escapeHtml(comment.createdAt)}</small></li>`).join("")}</ol>`;
+    const review = item.reviewAt
+      ? `<div><dt>${item.reviewStatus === "due" ? "Review overdue" : "Review by"}</dt><dd${item.reviewStatus === "due" ? " class=review-due" : ""}>${escapeHtml(item.reviewAt)}</dd></div>`
+      : "";
     return `<article>
       <header><strong>${escapeHtml(item.title)}</strong><span class=severity>${escapeHtml(item.severity)}</span></header>
       <dl>
         <div><dt>State</dt><dd>${escapeHtml(stateLabel(item.state))}</dd></div>
         <div><dt>Owner</dt><dd>${escapeHtml(item.owner ?? "unassigned")}</dd></div>
         <div><dt>Updated</dt><dd>${escapeHtml(item.updatedAt)}</dd></div>
-        ${item.reviewAt ? `<div><dt>Review by</dt><dd>${escapeHtml(item.reviewAt)}</dd></div>` : ""}
+        ${review}
       </dl>
       ${item.note ? `<p class=note>${escapeHtml(item.note)}</p>` : ""}
       <details><summary>Review comments (${item.comments.length})</summary>${comments}</details>
@@ -46,7 +49,7 @@ export function renderFindingTriageHtml(view: FindingTriageView): string {
 <meta name="robots" content="noindex,nofollow">
 <title>SynSec finding triage</title>
 <style>
-:root{color-scheme:light dark;font-family:ui-sans-serif,system-ui,sans-serif}body{max-width:1100px;margin:0 auto;padding:24px;line-height:1.45}h1{margin-bottom:4px}.summary{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.summary span,article{border:1px solid color-mix(in srgb,currentColor 24%,transparent);border-radius:10px}.summary span{padding:8px 12px}article{padding:16px;margin:14px 0}article header{display:flex;justify-content:space-between;gap:16px}.severity{text-transform:uppercase;font-size:.85rem}dl{display:flex;gap:22px;flex-wrap:wrap}dl div{display:flex;gap:6px}dt{font-weight:600}.note{padding:10px;border-left:3px solid currentColor}ol{padding-left:24px}li{margin:10px 0}small,.muted,footer{opacity:.7}footer{margin-top:12px;overflow-wrap:anywhere}code{font-size:.78rem}summary{cursor:pointer}
+:root{color-scheme:light dark;font-family:ui-sans-serif,system-ui,sans-serif}body{max-width:1100px;margin:0 auto;padding:24px;line-height:1.45}h1{margin-bottom:4px}.summary{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}.summary span,article{border:1px solid color-mix(in srgb,currentColor 24%,transparent);border-radius:10px}.summary span{padding:8px 12px}article{padding:16px;margin:14px 0}article header{display:flex;justify-content:space-between;gap:16px}.severity{text-transform:uppercase;font-size:.85rem}dl{display:flex;gap:22px;flex-wrap:wrap}dl div{display:flex;gap:6px}dt{font-weight:600}.review-due{font-weight:700;text-decoration:underline}.note{padding:10px;border-left:3px solid currentColor}ol{padding-left:24px}li{margin:10px 0}small,.muted,footer{opacity:.7}footer{margin-top:12px;overflow-wrap:anywhere}code{font-size:.78rem}summary{cursor:pointer}
 </style>
 </head>
 <body>
