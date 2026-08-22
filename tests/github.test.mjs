@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   buildGitHubAnnotations,
   buildGitHubCheck,
   detectGitHubContext,
+  loadGitHubContext,
   reportFailsThreshold,
 } from "../packages/github/dist/index.js";
 
@@ -100,6 +104,43 @@ test("push payload can supply repository and after SHA", () => {
     }),
     { repository: "cmahmud/synsec", sha: "push-head", ref: "refs/heads/main" },
   );
+});
+
+test("loadGitHubContext reads a bounded local Actions event payload", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-github-"));
+  const eventPath = join(root, "event.json");
+  await writeFile(eventPath, JSON.stringify({
+    repository: { full_name: "cmahmud/synsec" },
+    pull_request: {
+      number: 7,
+      head: { sha: "head-seven", ref: "feature/seven" },
+      base: { ref: "main" },
+    },
+  }));
+
+  try {
+    const context = await loadGitHubContext({
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_SHA: "merge-seven",
+      GITHUB_REF: "refs/pull/7/merge",
+    });
+    assert.equal(context.sha, "head-seven");
+    assert.equal(context.repository, "cmahmud/synsec");
+    assert.equal(context.pullRequestNumber, 7);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadGitHubContext rejects invalid event JSON instead of guessing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-github-invalid-"));
+  const eventPath = join(root, "event.json");
+  await writeFile(eventPath, "{not-json");
+  try {
+    await assert.rejects(() => loadGitHubContext({ GITHUB_EVENT_PATH: eventPath }), /does not contain valid JSON/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("GitHub annotations normalize paths, collapse newlines, and use severity levels", () => {
