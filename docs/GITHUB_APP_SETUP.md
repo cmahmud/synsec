@@ -38,7 +38,17 @@ synsec-github-app evaluate ./github-app-setup.json --json
 synsec-github-app evaluate ./github-app-setup.json --strict
 ```
 
-The evaluator is offline: it does not contact GitHub, inspect repositories, accept credentials, or mutate App settings. Setup files are limited to 256 KiB. A missing required permission/event exits with code `2`. Least-privilege drift is advisory by default; `--strict` exits with code `3` when extra write grants or unused webhook subscriptions exist. Schema/input failures exit with code `1`.
+When an operator wants actionable recovery guidance rather than the raw comparison, use the same bounded declaration with `recover`:
+
+```sh
+synsec-github-app recover ./github-app-setup.json
+synsec-github-app recover ./github-app-setup.json --json
+synsec-github-app recover ./github-app-setup.json --strict
+```
+
+`recover` converts missing capability into deterministic required operator actions and keeps excessive write grants or unused subscriptions in a separate least-privilege review list. It never applies those actions. In particular, SynSec does not automatically reduce permissions because an extra grant may be required by another operator-approved integration, and it does not automatically broaden permissions because setup changes remain an administrator-controlled GitHub action.
+
+The evaluator and recovery planner are offline: they do not contact GitHub, inspect repositories, accept credentials, or mutate App settings. Setup files are limited to 256 KiB. A missing required permission/event exits with code `2`. Least-privilege drift is advisory by default; `--strict` exits with code `3` when extra write grants or unused webhook subscriptions exist. Schema/input failures exit with code `1`. The exit semantics are identical for `evaluate` and `recover`, which makes either command suitable for deterministic deployment linting.
 
 The file format intentionally has no credential fields. Unknown extra top-level fields are ignored rather than consumed, and errors never reflect their values. Operators should still export only the minimal permission/event declaration shown above rather than passing raw hosting configuration into this tool.
 
@@ -98,9 +108,27 @@ The result separates four cases:
 
 A GitHub `write` grant satisfies a SynSec `read` requirement. The reverse never does. For example, `contents:write` can acquire repository source, but it is still reported as excessive when remediation is disabled because scan-only SynSec does not need repository write access.
 
+## Build a recovery plan programmatically
+
+`buildSynSecGitHubAppSetupRecoveryPlan()` produces bounded, human-readable setup guidance from the same input and feature flags used by the evaluator.
+
+```ts
+import { buildSynSecGitHubAppSetupRecoveryPlan } from "@synsec/github/app-setup";
+
+const plan = buildSynSecGitHubAppSetupRecoveryPlan({
+  permissions: {
+    contents: "read",
+    checks: "read"
+  },
+  events: ["push", "pull_request"]
+});
+```
+
+`requiredActions` contains only changes required for SynSec capability. `leastPrivilegeReview` contains optional review items for permissions/events SynSec does not require. The plan is labeled `operator-guidance-not-runtime-authorization` and contains no mutation callback, GitHub client, installation identity, repository identity, or credential material.
+
 ## Runtime authorization remains authoritative
 
-The setup evaluator is intentionally labeled `setup-comparison-not-runtime-authorization`. It is a configuration UX tool, not proof that a particular installation currently authorizes a repository or that GitHub will issue a usable token.
+The setup evaluator is intentionally labeled `setup-comparison-not-runtime-authorization`. It is a configuration UX tool, not proof that a particular installation currently authorizes a repository or that GitHub will issue a usable token. The recovery planner is similarly guidance-only.
 
 At execution time SynSec still:
 
@@ -117,8 +145,10 @@ This separation prevents a copied setup configuration from becoming an authoriza
 2. Keep remediation PR writes disabled unless the operator intends to use the explicit approval-consuming remediation path.
 3. Print the feature-aware minimum with `synsec-github-app requirements` or build it programmatically with `buildSynSecGitHubAppSetupContract()`.
 4. Configure the GitHub App permissions and events to match that minimum.
-5. Compare the resulting declaration with `synsec-github-app evaluate` or `evaluateSynSecGitHubAppSetup()` and investigate both missing capability and least-privilege drift.
-6. Run deployment preflight from `@synsec/github/app-deployment` before starting the listener.
-7. Keep runtime permission diagnostics enabled; GitHub's issued installation token remains the final permission source of truth.
+5. Compare the resulting declaration with `synsec-github-app evaluate` or `evaluateSynSecGitHubAppSetup()`.
+6. If capability is missing or least-privilege drift exists, run `synsec-github-app recover` or `buildSynSecGitHubAppSetupRecoveryPlan()` to generate operator actions; apply any GitHub-side changes manually through the administrator-controlled setup flow.
+7. Re-run `evaluate --strict` after changes when deployment policy requires exact least privilege.
+8. Run deployment preflight from `@synsec/github/app-deployment` before starting the listener.
+9. Keep runtime permission diagnostics enabled; GitHub's issued installation token remains the final permission source of truth.
 
 Secret rotation is documented separately in `GITHUB_APP_DEPLOYMENT.md`. Setup comparison deliberately contains no secret values and can be safely included in sanitized operator diagnostics, subject to the hosting layer's normal log policy.
