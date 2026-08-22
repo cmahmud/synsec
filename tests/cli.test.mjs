@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +31,39 @@ test("CLI init writes a safe default configuration", async () => {
     assert.equal(parsed.ai.enabled, false);
     assert.equal(parsed.ai.sendSourceContext, false);
     assert.ok(parsed.scanners.includes("opengrep"));
+    assert.ok(parsed.scanners.includes("syft"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI imports SARIF into a native SynSec report", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-sarif-test-"));
+  try {
+    const input = join(root, "external.sarif");
+    const output = join(root, "imported.json");
+    await writeFile(input, JSON.stringify({
+      version: "2.1.0",
+      runs: [{
+        tool: { driver: { name: "FixtureScanner", rules: [{ id: "FIX-1", shortDescription: { text: "Fixture issue" } }] } },
+        results: [{ ruleId: "FIX-1", level: "warning", message: { text: "Fixture issue" } }],
+      }],
+    }), "utf8");
+
+    const { stdout } = await exec(process.execPath, [
+      cli.pathname,
+      "import-sarif",
+      input,
+      "--root",
+      root,
+      "--output",
+      output,
+    ]);
+    assert.match(stdout, /Imported 1 SARIF finding/);
+    const report = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(report.findingCount, 1);
+    assert.equal(report.findings[0].primary.scanner.name, "FixtureScanner");
+    assert.equal(report.findings[0].primary.severity, "medium");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
