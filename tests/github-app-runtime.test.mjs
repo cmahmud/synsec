@@ -25,7 +25,7 @@ async function textFiles(root) {
   return result;
 }
 
-test("local App runtime composes durable stores, maintenance, and an idle worker without persisting credentials", async () => {
+test("local App runtime composes durable stores, maintenance, status, and an idle worker without persisting credentials", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-app-runtime-"));
   const stateDirectory = join(root, "state");
   const workspaceRoot = join(root, "workspaces");
@@ -47,6 +47,10 @@ test("local App runtime composes durable stores, maintenance, and an idle worker
   assert.deepEqual(await runtime.runMaintenance(), {
     expiredReplayRecordsDeleted: 0,
     failedJobs: { inspected: 0, deleted: 0, retainedFailed: 0 },
+  });
+  assert.deepEqual(await runtime.getStatus(), {
+    installations: { total: 0, active: 0, suspended: 0, allRepositories: 0, selectedRepositories: 0 },
+    queue: { total: 0, pending: 0, leased: 0, failed: 0 },
   });
 
   const persisted = (await textFiles(stateDirectory)).join("\n");
