@@ -37,6 +37,19 @@ export interface GitHubCheckResult {
   output: GitHubCheckOutput;
 }
 
+interface GitHubEventPullRequest {
+  number?: unknown;
+  head?: { sha?: unknown; ref?: unknown };
+  base?: { ref?: unknown };
+}
+
+interface GitHubEventPayload {
+  pull_request?: GitHubEventPullRequest;
+  repository?: { full_name?: unknown };
+  after?: unknown;
+  ref?: unknown;
+}
+
 const severityRank: Record<Severity, number> = {
   critical: 5,
   high: 4,
@@ -46,10 +59,18 @@ const severityRank: Record<Severity, number> = {
   unknown: 0,
 };
 
-function parseRepository(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return /^[^/\s]+\/[^/\s]+$/.test(trimmed) ? trimmed : undefined;
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function parseRepository(value: unknown): string | undefined {
+  const trimmed = nonEmptyString(value);
+  return trimmed && /^[^/\s]+\/[^/\s]+$/.test(trimmed) ? trimmed : undefined;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) return undefined;
+  return value;
 }
 
 function parsePullRequestNumber(ref: string | undefined): number | undefined {
@@ -60,15 +81,35 @@ function parsePullRequestNumber(ref: string | undefined): number | undefined {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-export function detectGitHubContext(env: NodeJS.ProcessEnv): GitHubPullRequestContext | undefined {
-  const repository = parseRepository(env.GITHUB_REPOSITORY);
-  const sha = env.GITHUB_SHA?.trim();
+function asGitHubEventPayload(value: unknown): GitHubEventPayload | undefined {
+  return typeof value === "object" && value !== null ? (value as GitHubEventPayload) : undefined;
+}
+
+/**
+ * Resolve the current GitHub Actions repository/commit context without making a network request.
+ *
+ * For pull_request events, the event payload is authoritative for the head SHA. GitHub exposes
+ * GITHUB_SHA as the synthetic merge ref for many PR workflows, which is not the commit a check
+ * run should be attached to. Callers should parse GITHUB_EVENT_PATH and pass the payload here.
+ */
+export function detectGitHubContext(
+  env: NodeJS.ProcessEnv,
+  eventPayload?: unknown,
+): GitHubPullRequestContext | undefined {
+  const event = asGitHubEventPayload(eventPayload);
+  const pullRequest = event?.pull_request;
+  const repository = parseRepository(event?.repository?.full_name) ?? parseRepository(env.GITHUB_REPOSITORY);
+  const ref = nonEmptyString(env.GITHUB_REF) ?? nonEmptyString(event?.ref);
+  const envSha = nonEmptyString(env.GITHUB_SHA);
+  const eventSha = nonEmptyString(event?.after);
+  const pullRequestHeadSha = nonEmptyString(pullRequest?.head?.sha);
+  const sha = pullRequestHeadSha ?? eventSha ?? envSha;
+
   if (!repository || !sha) return undefined;
 
-  const ref = env.GITHUB_REF?.trim() || undefined;
-  const baseRef = env.GITHUB_BASE_REF?.trim() || undefined;
-  const headRef = env.GITHUB_HEAD_REF?.trim() || undefined;
-  const pullRequestNumber = parsePullRequestNumber(ref);
+  const baseRef = nonEmptyString(pullRequest?.base?.ref) ?? nonEmptyString(env.GITHUB_BASE_REF);
+  const headRef = nonEmptyString(pullRequest?.head?.ref) ?? nonEmptyString(env.GITHUB_HEAD_REF);
+  const pullRequestNumber = positiveInteger(pullRequest?.number) ?? parsePullRequestNumber(ref);
 
   return {
     repository,
