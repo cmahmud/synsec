@@ -14,6 +14,7 @@ export interface FindingTriageViewItem {
   updatedAt: string;
   owner?: string;
   note?: string;
+  reviewAt?: string;
   comments: FindingReviewComment[];
 }
 
@@ -32,7 +33,7 @@ export interface FindingTriageView {
 }
 
 /**
- * Compose current finding lifecycle, ownership, and human review comments for UI/API presentation.
+ * Compose current finding lifecycle, ownership, re-review deadlines, and human review comments for UI/API presentation.
  *
  * Only findings present in the supplied report are returned. The view carries title/severity for
  * orientation plus bounded human triage metadata; source locations, source excerpts, scanner
@@ -56,6 +57,7 @@ export function buildFindingTriageView(
         updatedAt: record.updatedAt,
         ...(record.owner ? { owner: record.owner } : {}),
         ...(record.note ? { note: record.note } : {}),
+        ...(record.reviewAt ? { reviewAt: record.reviewAt } : {}),
         comments,
       }];
     })
