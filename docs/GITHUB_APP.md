@@ -15,7 +15,10 @@ SynSec's GitHub App support is a transport and orchestration layer around the sa
 - installation-management events are bookkeeping only and never scan triggers;
 - short-lived RS256 GitHub App JWT creation;
 - installation-token exchange only through `https://api.github.com/app/installations/<id>/access_tokens` with redirects rejected;
+- bounded validation of returned expiration, repository-selection, and permission metadata;
 - token/API errors that do not echo the App JWT.
+
+`@synsec/github/app-token-provider` is the concrete memory-only credential composition for workers. It signs a fresh short-lived App JWT for each repository operation, exchanges it through the fixed GitHub installation-token endpoint, rejects tokens that are too close to expiry, and can enforce purpose-specific permissions before returning the credential. The local runtime requires `contents:read` for acquisition, `checks:write` for publication, and `security_events:write` when SARIF upload is enabled. A `write` grant satisfies a corresponding `read` requirement, but a read-only grant never satisfies a write requirement. Tokens are not cached or persisted.
 
 `@synsec/github/replay-store` provides a durable local delivery-id replay store suitable for a single host or multiple worker processes sharing one filesystem. It uses bounded delivery identifiers, SHA-256-derived filenames, restrictive marker permissions, fully written/fsynced temporary records, and an atomic hard-link claim so two concurrent processes cannot both accept the same delivery or observe a partial canonical record. Retention is bounded between one hour and 30 days, expired markers can be pruned, and malformed existing records fail closed instead of being silently ignored. An accepted claim can also be released only when its exact delivery id and `receivedAt` still match the current unexpired marker; this lets a webhook handler return an error and allow GitHub retry after downstream durable processing fails without letting a stale worker delete a newer re-claim.
 
@@ -29,13 +32,15 @@ SynSec's GitHub App support is a transport and orchestration layer around the sa
 
 `@synsec/github/app-http` provides a framework-free Node HTTP request handler for mounting behind an HTTPS terminator or server. It accepts only POST requests at one configured path, requires JSON plus GitHub signature/event/delivery headers, bounds the raw body to 10 MiB before durable handling, emits `no-store` minimal responses, returns `202` only for queued scans, and does not reflect internal failure details. Durable-processing failures surface as generic `500` responses after replay-claim release so GitHub can retry. TLS termination, server-level connection/request timeouts, health endpoints, and deployment supervision remain hosting responsibilities rather than being silently embedded in this request handler.
 
-`@synsec/github/repository-acquisition` materializes one exact commit from a strict `owner/name` identity through a fixed `https://github.com/<owner>/<repo>.git` transport. It rejects URL-shaped repository identities before URL construction, disables system/global Git configuration and `file://` transport so local rewrite rules cannot redirect the request, keeps the installation token out of argv and repository config, skips Git LFS smudging/submodule initialization, checks out detached `FETCH_HEAD`, verifies the resulting HEAD against the requested SHA, and removes failed temporary workspaces.
+`@synsec/github/repository-acquisition` materializes exact commits from a strict `owner/name` identity through a fixed `https://github.com/<owner>/<repo>.git` transport. It rejects URL-shaped repository identities before URL construction, disables system/global Git configuration and `file://` transport so local rewrite rules cannot redirect the request, keeps the installation token out of argv and repository config, skips Git LFS smudging/submodule initialization, checks out detached `FETCH_HEAD`, verifies each resulting HEAD against the requested SHA, and removes failed temporary workspaces. Pull-request acquisition can materialize the exact queued head and exact queued base into separate isolated workspaces with all-or-nothing cleanup.
 
-`@synsec/github/app-worker` consumes at most one leased queue job, rechecks installation authorization at execution time, acquires a short-lived token only for transport, scans the exact-commit workspace through an injected repository-scan runner, requires the resulting report to bind to the queued head SHA, obtains a fresh publication token, publishes through an injected GitHub transport, and acknowledges the queue only after publication succeeds. A repository removed or suspended after queueing is failed before credentials or source are acquired. Other worker failures return the job to the bounded retry queue.
+`@synsec/github/app-worker` consumes at most one leased queue job, rechecks installation authorization at execution time, acquires a short-lived token only for transport, verifies exact head/base acquisition provenance, scans through an injected repository-scan runner, requires the resulting head report to bind to the queued head SHA, obtains a fresh publication token, publishes through an injected GitHub transport, and acknowledges the queue only after publication succeeds. A repository removed or suspended after queueing is failed before credentials or source are acquired. Other worker failures return the job to the bounded retry queue.
 
-`@synsec/github/app-worker-runner` is the production-oriented local composition over that worker boundary. It runs the existing `runScanEngine()` against the acquired exact-commit workspace, builds a check from the normalized queue repository/head context, publishes through the fixed Checks API transport, and can upload the same commit-bound report as SARIF. Pull-request jobs currently use a full repository scan at this layer; SynSec does not invent a changed-file baseline from a branch name when the exact base commit has not also been acquired.
+`@synsec/github/app-worker-runner` is the production-oriented local composition over that worker boundary. Push jobs run the existing `runScanEngine()` against the exact acquired head. Pull-request jobs first scan the exact queued base commit, require that baseline report to identify the queued base SHA, then scan the exact queued head using that report as the deterministic baseline. The resulting head report must identify the queued head SHA before fixed-host Checks/SARIF publication. These hosted PR scans are still full-repository scans at both commits; SynSec does not approximate changed-file execution from a branch name or perform an unbounded history fetch.
 
-These primitives now form an end-to-end local hosting chain, but they still do **not** constitute a complete hosted GitHub App product by themselves. TLS/runtime deployment, concrete App-JWT/private-key configuration, process/container isolation, operational secret management, setup UX, and shared transactional persistence for multi-host deployments remain required.
+`@synsec/github/app-runtime` composes the single-host local service primitives without opening a listener. It creates separate durable state and scanner-workspace directory trees, wires replay/installation/queue stores, the memory-only credential provider, the bounded webhook handler, and the configured worker. State and workspaces are forbidden from overlapping so repository source is not placed inside durable authorization/queue storage. The caller still owns TLS/listener binding, process/container isolation, network policy, deployment supervision, and operational secret injection/rotation.
+
+These primitives now form an end-to-end local hosting chain, but they still do **not** constitute a complete production hosted GitHub App service by themselves. Production TLS/runtime deployment, process/container isolation, operational secret management, setup UX, and shared transactional persistence for multi-host deployments remain required.
 
 ## Webhook boundary
 
@@ -49,31 +54,30 @@ The preferred local HTTP boundary is `createGitHubAppWebhookHttpHandler()` mount
 
 Queue records are commit-pinned descriptors, not checkout instructions supplied by repository content. `runNextGitHubAppScanJob()` rechecks authorization after leasing so stale queued work cannot outlive a repository removal or installation suspension.
 
-Repository acquisition accepts only a strict validated `owner/name`, installation id context supplied by the worker, and exact commit SHA. The acquisition transport is fixed to `github.com`, and Git system/global configuration is disabled to prevent `url.*.insteadOf` or other host-local configuration from silently widening the destination. Missing/unavailable commit provenance is a job failure rather than permission to substitute the default branch, a nearby commit, a webhook clone URL, or a scanner-suggested URL.
+Repository acquisition accepts only a strict validated `owner/name`, installation context supplied by the worker, and exact commit SHAs. The acquisition transport is fixed to `github.com`, and Git system/global configuration is disabled to prevent `url.*.insteadOf` or other host-local configuration from silently widening the destination. Missing/unavailable head or base provenance is a job failure rather than permission to substitute the default branch, a nearby commit, a webhook clone URL, or a scanner-suggested URL.
 
-The scanner receives the checked-out workspace and queue descriptor, not the installation token. Before publication, the worker requires `report.target.commitSha` to equal the queued head SHA and obtains a fresh installation token for the publication operation. `runConfiguredGitHubAppWorkerOnce()` then uses the same repository scan engine as the CLI/Action and fixed-host Checks/SARIF publishers. Successful workspace cleanup occurs after scan/publication handling.
+The scanner receives checked-out workspaces and the queue descriptor, not the installation token. For pull requests, the exact base report is commit-bound before it can become the head baseline. Before publication, the worker requires `report.target.commitSha` to equal the queued head SHA and obtains a fresh installation token for the publication operation. `runConfiguredGitHubAppWorkerOnce()` then uses the same repository scan engine as the CLI/Action and fixed-host Checks/SARIF publishers. Successful workspace cleanup occurs after scan/publication handling.
 
 Leases prevent normal duplicate processing but the local queue is not a multi-host transactional lock. Horizontally scaled workers should use a shared queue with atomic claim/lease semantics.
 
-## Authentication boundary
+## Authentication and permission boundary
 
 `createGitHubAppJwt()` signs a short-lived RS256 token from the configured App id and private key. The private key belongs to the hosted transport/runtime and must never be exposed to scanners, reports, repository code, workflow prompts, logs, or persisted finding evidence.
 
-`createGitHubInstallationToken()` exchanges that JWT at GitHub's fixed API host. It requests no additional repository selection or permission expansion in the token request body. Resulting installation tokens should be kept only for the operation lifetime and passed only to narrowly scoped transport functions. Repository acquisition supplies its token to Git only through a child-process environment and disables inherited Git configuration; publication likewise keeps credentials outside scanner inputs and reports.
+`createGitHubInstallationToken()` exchanges that JWT at GitHub's fixed API host. It requests no additional repository selection or permission expansion in the token request body. `createGitHubAppInstallationTokenProvider()` signs/exchanges afresh for each operation and keeps the resulting installation token in memory only. Repository acquisition supplies its token to Git only through a child-process environment and disables inherited Git configuration; publication likewise keeps credentials outside scanner inputs and reports.
 
-A hosted service should validate its configured GitHub App permissions explicitly and fail closed when required permissions are absent rather than requesting broader permissions dynamically.
+The local runtime validates GitHub-reported permission metadata before giving a credential to a worker operation. Missing or insufficient grants fail with the required permission names rather than falling through to a later scanner or publication failure. This is a runtime diagnostic, not a setup UI, and SynSec does not dynamically request broader permissions.
 
 ## Required hosted-service work
 
 A production hosted App still needs:
 
-1. TLS/runtime deployment around the bounded HTTP handler, with request/server timeouts and operational health handling;
-2. concrete App-JWT/private-key configuration and installation-token providers for the worker;
-3. exact-base acquisition/baseline composition for changed-file PR scans when that optimization is enabled;
-4. process/container workspace isolation around scans, including OS CPU/memory limits and network policy;
-5. explicit retention policy for reports, failed queue records, temporary artifacts, and operator diagnostics;
-6. installation/setup UX, permission diagnostics, and recovery for configuration errors;
-7. operational rotation for webhook secrets and App private keys;
-8. transactional shared replay/installation/queue backends when horizontally scaled replicas do not share one durable filesystem.
+1. TLS/listener deployment around the bounded HTTP handler, with request/server timeouts, health handling, and supervision;
+2. process/container workspace isolation around scans, including OS CPU/memory limits and network policy;
+3. native changed-file execution for hosted PR scans if that optimization is enabled; exact base/head baseline provenance is already available and must remain authoritative;
+4. explicit retention policy for reports, failed queue records, temporary artifacts, and operator diagnostics;
+5. installation/setup UX, permission diagnostics/recovery, and operator-facing configuration validation;
+6. operational secret injection and rotation for webhook secrets and App private keys;
+7. transactional shared replay/installation/queue backends when horizontally scaled replicas do not share one durable filesystem.
 
-Until those pieces exist, the GitHub Action remains the complete executable integration path and the App modules should be treated as tested hosting foundations rather than a deployable hosted service.
+Until those pieces exist, the GitHub Action remains the complete packaged integration path and the App modules should be treated as tested single-host hosting foundations rather than a production multi-tenant service.
