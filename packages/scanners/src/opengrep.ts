@@ -7,7 +7,7 @@ import { asArray, asRecord, asString, commandAvailability, identifiersFrom, norm
 function metadataIdentifiers(metadata: Record<string, unknown> | undefined): string[] {
   if (!metadata) return [];
   const values: string[] = [];
-  for (const key of ["cwe", "cve", "owasp"]) {
+  for (const key of ["cwe", "cve"]) {
     const value = metadata[key];
     if (typeof value === "string") values.push(value);
     else values.push(...strings(value));
@@ -53,6 +53,7 @@ export function parseOpengrepJson(raw: string): Finding[] {
       metadata: {
         technology: metadata?.technology,
         references: metadata?.references,
+        owasp: metadata?.owasp,
         likelihood: metadata?.likelihood,
         impact: metadata?.impact,
         confidence: metadata?.confidence,
