@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CorrelatedFinding, Finding } from "@synsec/core";
 import type { SynSecReport } from "./index.js";
@@ -150,5 +150,6 @@ export function renderMarkdown(report: SynSecReport): string {
 
 export async function writeMarkdown(path: string, report: SynSecReport): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, renderMarkdown(report), "utf8");
+  await writeFile(path, renderMarkdown(report), { encoding: "utf8", mode: 0o600 });
+  await chmod(path, 0o600).catch(() => undefined);
 }
