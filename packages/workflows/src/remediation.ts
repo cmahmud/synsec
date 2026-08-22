@@ -128,6 +128,43 @@ function proposalDigest(input: Omit<RemediationProposal, "proposalId">): string 
   return digest(canonical);
 }
 
+function assertProposalIntegrity(proposal: RemediationProposal): void {
+  if (proposal.version !== 1 || proposal.requiresApproval !== true || proposal.externalNetworkAssessment !== "forbidden") {
+    throw new Error("Remediation proposal has an invalid safety contract.");
+  }
+  if (proposal.changes.length === 0 || proposal.changes.length > MAX_CHANGES) {
+    throw new Error("Remediation proposal has an invalid change count.");
+  }
+  let totalPatchBytes = 0;
+  const seenPaths = new Set<string>();
+  for (const change of proposal.changes) {
+    const path = safePath(change.path);
+    if (path !== change.path || seenPaths.has(path)) throw new Error("Remediation proposal contains invalid or duplicate paths.");
+    seenPaths.add(path);
+    if (change.operation !== "create" && change.operation !== "modify") {
+      throw new Error("Remediation proposal contains an unsupported change operation.");
+    }
+    const patch = boundedPatch(change.patch);
+    totalPatchBytes += Buffer.byteLength(patch, "utf8");
+    if (totalPatchBytes > MAX_TOTAL_PATCH_BYTES) throw new Error("Remediation proposal exceeds the total patch limit.");
+    if (digest(patch) !== change.patchSha256) {
+      throw new Error("Remediation patch contents no longer match the approved patch hash.");
+    }
+  }
+  if (proposalDigest({
+    version: proposal.version,
+    workflowId: proposal.workflowId,
+    targetCommitSha: commitSha(proposal.targetCommitSha),
+    findingIds: proposal.findingIds.map(findingId),
+    summary: proposal.summary,
+    changes: proposal.changes,
+    requiresApproval: true,
+    externalNetworkAssessment: "forbidden",
+  }) !== proposal.proposalId) {
+    throw new Error("Remediation proposal contents no longer match its proposal id.");
+  }
+}
+
 /**
  * Build an immutable, approval-required remediation proposal for one exact repository commit.
  *
@@ -196,18 +233,7 @@ export function approveRemediationProposal(
   if (input.proposalId !== proposal.proposalId) {
     throw new Error("Remediation approval does not match the proposed patch set.");
   }
-  if (proposalDigest({
-    version: proposal.version,
-    workflowId: proposal.workflowId,
-    targetCommitSha: proposal.targetCommitSha,
-    findingIds: proposal.findingIds,
-    summary: proposal.summary,
-    changes: proposal.changes,
-    requiresApproval: true,
-    externalNetworkAssessment: "forbidden",
-  }) !== proposal.proposalId) {
-    throw new Error("Remediation proposal contents no longer match its proposal id.");
-  }
+  assertProposalIntegrity(proposal);
   const approvedBy = input.approvedBy.trim();
   if (!approvedBy || approvedBy.length > MAX_APPROVER_LENGTH || /[\r\n\0]/.test(approvedBy)) {
     throw new Error(`Remediation approver must be a single-line identifier up to ${MAX_APPROVER_LENGTH} characters.`);
@@ -229,7 +255,7 @@ export function authorizeRemediationExecution(input: {
   approval: RemediationApproval;
   currentHeadSha: string;
 }): ApprovedRemediationExecution {
-  if (input.approval.proposalId !== input.proposal.proposalId) {
+  if (input.approval.version !== 1 || input.approval.proposalId !== input.proposal.proposalId) {
     throw new Error("Remediation approval is for a different proposal.");
   }
   approveRemediationProposal(input.proposal, {
