@@ -25,7 +25,7 @@ export interface GitHubReportPublicationResult {
   publication: GitHubCheckPublication;
 }
 
-function sameCommit(reportSha: string, contextSha: string): boolean {
+export function reportMatchesGitHubCommit(reportSha: string, contextSha: string): boolean {
   const report = reportSha.trim().toLowerCase();
   const context = contextSha.trim().toLowerCase();
   if (!report || !context) return false;
@@ -52,7 +52,7 @@ export async function publishSynSecReportToGitHub(
   }
 
   const reportCommitSha = report.target.commitSha?.trim();
-  if (reportCommitSha && !sameCommit(reportCommitSha, context.sha)) {
+  if (reportCommitSha && !reportMatchesGitHubCommit(reportCommitSha, context.sha)) {
     throw new Error("SynSec report commit does not match the GitHub commit selected for publication.");
   }
 
