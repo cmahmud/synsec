@@ -78,3 +78,21 @@ test("publication orchestration fails before transport when GitHub context is mi
   );
   assert.equal(called, false);
 });
+
+test("publication orchestration rejects a report generated for a different commit", async () => {
+  let called = false;
+  const stale = report();
+  stale.target.commitSha = "old-head-sha";
+
+  await assert.rejects(
+    () => publishSynSecReportToGitHub(stale, "token", {
+      env: { GITHUB_REPOSITORY: "cmahmud/synsec", GITHUB_SHA: "new-head-sha" },
+      fetch: async () => {
+        called = true;
+        throw new Error("transport should not run");
+      },
+    }),
+    /report commit does not match the GitHub commit/,
+  );
+  assert.equal(called, false);
+});
