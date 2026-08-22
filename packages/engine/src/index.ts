@@ -11,11 +11,18 @@ import {
   packageNameFromPurl,
   type RepositoryIndex,
 } from "@synsec/repository/analysis";
+import { buildCallGraph } from "@synsec/repository/call-graph";
 import { buildModuleGraph } from "@synsec/repository/module-graph";
 import {
   buildIncrementalScanPlan,
   type IncrementalScanPlan,
 } from "@synsec/repository/incremental-plan";
+import { resolveRouteEntrypoints } from "@synsec/repository/route-entrypoints";
+import {
+  findingRouteSinkFlowEvidence,
+  repositoryRouteSinkFlowContexts,
+  type RouteSinkFlowContext,
+} from "@synsec/repository/route-sink-flow";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
 import { builtInScanners, scannerSupportsNativeChangedFiles } from "@synsec/scanners";
 
@@ -198,23 +205,33 @@ function enrichDependencyUsage(scans: readonly ScanResult[], index: RepositoryIn
   }));
 }
 
-function enrichRepositorySecurityContext(scans: readonly ScanResult[], index: RepositoryIndex): ScanResult[] {
+function enrichRepositorySecurityContext(
+  scans: readonly ScanResult[],
+  index: RepositoryIndex,
+  routeFlows: readonly RouteSinkFlowContext[],
+): ScanResult[] {
   return scans.map((scan) => ({
     ...scan,
     findings: scan.findings.map((finding) => {
       // Secret findings intentionally stay on the narrowest metadata boundary.
       if (finding.category === "secret" || !finding.location?.path) return finding;
       const context = findingRepositoryContext(index, finding.location.path, finding.location.startLine);
-      if (
-        context.nearbyRoutes.length === 0 &&
-        context.nearbyAuthSignals.length === 0 &&
-        context.nearbySinks.length === 0
-      ) return finding;
+      const routeFlow = findingRouteSinkFlowEvidence(
+        routeFlows,
+        finding.location.path,
+        finding.location.startLine,
+      );
+      const hasContext =
+        context.nearbyRoutes.length > 0 ||
+        context.nearbyAuthSignals.length > 0 ||
+        context.nearbySinks.length > 0;
+      if (!hasContext && routeFlow.length === 0) return finding;
       return {
         ...finding,
         metadata: {
           ...(finding.metadata ?? {}),
-          repositoryContext: context,
+          ...(hasContext ? { repositoryContext: context } : {}),
+          ...(routeFlow.length > 0 ? { routeFlow } : {}),
         },
       };
     }),
@@ -337,6 +354,13 @@ export async function runScanEngine(input: {
   if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
 
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
+  let routeFlows: RouteSinkFlowContext[] = [];
+  if (repositoryIndex.routes.length > 0 && repositoryIndex.sinks.length > 0) {
+    const callGraph = await buildCallGraph(root, inventory.files);
+    const entrypoints = resolveRouteEntrypoints(repositoryIndex, callGraph);
+    routeFlows = repositoryRouteSinkFlowContexts(repositoryIndex, entrypoints, callGraph);
+  }
+
   let requestedScope: { base: string; files: string[] } | undefined;
   if (input.changedFiles !== undefined) {
     if (!input.changedOnly) throw new Error("Externally supplied changed files require changedOnly=true.");
@@ -359,7 +383,7 @@ export async function runScanEngine(input: {
 
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
   const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex);
-  const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex);
+  const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex, routeFlows);
   const scans = changedScope ? scopeScansToChangedFiles(enrichedScans, root, changedScope.files) : enrichedScans;
   const failures = result.failures;
   if (scans.length === 0) {
