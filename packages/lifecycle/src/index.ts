@@ -16,6 +16,8 @@ export interface FindingLifecycleRecord {
   state: FindingState;
   updatedAt: string;
   note?: string;
+  /** Optional human/team assignment metadata. This is triage state, not scanner evidence. */
+  owner?: string;
   reportId?: string;
   /** Last source path observed for scope-aware incremental reconciliation. */
   lastSeenPath?: string;
@@ -64,6 +66,7 @@ const MAX_LIFECYCLE_BYTES = 16 * 1024 * 1024;
 const MAX_LIFECYCLE_RECORDS = 100_000;
 const MAX_FINGERPRINT_LENGTH = 512;
 const MAX_NOTE_LENGTH = 10_000;
+const MAX_OWNER_LENGTH = 255;
 const MAX_REPORT_ID_LENGTH = 512;
 const MAX_PATH_LENGTH = 4096;
 
@@ -82,6 +85,10 @@ function boundedString(value: unknown, maxLength: number, required = false): val
   return value.length <= maxLength;
 }
 
+function validOwner(value: unknown): value is string {
+  return boundedString(value, MAX_OWNER_LENGTH, true) && !/[\r\n\0]/.test(value);
+}
+
 function validTimestamp(value: unknown): value is string {
   return boundedString(value, 128, true) && Number.isFinite(Date.parse(value));
 }
@@ -92,6 +99,7 @@ function isLifecycleRecord(value: unknown, key: string): value is FindingLifecyc
   if (!boundedString(record.fingerprint, MAX_FINGERPRINT_LENGTH, true) || record.fingerprint !== key) return false;
   if (!isFindingState(record.state) || !validTimestamp(record.updatedAt)) return false;
   if (record.note !== undefined && !boundedString(record.note, MAX_NOTE_LENGTH)) return false;
+  if (record.owner !== undefined && !validOwner(record.owner)) return false;
   if (record.reportId !== undefined && !boundedString(record.reportId, MAX_REPORT_ID_LENGTH, true)) return false;
   if (record.lastSeenPath !== undefined && !boundedString(record.lastSeenPath, MAX_PATH_LENGTH, true)) return false;
   return true;
@@ -164,11 +172,50 @@ export function setFindingState(
   };
   const note = options.note?.trim() || previous?.note;
   if (note) record.note = note;
+  if (previous?.owner) record.owner = previous.owner;
   const reportId = options.reportId ?? previous?.reportId;
   if (reportId) record.reportId = reportId;
   if (previous?.lastSeenPath) record.lastSeenPath = previous.lastSeenPath;
   updated.records[fingerprint] = record;
   return updated;
+}
+
+/**
+ * Assign or clear human ownership without changing scanner-derived finding state.
+ * The owner is bounded triage metadata only; control characters are rejected so the value is safe
+ * for deterministic text/JSON presentation. Pass undefined/null/blank to clear an assignment.
+ */
+export function setFindingOwner(
+  store: FindingLifecycleStore,
+  fingerprint: string,
+  owner?: string | null,
+  updatedAt = new Date().toISOString(),
+): FindingLifecycleStore {
+  const key = fingerprint.trim();
+  if (!key) throw new Error("Finding fingerprint cannot be empty.");
+  const previous = store.records[key];
+  if (!previous) throw new Error(`Finding lifecycle record does not exist: ${key}`);
+  if (!validTimestamp(updatedAt)) throw new Error("Finding ownership timestamp must be a valid timestamp.");
+
+  const normalizedOwner = owner?.trim() || undefined;
+  if (normalizedOwner !== undefined && !validOwner(normalizedOwner)) {
+    throw new Error(`Finding owner must be at most ${MAX_OWNER_LENGTH} characters and contain no control line breaks.`);
+  }
+  if (previous.owner === normalizedOwner) return store;
+
+  const nextRecord: FindingLifecycleRecord = {
+    ...previous,
+    updatedAt,
+  };
+  if (normalizedOwner) nextRecord.owner = normalizedOwner;
+  else delete nextRecord.owner;
+  return {
+    schemaVersion: 1,
+    records: {
+      ...store.records,
+      [key]: nextRecord,
+    },
+  };
 }
 
 function autoTransition(previous: FindingLifecycleRecord | undefined, present: boolean): FindingState | undefined {
@@ -225,6 +272,7 @@ export function reconcileLifecycle(
     if (present || absenceCovered) record.reportId = report.reportId;
     else if (prior?.reportId) record.reportId = prior.reportId;
     if (prior?.note) record.note = prior.note;
+    if (prior?.owner) record.owner = prior.owner;
     const lastSeenPath = current?.primary.location?.path ?? prior?.lastSeenPath;
     if (lastSeenPath) record.lastSeenPath = lastSeenPath;
     next.records[fingerprint] = record;
