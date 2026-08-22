@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { SynSecConfig } from "@synsec/config";
-import type { Finding, ScanResult, ScanTarget, Severity } from "@synsec/core";
+import type { Finding, ScannerExecutionScope, ScanResult, ScanTarget, Severity } from "@synsec/core";
 import { buildReport, type SynSecReport } from "@synsec/report";
 import { applyEvidenceAwareBaseline } from "@synsec/report/baseline";
 import { inventoryRepository } from "@synsec/repository";
@@ -17,7 +17,7 @@ import {
   type IncrementalScanPlan,
 } from "@synsec/repository/incremental-plan";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
-import { builtInScanners } from "@synsec/scanners";
+import { builtInScanners, scannerSupportsNativeChangedFiles } from "@synsec/scanners";
 
 export interface ScannerStatus {
   id: string;
@@ -50,6 +50,7 @@ const severityRank: Record<Severity, number> = {
   info: 1,
   unknown: 0,
 };
+const EXECUTION_INTERPRETATION = "scanner-execution-scope-not-coverage-proof" as const;
 
 function sanitizeRemoteUrl(value: string): string {
   try {
@@ -246,6 +247,15 @@ export async function scannerStatuses(config: SynSecConfig): Promise<ScannerStat
   return statuses;
 }
 
+function defaultScannerExecutionScope(scannerId: string, changedFiles?: readonly string[]): ScannerExecutionScope {
+  if (!changedFiles) return { mode: "repository", interpretation: EXECUTION_INTERPRETATION };
+  return {
+    mode: scannerSupportsNativeChangedFiles(scannerId) ? "changed-files-native" : "repository-then-filtered",
+    changedFileCount: changedFiles.length,
+    interpretation: EXECUTION_INTERPRETATION,
+  };
+}
+
 async function runSelectedScanners(
   target: ScanTarget,
   config: SynSecConfig,
@@ -270,7 +280,10 @@ async function runSelectedScanners(
         if (!scanner) return;
         try {
           const result = await scanner.scan({ target, timeoutMs: config.timeoutMs, changedFiles });
-          scans.push(result);
+          scans.push({
+            ...result,
+            executionScope: result.executionScope ?? defaultScannerExecutionScope(scanner.id, changedFiles),
+          });
         } catch (error) {
           failures.push({
             scanner: scanner.id,
