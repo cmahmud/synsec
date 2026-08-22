@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ReportHistory, ReportHistoryPoint } from "./history.js";
 import { buildHistoryFromStore } from "./history-store.js";
@@ -119,6 +119,7 @@ export async function writeHistoryHtml(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, renderHistoryHtml(history, options), { encoding: "utf8", mode: 0o600 });
+  await chmod(path, 0o600).catch(() => undefined);
 }
 
 export async function writeHistoryHtmlFromStore(
