@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assertWorkflowCapabilitiesAllowed,
   assertWorkflowSourceContextAllowed,
   builtInWorkflows,
   getWorkflow,
@@ -44,6 +45,16 @@ test("secrets workflow prohibits source-context transmission", () => {
     /does not permit source context/,
   );
   assert.doesNotThrow(() => assertWorkflowSourceContextAllowed(workflow, false));
+});
+
+test("workflow capability checks reject undeclared access", () => {
+  const workflow = getWorkflow("report-writing");
+  assert.ok(workflow);
+  assert.doesNotThrow(() => assertWorkflowCapabilitiesAllowed(workflow, ["read-normalized-findings", "read-lifecycle-state"]));
+  assert.throws(
+    () => assertWorkflowCapabilitiesAllowed(workflow, ["read-bounded-source-context", "propose-remediation"]),
+    /read-bounded-source-context, propose-remediation/,
+  );
 });
 
 test("fix verification workflow requires deterministic report and lifecycle evidence", () => {
