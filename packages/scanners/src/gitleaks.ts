@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import type { Finding, ScanResult } from "@synsec/core";
+import type { Finding, ScannerExecutionScope, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asNumber, asRecord, asString, commandAvailability, relativeLike, safeJson } from "./utils.js";
 
 const MAX_CHANGED_FILES = 500;
+const EXECUTION_INTERPRETATION = "scanner-execution-scope-not-coverage-proof" as const;
 
 export function normalizeGitleaksChangedFiles(files: readonly string[] | undefined): string[] | undefined {
   if (files === undefined) return undefined;
@@ -136,6 +137,11 @@ export class GitleaksAdapter implements ScannerAdapter {
         target: context.target,
         findings: [],
         diagnostics: ["Changed-file scope is empty; Gitleaks was not invoked."],
+        executionScope: {
+          mode: "changed-files-native",
+          changedFileCount: 0,
+          interpretation: EXECUTION_INTERPRETATION,
+        },
       };
     }
 
@@ -145,6 +151,13 @@ export class GitleaksAdapter implements ScannerAdapter {
       let mode: "git" | "dir";
       let target: string;
       let parseRoot = context.target.path;
+      let executionScope: ScannerExecutionScope = changedFiles
+        ? {
+            mode: "changed-files-native",
+            changedFileCount: changedFiles.length,
+            interpretation: EXECUTION_INTERPRETATION,
+          }
+        : { mode: "repository", interpretation: EXECUTION_INTERPRETATION };
       const diagnostics: string[] = [];
 
       if (changedFiles) {
@@ -159,6 +172,11 @@ export class GitleaksAdapter implements ScannerAdapter {
           const gitRepo = await stat(join(context.target.path, ".git")).then(() => true).catch(() => false);
           mode = gitRepo ? "git" : "dir";
           target = context.target.path;
+          executionScope = {
+            mode: "repository-then-filtered",
+            changedFileCount: changedFiles.length,
+            interpretation: EXECUTION_INTERPRETATION,
+          };
           diagnostics.push(`Gitleaks changed-file staging was unsafe or ambiguous (${staged.reason}); fell back to a full repository scan.`);
         }
       } else {
@@ -182,6 +200,7 @@ export class GitleaksAdapter implements ScannerAdapter {
         target: context.target,
         findings: parseGitleaksJson(raw, parseRoot),
         diagnostics,
+        executionScope,
       };
     } finally {
       await rm(temp, { recursive: true, force: true });
