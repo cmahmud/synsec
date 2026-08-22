@@ -14,12 +14,19 @@ function signature(body) {
 
 class MemoryReplayStore {
   constructor() {
-    this.ids = new Set();
+    this.claims = new Map();
   }
   async claim(deliveryId) {
-    const accepted = !this.ids.has(deliveryId);
-    this.ids.add(deliveryId);
-    return { accepted, deliveryId, receivedAt: "2026-08-22T18:40:00.000Z" };
+    const existing = this.claims.get(deliveryId);
+    if (existing) return { accepted: false, deliveryId, receivedAt: existing };
+    const receivedAt = "2026-08-22T18:40:00.000Z";
+    this.claims.set(deliveryId, receivedAt);
+    return { accepted: true, deliveryId, receivedAt };
+  }
+  async release(deliveryId, receivedAt) {
+    if (this.claims.get(deliveryId) !== receivedAt) return false;
+    this.claims.delete(deliveryId);
+    return true;
   }
 }
 
@@ -72,6 +79,31 @@ class MemoryQueue {
       status: "pending",
     };
   }
+}
+
+function pullRequestBody() {
+  return Buffer.from(JSON.stringify({
+    action: "synchronize",
+    installation: { id: 7 },
+    repository: { full_name: "cmahmud/synsec", clone_url: "https://attacker.invalid/repo.git" },
+    number: 2,
+    pull_request: {
+      head: { sha: headSha },
+      base: { sha: baseSha },
+    },
+  }));
+}
+
+async function authorizedInstallationStore() {
+  const store = new MemoryInstallationStore();
+  await store.put({
+    installationId: 7,
+    accountLogin: "cmahmud",
+    accountType: "User",
+    repositorySelection: "selected",
+    repositories: ["cmahmud/synsec"],
+  });
+  return store;
 }
 
 test("unified handler synchronizes installation state without enqueueing a scan", async () => {
@@ -138,25 +170,9 @@ test("duplicate installation delivery does not mutate authorization state twice"
 
 test("authorized pull request delivery queues exact commit provenance", async () => {
   const replayStore = new MemoryReplayStore();
-  const installationStore = new MemoryInstallationStore();
+  const installationStore = await authorizedInstallationStore();
   const queue = new MemoryQueue();
-  await installationStore.put({
-    installationId: 7,
-    accountLogin: "cmahmud",
-    accountType: "User",
-    repositorySelection: "selected",
-    repositories: ["cmahmud/synsec"],
-  });
-  const body = Buffer.from(JSON.stringify({
-    action: "synchronize",
-    installation: { id: 7 },
-    repository: { full_name: "cmahmud/synsec", clone_url: "https://attacker.invalid/repo.git" },
-    number: 2,
-    pull_request: {
-      head: { sha: headSha },
-      base: { sha: baseSha },
-    },
-  }));
+  const body = pullRequestBody();
 
   const result = await handleGitHubAppWebhook({
     body,
@@ -181,4 +197,41 @@ test("authorized pull request delivery queues exact commit provenance", async ()
     pullRequestNumber: 2,
   });
   assert.equal(JSON.stringify(queue.inputs[0]).includes("attacker.invalid"), false);
+});
+
+test("durable dispatch failure releases the accepted replay claim so GitHub can retry", async () => {
+  const replayStore = new MemoryReplayStore();
+  const installationStore = await authorizedInstallationStore();
+  const body = pullRequestBody();
+  let attempts = 0;
+  const queue = {
+    async enqueue(input) {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary queue failure");
+      return {
+        version: 1,
+        jobId: "1".repeat(32),
+        ...input,
+        createdAt: "2026-08-22T18:40:00.000Z",
+        attempts: 0,
+        status: "pending",
+      };
+    },
+  };
+  const input = {
+    body,
+    signatureHeader: signature(body),
+    webhookSecret: secret,
+    eventName: "pull_request",
+    deliveryId: "delivery-retry-1",
+    replayStore,
+    installationStore,
+    queue,
+  };
+
+  await assert.rejects(() => handleGitHubAppWebhook(input), /temporary queue failure/);
+  assert.equal(replayStore.claims.has("delivery-retry-1"), false);
+  const retried = await handleGitHubAppWebhook(input);
+  assert.equal(retried.status, "queued");
+  assert.equal(attempts, 2);
 });
