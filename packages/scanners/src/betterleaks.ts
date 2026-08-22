@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
 import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
@@ -56,11 +56,25 @@ export class BetterleaksAdapter implements ScannerAdapter {
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
+    if (context.changedFiles && context.changedFiles.length === 0) {
+      return {
+        scanner: this.id,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        target: context.target,
+        findings: [],
+        diagnostics: ["Changed-file scope is empty; Betterleaks was not invoked."],
+      };
+    }
+
     const temp = await mkdtemp(join(tmpdir(), "synsec-betterleaks-"));
     const report = join(temp, "report.json");
     try {
       const gitRepo = await stat(join(context.target.path, ".git")).then(() => true).catch(() => false);
-      const mode = gitRepo ? "git" : "dir";
+      const mode = context.changedFiles ? "dir" : gitRepo ? "git" : "dir";
+      const targets = context.changedFiles
+        ? context.changedFiles.map((path) => resolve(context.target.path, path))
+        : [context.target.path];
       const output = await runProcess(
         "betterleaks",
         [
@@ -70,7 +84,7 @@ export class BetterleaksAdapter implements ScannerAdapter {
           "--redact=100",
           "--no-banner",
           "--exit-code", "0",
-          context.target.path,
+          ...targets,
         ],
         { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
       );
