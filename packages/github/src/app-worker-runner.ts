@@ -8,7 +8,7 @@ import {
   type GitHubInstallationTokenPurpose,
 } from "./app-worker.js";
 import {
-  acquireGitHubRepositoryCommit,
+  acquireGitHubRepositoryScanTarget,
   type GitHubRepositoryAcquisitionOptions,
 } from "./repository-acquisition.js";
 import { buildGitHubCheck, type GitHubCheckThreshold, type GitHubPullRequestContext } from "./index.js";
@@ -24,7 +24,7 @@ export interface ConfiguredGitHubAppWorkerOptions extends GitHubPublisherOptions
   publishSarif?: boolean;
   toolVersion?: string;
   scan?: typeof runScanEngine;
-  acquire?: typeof acquireGitHubRepositoryCommit;
+  acquire?: typeof acquireGitHubRepositoryScanTarget;
   acquisitionOptions?: GitHubRepositoryAcquisitionOptions;
 }
 
@@ -32,29 +32,40 @@ function contextForJob(job: {
   repository: string;
   headSha: string;
   event: "push" | "pull_request";
+  baseSha?: string;
   pullRequestNumber?: number;
 }): GitHubPullRequestContext {
   return {
     repository: job.repository,
     sha: job.headSha,
+    ...(job.event === "pull_request" && job.baseSha ? { baseSha: job.baseSha } : {}),
     ...(job.event === "pull_request" && job.pullRequestNumber
       ? { pullRequestNumber: job.pullRequestNumber }
       : {}),
   };
 }
 
+function requireCommit(reportCommitSha: string | undefined, expectedSha: string, label: string): void {
+  const actual = reportCommitSha?.trim().toLowerCase();
+  if (!actual || actual !== expectedSha.toLowerCase()) {
+    throw new Error(`${label} report commit does not match the queued GitHub commit SHA.`);
+  }
+}
+
 /**
  * Execute one configured hosted-App job through SynSec's existing repository scan engine.
  *
- * Hosted jobs intentionally use a full repository scan at this layer. PR changed-file baselines
- * require separately acquiring the exact base commit and are not approximated from a branch name.
- * Publication uses only the normalized queue repository/head identity and fixed GitHub API hosts.
+ * Push jobs scan the exact acquired head commit. Pull-request jobs additionally acquire and scan
+ * the exact queued base commit, bind that report to baseSha, and use it as the deterministic
+ * baseline for the exact head scan. Both remain full-repository scans at this layer: SynSec does
+ * not approximate changed-file scope from a branch name or perform an unbounded history fetch.
+ * Publication uses only normalized queue repository/commit identity and fixed GitHub API hosts.
  */
 export async function runConfiguredGitHubAppWorkerOnce(
   options: ConfiguredGitHubAppWorkerOptions,
 ): Promise<GitHubAppWorkerResult> {
   const scan = options.scan ?? runScanEngine;
-  const acquire = options.acquire ?? acquireGitHubRepositoryCommit;
+  const acquire = options.acquire ?? acquireGitHubRepositoryScanTarget;
 
   return runNextGitHubAppScanJob({
     queue: options.queue,
@@ -62,20 +73,37 @@ export async function runConfiguredGitHubAppWorkerOnce(
     getInstallationToken: options.getInstallationToken,
     acquire,
     acquisitionOptions: options.acquisitionOptions,
-    scan: async (_job, workspace) => {
+    scan: async (job, workspace, baseWorkspace) => {
+      let baseline: ScanEngineOutcome["report"] | undefined;
+      if (job.event === "pull_request") {
+        if (!job.baseSha || !baseWorkspace) {
+          throw new Error("Hosted pull-request scan requires the exact acquired base workspace.");
+        }
+        const baseOutcome: ScanEngineOutcome = await scan({
+          rootPath: baseWorkspace,
+          config: options.config,
+          toolVersion: options.toolVersion,
+          changedOnly: false,
+        });
+        requireCommit(baseOutcome.report.target.commitSha, job.baseSha, "GitHub App baseline");
+        baseline = baseOutcome.report;
+      }
+
       const outcome: ScanEngineOutcome = await scan({
         rootPath: workspace,
         config: options.config,
         toolVersion: options.toolVersion,
+        ...(baseline ? { baseline } : {}),
         changedOnly: false,
       });
+      requireCommit(outcome.report.target.commitSha, job.headSha, "GitHub App head");
       return outcome.report;
     },
     publish: async (job, report, installationToken) => {
       const context = contextForJob(job);
       const check = buildGitHubCheck(report, context, {
         threshold: options.threshold,
-        onlyNewAnnotations: false,
+        onlyNewAnnotations: Boolean(report.baseline),
       });
       await publishGitHubCheck(check, context, installationToken, {
         apiVersion: options.apiVersion,
