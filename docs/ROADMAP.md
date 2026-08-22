@@ -50,16 +50,19 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Bounded route-level lexical authentication/authorization context
 - [x] Bounded route-level lexical process/filesystem/database/network sink context
 - [x] Bounded repository posture summary from route/auth/sink signals
+- [x] Bounded likely test-ownership context from resolved imports and filename conventions
 - [ ] Full function/call graph with reliable cross-module symbol resolution
 - [ ] Broad routes and externally reachable entry points across supported frameworks
 - [ ] Framework-aware authentication/authorization enforcement semantics
 - [ ] Data-flow-aware sink reachability beyond lexical proximity
 - [ ] Dependency reachability beyond scanner-provided call analysis
-- [ ] Test ownership and coverage context around findings
+- [ ] Runtime/test-run coverage context around findings
 
 The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved. Decorator-based route mapping only links a route when one function declaration is structurally close enough to be unambiguous; generic router registrations remain unresolved rather than guessing a handler.
 
 Route authentication and sink context are similarly conservative. They record bounded same-file security signals near indexed routes and label the results `lexical-auth-signals-only` or `lexical-sink-signals-only`. Absence of nearby auth is reported only as `no-auth-signal-observed`, and nearby sinks are not treated as proven data-flow or call reachability. The repository posture summary aggregates these bounded signals for prioritization while explicitly remaining `bounded-lexical-posture-only`.
+
+Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. It does not claim that a test executes a finding path or that the source is covered at runtime; coverage ingestion remains separate future work.
 
 ## Phase 3 — Contextual security review
 
