@@ -63,3 +63,31 @@ test("AI review uses the OpenAI-compatible boundary and normalizes the seven-que
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("AI provider boundary refuses source excerpts for secret findings", async () => {
+  await assert.rejects(
+    reviewFinding({
+      id: "secret-fixture",
+      title: "Potential token",
+      category: "secret",
+      severity: "high",
+      confidence: 0.99,
+      scanner: { name: "betterleaks", ruleId: "token" },
+      location: { path: "src/config.ts", startLine: 4 },
+      metadata: {
+        validationStatus: "unknown",
+        accidentalSecretField: "must-not-cross-provider-boundary",
+      },
+    }, {
+      baseUrl: "http://127.0.0.1:1/v1",
+      model: "fixture-model",
+    }, {
+      path: "src/config.ts",
+      startLine: 1,
+      endLine: 5,
+      excerpt: "SECRET_SHOULD_NEVER_BE_SENT",
+      truncated: true,
+    }),
+    /Source context is prohibited for secret findings/,
+  );
+});
