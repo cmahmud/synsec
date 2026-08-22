@@ -18,13 +18,29 @@ Opengrep and Betterleaks narrow execution directly to changed files. Checkov use
 
 Gitleaks uses one staged temporary directory for targeted scans rather than passing an arbitrary list of positional targets to `gitleaks dir`. The adapter independently validates and deduplicates at most 500 repository-relative paths, copies only changed regular files while preserving their relative directory layout, and copies a regular repository-local `.gitleaks.toml` when present so configuration semantics remain available to the staged scan. Findings are remapped from the temporary root back to repository-relative paths before normalization.
 
-Trivy now follows the same fail-closed staging principle for source-only targeted scans. Trivy's filesystem command accepts one filesystem path, so SynSec stages the selected regular files into one temporary directory, preserves their repository-relative layout, runs Trivy from the authorized repository working directory so repository-local Trivy configuration remains discoverable, and remaps result targets back to repository-relative locations. Dependency manifests, Dockerfiles, Terraform, workflows, and other high-impact configuration paths already force the planner to full-repository mode before this adapter narrowing is considered.
+Trivy follows the same fail-closed staging principle for source-only targeted scans. Trivy's filesystem command accepts one filesystem path, so SynSec stages the selected regular files into one temporary directory, preserves their repository-relative layout, runs Trivy from the authorized repository working directory so repository-local Trivy configuration remains discoverable, and remaps result targets back to repository-relative locations. Dependency manifests, Dockerfiles, Terraform, workflows, and other high-impact configuration paths already force the planner to full-repository mode before this adapter narrowing is considered.
 
 Gitleaks and Trivy staging deliberately fail closed. If a requested path is missing, a symlink, non-regular, or escapes the repository, the adapter discards the targeted optimization and runs its normal full repository scan instead. Gitleaks additionally falls back when its repository-local configuration is ambiguous. Neither adapter follows a changed-file symlink into an external path or silently drops an unsafe changed path.
 
 Checkov, Gitleaks, and Trivy each impose an adapter-level 500-file limit even though the engine normally applies a tighter planner bound. These adapter checks are defense in depth for direct SDK use. Oversized requests are never silently truncated.
 
 Other scanner adapters may still perform their normal repository analysis before SynSec filters file-located findings. A scanner is not described as natively incremental until its adapter explicitly narrows the underlying scanner command safely.
+
+## Per-scanner execution provenance
+
+A report-level changed-file scope does not imply that every scanner executed the same way. Each scanner summary can therefore carry an `executionScope` object with one of three modes:
+
+- `repository`: the scanner ran against the repository scope because the overall scan was full-repository;
+- `changed-files-native`: the underlying scanner command was actually narrowed to the planner-selected files; or
+- `repository-then-filtered`: the scanner still analyzed repository scope and SynSec filtered file-located findings afterward.
+
+`changedFileCount` records the selected path count for changed-file modes. The fixed interpretation string is `scanner-execution-scope-not-coverage-proof`: execution provenance describes how work was performed, not evidence that unselected code is unaffected.
+
+Opengrep, Betterleaks, Checkov, Gitleaks, and Trivy are currently classified as native changed-file adapters. OSV-Scanner, Grype, Syft, and Scorecard intentionally remain repository-wide because dependency inventory, SBOM generation, or repository-posture semantics would be weakened by pretending they are file-local. Their changed-file reports therefore use `repository-then-filtered` when the overall engine scope is targeted.
+
+Adapters may override their default classification when the actual execution differs. In particular, Gitleaks and Trivy record `repository-then-filtered` if staged-file safety checks force their normal full scan. This makes the fallback machine-readable instead of relying on a diagnostic string or implying that the targeted optimization succeeded.
+
+The field is additive and optional so existing/imported schema-version-1 reports remain readable. New engine-generated reports populate it for scanner runs.
 
 ## Hosted GitHub App pull requests
 
