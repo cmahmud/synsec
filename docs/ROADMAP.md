@@ -44,7 +44,7 @@ This roadmap separates what is already usable in the repository from the deeper 
 - [x] Language/framework inventory
 - [x] Safe bounded finding-to-code context retrieval
 - [x] Persistent repository index
-- [ ] Import/module graph
+- [x] Import/module graph with bounded dependency/dependent traversal
 - [ ] Function/call graph
 - [ ] Routes and externally reachable entry points
 - [ ] Authentication/authorization context
