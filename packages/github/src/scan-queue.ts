@@ -356,6 +356,7 @@ export class FileGitHubScanQueue {
 
   private async require(jobIdValue: string): Promise<GitHubScanJob> {
     const id = jobId(jobIdValue);
+    await ensurePrivateDirectory(this.directory);
     try {
       const record = await readJob(pathFor(this.directory, id));
       if (record.jobId !== id) throw new Error("Stored GitHub scan job id does not match its filename.");
