@@ -27,6 +27,7 @@ This keeps GitHub credentials out of scanners and prevents repository analysis f
 - Bounded local baseline loading with optional PR-base commit validation.
 - Automatic PR-base baseline generation from an exact commit already present in the local checkout.
 - Fixed-host gzip/base64 SARIF publication to GitHub code scanning.
+- A completed JSON report artifact path suitable for explicit retention by the caller.
 
 The root `action.yml` packages these primitives as a composite GitHub Action. It builds the checked-in SynSec runtime, scans only the repository represented by `GITHUB_WORKSPACE`, and publishes the completed report using the caller-provided GitHub token.
 
@@ -42,7 +43,7 @@ No network request is required for context detection.
 
 `runGitHubActionsRepositoryScan()` accepts a normal `SynSecConfig`, optional baseline, checkout root, publication settings, and caller-supplied token. The scan path deliberately reuses `runScanEngine()` rather than creating GitHub-specific scanners.
 
-For pull requests, changed-file scanning defaults to `origin/<base branch>...HEAD`. Callers can override changed-file mode or the base ref explicitly. Push and other non-PR contexts default to a full repository scan.
+For pull requests, changed-file scanning defaults to `origin/<base branch>...HEAD`. Callers can override changed-file mode or the base ref explicitly. Push, schedule, workflow-dispatch, and other non-PR contexts default to a full repository scan.
 
 Before publication, the runner requires the scan report to identify its commit. The publication layer refuses a report whose commit differs from the GitHub commit being annotated. This prevents a stale report from being attached to a newer PR head.
 
@@ -106,7 +107,7 @@ The root `action.yml` exposes:
 - `changed-only` — `auto`, `true`, or `false`;
 - `publish-sarif` — optional code-scanning publication.
 
-It returns the security score, finding count, check-run id, optional SARIF upload id, and `baseline-source` (`base-scan`, `file`, `provided`, or `none`).
+It returns the security score, finding count, check-run id, optional SARIF upload id, `baseline-source` (`base-scan`, `file`, `provided`, or `none`), and `report-path`. The completed JSON report is written under `RUNNER_TEMP` rather than into the checked-out repository and is chmodded to `0600` where supported. Retention remains explicit: callers decide whether to upload or discard it.
 
 The Action intentionally does **not** silently download third-party scanner binaries. Selected scanners must already be available on `PATH`; this keeps scanner installation/version pinning explicit and avoids hiding supply-chain downloads inside the security scanner itself. A future containerized worker can improve scanner provisioning while retaining pinned artifacts and isolation.
 
@@ -131,6 +132,12 @@ steps:
 
 Use the normal `pull_request` event for scanning pull-request code. Do **not** switch to `pull_request_target` merely to obtain a write-capable token: that event executes in the base-repository security context and can expose elevated credentials to workflows that inspect untrusted contributor code. For fork pull requests where GitHub intentionally withholds write permissions, publication should be treated as unavailable rather than weakening the trust boundary.
 
+## Scheduled repository scans
+
+Non-PR contexts already run a full repository scan, so scheduled scans use the same engine/publication path instead of a second orchestration implementation. `docs/examples/synsec-scheduled.yml` provides a cron + manual-dispatch template that checks out full history, runs SynSec with changed-file mode and PR auto-baselines disabled, optionally publishes SARIF, and retains the completed JSON report with `actions/upload-artifact`.
+
+The report is not uploaded automatically by SynSec. This keeps retention policy visible in the repository workflow and lets teams choose artifact duration rather than silently persisting security evidence. Scanner installation remains explicit and should be pinned by the repository owner.
+
 ## Security boundaries
 
 GitHub integration must preserve the repository-first defensive model:
@@ -148,11 +155,10 @@ GitHub integration must preserve the repository-first defensive model:
 
 ## Next implementation steps
 
-The remaining Phase 5 work is primarily hosting/authentication and durable orchestration:
+The remaining Phase 5 work is primarily hosting/authentication and explicit remediation orchestration:
 
 1. Add a GitHub App installation/authentication layer using the same runner/publication primitives.
-2. Add scheduled repository-scan workflow/orchestration support.
-3. Add explicitly approved remediation pull requests.
-4. Add GitLab and Bitbucket adapters without coupling the scanner core to one host.
+2. Add explicitly approved remediation pull requests.
+3. Add GitLab and Bitbucket adapters without coupling the scanner core to one host.
 
 The deterministic packages should remain usable from both a GitHub App and GitHub Actions so the scanning core does not become hosting-provider-specific.
