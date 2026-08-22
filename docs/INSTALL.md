@@ -128,6 +128,26 @@ Confirm:
 checkov --version
 ```
 
+## OpenSSF Scorecard
+
+Project: https://github.com/ossf/scorecard
+
+Scorecard currently documents macOS and Linux as its supported CLI platforms. Homebrew is one convenient install path:
+
+```bash
+brew install scorecard
+```
+
+Standalone release binaries are also available from its GitHub Releases page.
+
+Confirm:
+
+```bash
+scorecard --version
+```
+
+Some Scorecard checks use GitHub APIs. For complete scans without the low unauthenticated API limit, configure one of Scorecard's supported GitHub token environment variables such as `GITHUB_AUTH_TOKEN`. Do not commit that token to a repository.
+
 ## Verify the full setup
 
 From the SynSec repository:
@@ -146,9 +166,10 @@ OK        OSV-Scanner        ...
 OK        Trivy              ...
 OK        Grype              ...
 OK        Checkov            ...
+OK        OpenSSF Scorecard  ...
 ```
 
-Missing scanners are not fatal unless your own CI policy requires them. SynSec reports unavailable selected engines so a scan cannot silently pretend that coverage existed.
+Missing scanners are not fatal unless your own CI policy requires them. SynSec reports unavailable selected engines so a scan cannot silently pretend that coverage existed. If no selected scanner can run, the scan fails rather than generating a clean-looking report without coverage.
 
 ## Network/privacy notes
 
