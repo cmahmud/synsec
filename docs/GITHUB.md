@@ -25,6 +25,7 @@ This keeps GitHub credentials out of scanners and prevents repository analysis f
 - Completed-report publication orchestration with report/head commit binding.
 - A GitHub Actions repository scan runner that reuses the normal scan engine.
 - Bounded local baseline loading with optional PR-base commit validation.
+- Automatic PR-base baseline generation from an exact commit already present in the local checkout.
 - Fixed-host gzip/base64 SARIF publication to GitHub code scanning.
 
 The root `action.yml` packages these primitives as a composite GitHub Action. It builds the checked-in SynSec runtime, scans only the repository represented by `GITHUB_WORKSPACE`, and publishes the completed report using the caller-provided GitHub token.
@@ -51,9 +52,11 @@ The runner does not clone arbitrary targets, expand repository scope, perform li
 
 A caller can provide a baseline report in memory or as a local `baselinePath`. `loadValidatedGitHubBaseline()` bounds local baseline files to 20 MiB, parses them through the normal report reader, and by default requires the baseline report's commit to match the pull-request base SHA from the event payload. An explicit expected commit can be supplied for non-PR or synthetic contexts.
 
-A missing baseline commit, missing expected base commit, or stale baseline fails before scanning. SynSec does not silently treat an unverifiable baseline as trustworthy.
+For PR runs without an explicit baseline, `autoBaseline` can generate one from the exact `pull_request.base.sha`. `scanGitHubBaseCommit()` first proves that SHA is a local Git commit, creates a temporary detached Git worktree at that commit, runs a full repository scan there, requires the generated report to identify the same commit, and removes the worktree afterward. It never invokes `git fetch`, follows a repository-supplied remote URL, or mutates the caller's checkout.
 
-The current baseline primitive deliberately does not fetch arbitrary URLs or repositories. Artifact/cache retrieval belongs in a future hosting adapter that can enforce provenance and repository scope before handing a local report to this loader.
+The composite Action enables this mode by default. Because SynSec intentionally does not perform an implicit network fetch, the PR base commit must already exist locally. Use `actions/checkout` with `fetch-depth: 0`, or otherwise fetch the exact base commit before SynSec. A shallow checkout that lacks the base commit fails with an explicit setup error instead of silently producing a baseline against the wrong revision.
+
+A missing baseline commit, missing expected base commit, stale baseline, or base-scan report whose commit does not match the requested base SHA fails before head publication. SynSec does not silently treat unverifiable baseline evidence as trustworthy.
 
 ## Check conclusions
 
@@ -99,14 +102,15 @@ The root `action.yml` exposes:
 - `github-token` — required publication token;
 - `config-path` — optional path to `synsec.config.json` in the checked-out repository;
 - `baseline-path` — optional local commit-bound baseline report;
+- `auto-baseline` — PR-only local base-commit scan when no baseline path is supplied; defaults to `true`;
 - `changed-only` — `auto`, `true`, or `false`;
 - `publish-sarif` — optional code-scanning publication.
 
-It returns the security score, finding count, check-run id, and optional SARIF upload id.
+It returns the security score, finding count, check-run id, optional SARIF upload id, and `baseline-source` (`base-scan`, `file`, `provided`, or `none`).
 
 The Action intentionally does **not** silently download third-party scanner binaries. Selected scanners must already be available on `PATH`; this keeps scanner installation/version pinning explicit and avoids hiding supply-chain downloads inside the security scanner itself. A future containerized worker can improve scanner provisioning while retaining pinned artifacts and isolation.
 
-A minimal workflow should give SynSec only the permissions it needs:
+A minimal workflow should give SynSec only the permissions it needs and preserve base history for provenance-safe PR baselines:
 
 ```yaml
 permissions:
@@ -136,6 +140,7 @@ GitHub integration must preserve the repository-first defensive model:
 - Scanner output must never choose the GitHub API host or arbitrary publication URL.
 - A report must not be published onto a different commit than the one it represents.
 - A baseline must not be trusted for PR comparison without validated commit identity.
+- Auto-baseline mode may inspect only the exact PR base commit already present in the local checkout and must not perform implicit remote fetches.
 - Source excerpts are not added to GitHub annotations unless already present in normalized deterministic finding fields.
 - Secret values must remain redacted before publication.
 - Repository writes remain outside the scan/publication path and require explicit approval.
@@ -146,9 +151,8 @@ GitHub integration must preserve the repository-first defensive model:
 The remaining Phase 5 work is primarily hosting/authentication and durable orchestration:
 
 1. Add a GitHub App installation/authentication layer using the same runner/publication primitives.
-2. Add provenance-aware baseline artifact/cache acquisition around the local validator.
-3. Add scheduled repository-scan workflow/orchestration support.
-4. Add explicitly approved remediation pull requests.
-5. Add GitLab and Bitbucket adapters without coupling the scanner core to one host.
+2. Add scheduled repository-scan workflow/orchestration support.
+3. Add explicitly approved remediation pull requests.
+4. Add GitLab and Bitbucket adapters without coupling the scanner core to one host.
 
 The deterministic packages should remain usable from both a GitHub App and GitHub Actions so the scanning core does not become hosting-provider-specific.
