@@ -1,6 +1,7 @@
-import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 const MAX_RECORD_BYTES = 16 * 1024;
 const MAX_LIST_ENTRIES = 10_000;
@@ -137,7 +138,7 @@ export class FileGitHubInstallationStore {
 
   async put(input: GitHubInstallationRecordInput): Promise<GitHubInstallationRecord> {
     const record = normalize(input);
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(this.directory);
     const path = recordPath(this.directory, record.installationId);
     const tempPath = join(this.directory, `.installation-${record.installationId}-${randomBytes(12).toString("hex")}.tmp`);
     const handle = await open(tempPath, "wx", 0o600);
@@ -181,7 +182,7 @@ export class FileGitHubInstallationStore {
   }
 
   async list(): Promise<GitHubInstallationRecord[]> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await ensurePrivateDirectory(this.directory);
     const entries = (await readdir(this.directory, { withFileTypes: true }))
       .filter((entry) => entry.isFile() && /^\d+\.json$/.test(entry.name));
     if (entries.length > MAX_LIST_ENTRIES) throw new Error(`GitHub installation store exceeds the ${MAX_LIST_ENTRIES}-entry limit.`);
