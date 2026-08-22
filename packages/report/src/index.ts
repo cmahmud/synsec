@@ -43,6 +43,12 @@ export interface RepositoryMetadata {
   fileCount?: number;
 }
 
+export interface ScanScope {
+  mode: "repository" | "changed-files";
+  baseRef?: string;
+  changedFiles?: string[];
+}
+
 export interface SynSecReport {
   schemaVersion: typeof SYNSEC_REPORT_SCHEMA_VERSION;
   reportId: string;
@@ -56,6 +62,7 @@ export interface SynSecReport {
   securityScore: number;
   findings: CorrelatedFinding[];
   artifacts?: ScanArtifact[];
+  scope?: ScanScope;
   baseline?: BaselineDelta;
   repository?: RepositoryMetadata;
 }
@@ -99,6 +106,7 @@ export function buildReport(input: {
   scans: readonly ScanResult[];
   toolVersion?: string;
   repository?: RepositoryMetadata;
+  scope?: ScanScope;
 }): SynSecReport {
   const rawFindings = input.scans.flatMap((scan) => scan.findings);
   const artifacts = input.scans.flatMap((scan) => scan.artifacts ?? []);
@@ -128,6 +136,7 @@ export function buildReport(input: {
   };
 
   if (artifacts.length > 0) report.artifacts = artifacts;
+  if (input.scope) report.scope = input.scope;
   if (input.repository) report.repository = input.repository;
   return report;
 }
@@ -308,6 +317,9 @@ export function renderHtml(report: SynSecReport): string {
   const artifactSummary = sbomPackageCount > 0
     ? `<div class="baseline"><strong>SBOM:</strong> ${sbomPackageCount} package(s) inventoried</div>`
     : "";
+  const scopeSummary = report.scope?.mode === "changed-files"
+    ? `<div class="baseline"><strong>Scope:</strong> ${report.scope.changedFiles?.length ?? 0} changed file(s)${report.scope.baseRef ? ` since ${escapeHtml(report.scope.baseRef)}` : ""}</div>`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -320,7 +332,7 @@ export function renderHtml(report: SynSecReport): string {
 </style>
 </head>
 <body><main>
-<div class="top"><div><div class="brand">SynSec repository security</div><h1>${escapeHtml(report.target.repositoryUrl ?? report.target.path)}</h1><div class="muted">Generated ${escapeHtml(report.generatedAt)} · ${report.findingCount} correlated finding(s) from ${report.rawFindingCount} raw result(s)</div>${baseline}${artifactSummary}</div><div><div class="muted">Security score</div><div class="score">${report.securityScore}</div></div></div>
+<div class="top"><div><div class="brand">SynSec repository security</div><h1>${escapeHtml(report.target.repositoryUrl ?? report.target.path)}</h1><div class="muted">Generated ${escapeHtml(report.generatedAt)} · ${report.findingCount} correlated finding(s) from ${report.rawFindingCount} raw result(s)</div>${baseline}${artifactSummary}${scopeSummary}</div><div><div class="muted">Security score</div><div class="score">${report.securityScore}</div></div></div>
 <div class="stats">
 <div class="stat"><span>Critical</span><strong>${report.summary.critical}</strong></div><div class="stat"><span>High</span><strong>${report.summary.high}</strong></div><div class="stat"><span>Medium</span><strong>${report.summary.medium}</strong></div><div class="stat"><span>Low</span><strong>${report.summary.low}</strong></div><div class="stat"><span>Info</span><strong>${report.summary.info}</strong></div><div class="stat"><span>Unknown</span><strong>${report.summary.unknown}</strong></div>
 </div>
