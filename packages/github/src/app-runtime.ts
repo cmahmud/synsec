@@ -172,18 +172,19 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
       if (!(await installationStore.isRepositoryAllowed(input.installationId, input.repository))) {
         throw new Error("GitHub installation is not authorized to remediate this repository.");
       }
-      const token = await getInstallationToken(input.installationId, "remediate");
+      const acquisitionToken = await getInstallationToken(input.installationId, "acquire");
       const acquired = await acquireGitHubRepositoryCommit({
         repository: input.repository,
         commitSha: input.execution.targetCommitSha,
-        installationToken: token,
+        installationToken: acquisitionToken,
       }, { workspaceRoot });
       try {
+        const remediationToken = await getInstallationToken(input.installationId, "remediate");
         return await createApprovedGitHubRemediationPullRequest({
           repository: input.repository,
           baseBranch: input.baseBranch,
           workspace: acquired.workspace,
-          installationToken: token,
+          installationToken: remediationToken,
           execution: input.execution,
         }, {
           ...(options.apiVersion ? { apiVersion: options.apiVersion } : {}),
