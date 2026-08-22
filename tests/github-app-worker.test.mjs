@@ -4,6 +4,7 @@ import test from "node:test";
 import { runNextGitHubAppScanJob } from "@synsec/github/app-worker";
 
 const headSha = "0123456789abcdef0123456789abcdef01234567";
+const leaseId = "d".repeat(32);
 
 function job() {
   return {
@@ -18,6 +19,7 @@ function job() {
     attempts: 1,
     status: "leased",
     leaseUntil: "2026-08-22T18:50:00.000Z",
+    leaseId,
   };
 }
 
@@ -51,29 +53,29 @@ class MemoryQueue {
     this.next = undefined;
     return next;
   }
-  async assertLease(id, attempts) {
-    this.asserted.push([id, attempts]);
+  async assertLease(id, expectedLeaseId) {
+    this.asserted.push([id, expectedLeaseId]);
     if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return job();
   }
-  async release(id, attempts) {
-    this.released.push([id, attempts]);
+  async release(id, expectedLeaseId) {
+    this.released.push([id, expectedLeaseId]);
     if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
-    return { ...job(), status: "pending", leaseUntil: undefined };
+    return { ...job(), status: "pending", leaseUntil: undefined, leaseId: undefined };
   }
-  async fail(id, attempts) {
-    this.failed.push([id, attempts]);
+  async fail(id, expectedLeaseId) {
+    this.failed.push([id, expectedLeaseId]);
     if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
-    return { ...job(), status: "failed", leaseUntil: undefined };
+    return { ...job(), status: "failed", leaseUntil: undefined, leaseId: undefined };
   }
-  async complete(id, attempts) {
-    this.completed.push([id, attempts]);
+  async complete(id, expectedLeaseId) {
+    this.completed.push([id, expectedLeaseId]);
     if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return true;
   }
 }
 
-const fenced = ["a".repeat(32), 1];
+const fenced = ["a".repeat(32), leaseId];
 
 test("worker returns idle when no queued job is available", async () => {
   const queue = new MemoryQueue(null);
@@ -175,7 +177,7 @@ test("worker refuses stale scan output, cleans the workspace, and schedules boun
   assert.equal(cleanupCalls, 1);
 });
 
-test("worker revalidates the current lease generation before minting publication credentials", async () => {
+test("worker revalidates the current lease identity before minting publication credentials", async () => {
   const queue = new MemoryQueue();
   const tokenPurposes = [];
   let publishCalls = 0;
