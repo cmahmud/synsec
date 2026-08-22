@@ -2,6 +2,7 @@ import {
   parseVerifiedGitHubAppWebhook,
   shouldScanGitHubAppWebhook,
   type GitHubAppWebhook,
+  type GitHubWebhookSecret,
 } from "./app.js";
 
 export interface GitHubWebhookReplayClaimer {
@@ -27,7 +28,7 @@ export interface GitHubAppWebhookIntakeResult {
 export async function intakeGitHubAppWebhook(input: {
   body: string | Uint8Array;
   signatureHeader?: string;
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   eventName: string;
   deliveryId: string;
   replayStore: GitHubWebhookReplayClaimer;
