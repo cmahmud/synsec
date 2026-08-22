@@ -9,6 +9,7 @@ import {
   parseSarifJson,
   parseScorecardJson,
   parseSyftJson,
+  parseTrivyJson,
 } from "../packages/scanners/dist/index.js";
 
 test("Betterleaks parser redacts normalized evidence by design", () => {
@@ -76,6 +77,28 @@ test("Checkov parser maps failed IaC checks", () => {
   assert.equal(findings.length, 1);
   assert.equal(findings[0].category, "iac");
   assert.equal(findings[0].location.path, "main.tf");
+});
+
+test("Trivy parser never copies matched secret material into normalized output", () => {
+  const marker = "SYNSEC_SECRET_MUST_NOT_SURVIVE";
+  const findings = parseTrivyJson(JSON.stringify({
+    Results: [{
+      Target: "/repo/src/config.ts",
+      Secrets: [{
+        RuleID: "generic-api-key",
+        Title: "API key",
+        Severity: "HIGH",
+        StartLine: 7,
+        Match: marker,
+        Code: marker,
+      }],
+    }],
+  }), "/repo");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].category, "secret");
+  assert.equal(findings[0].location.path, "src/config.ts");
+  assert.equal(findings[0].evidence, undefined);
+  assert.equal(JSON.stringify(findings).includes(marker), false);
 });
 
 test("Scorecard parser creates posture findings only for non-perfect checks", () => {
