@@ -137,10 +137,14 @@ function collectModuleEdges(path: string, content: string): ModuleEdge[] {
 }
 
 function namedNodeRouteHandler(line: string): string | undefined {
-  const match = line.match(/\b(?:app|router|server)\.(?:get|post|put|patch|delete|options|head)\s*\(\s*(?:"[^"]*"|'[^']*'|`[^`]*`)\s*,\s*([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)\s*\)\s*;?\s*(?:\/\/.*)?$/i);
-  const argumentsList = match?.[1];
-  if (!argumentsList) return undefined;
-  const names = argumentsList.split(",").map((value) => value.trim()).filter(Boolean);
+  const registration = line.match(
+    /\b(?:app|router|server)\.(?:get|post|put|patch|delete|options|head)\s*\(\s*(?:"[^"]*"|'[^']*'|`[^`]*`)\s*,\s*(.*?)\s*\)\s*;?\s*(?:\/\/.*)?$/i,
+  );
+  const argumentsList = registration?.[1]?.trim();
+  if (!argumentsList || !/^[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*$/.test(argumentsList)) {
+    return undefined;
+  }
+  const names = argumentsList.split(",").map((value) => value.trim());
   return names.at(-1);
 }
 
