@@ -2,6 +2,17 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 export type GitHubAppTlsMode = "local" | "terminated-upstream" | "none";
 export type GitHubAppDeploymentIssueLevel = "error" | "warning";
+export type GitHubAppScannerProcessBoundary = "container" | "sandbox" | "host";
+export type GitHubAppScannerNetworkPolicy = "none" | "egress-filtered" | "host";
+export type GitHubAppScannerRepositoryFilesystem = "read-only" | "writable";
+
+export interface GitHubAppScannerIsolationConfig {
+  processBoundary: GitHubAppScannerProcessBoundary;
+  cpuLimit: boolean;
+  memoryLimit: boolean;
+  networkPolicy: GitHubAppScannerNetworkPolicy;
+  repositoryFilesystem: GitHubAppScannerRepositoryFilesystem;
+}
 
 export interface GitHubAppDeploymentConfig {
   appId: number | string;
@@ -11,6 +22,9 @@ export interface GitHubAppDeploymentConfig {
   tlsMode: GitHubAppTlsMode;
   stateDirectory: string;
   workspaceDirectory: string;
+  scannerIsolation?: GitHubAppScannerIsolationConfig;
+  /** Fail deployment readiness when scanner isolation is absent or incomplete. */
+  requireScannerIsolation?: boolean;
 }
 
 export interface GitHubAppDeploymentIssue {
@@ -23,7 +37,12 @@ export interface GitHubAppDeploymentIssue {
     | "plaintext-public-listener"
     | "relative-state-directory"
     | "relative-workspace-directory"
-    | "overlapping-runtime-directories";
+    | "overlapping-runtime-directories"
+    | "scanner-isolation-missing"
+    | "scanner-process-unisolated"
+    | "scanner-resource-limits-missing"
+    | "scanner-network-unrestricted"
+    | "scanner-repository-writable";
   message: string;
 }
 
@@ -61,11 +80,59 @@ function directoriesOverlap(left: string, right: string): boolean {
   return isDescendant(leftToRight) || isDescendant(rightToLeft);
 }
 
+function isolationLevel(config: GitHubAppDeploymentConfig): GitHubAppDeploymentIssueLevel {
+  return config.requireScannerIsolation ? "error" : "warning";
+}
+
+function validateScannerIsolation(config: GitHubAppDeploymentConfig, issues: GitHubAppDeploymentIssue[]): void {
+  const level = isolationLevel(config);
+  const isolation = config.scannerIsolation;
+  if (!isolation) {
+    issues.push({
+      level,
+      code: "scanner-isolation-missing",
+      message: "Scanner process/resource/network/filesystem isolation has not been declared for this deployment.",
+    });
+    return;
+  }
+
+  if (isolation.processBoundary === "host") {
+    issues.push({
+      level,
+      code: "scanner-process-unisolated",
+      message: "Scanner execution must use a container or equivalent sandbox boundary for production isolation.",
+    });
+  }
+  if (!isolation.cpuLimit || !isolation.memoryLimit) {
+    issues.push({
+      level,
+      code: "scanner-resource-limits-missing",
+      message: "Scanner execution must declare both CPU and memory limits.",
+    });
+  }
+  if (isolation.networkPolicy === "host") {
+    issues.push({
+      level,
+      code: "scanner-network-unrestricted",
+      message: "Scanner execution must disable network access or use an explicit egress-filtered network policy.",
+    });
+  }
+  if (isolation.repositoryFilesystem === "writable") {
+    issues.push({
+      level,
+      code: "scanner-repository-writable",
+      message: "Scanner execution should mount repository source read-only; writable scratch space must be separate.",
+    });
+  }
+}
+
 /**
  * Validate operator-controlled GitHub App deployment settings before a hosted runtime starts.
  *
  * The result deliberately contains only categorical diagnostics. Secret values and filesystem
  * contents are never echoed into messages, making the result safe to surface in startup logs.
+ * Scanner-isolation fields describe controls enforced by the surrounding container/sandbox runtime;
+ * this preflight validates that contract and does not pretend Node child processes implement it.
  */
 export function validateGitHubAppDeployment(
   config: GitHubAppDeploymentConfig,
@@ -138,6 +205,8 @@ export function validateGitHubAppDeployment(
       message: "Durable state and repository workspaces must use separate, non-nested directory trees.",
     });
   }
+
+  validateScannerIsolation(config, issues);
 
   return {
     ready: !issues.some((issue) => issue.level === "error"),
