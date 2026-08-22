@@ -2,6 +2,7 @@ import { createHmac, sign as cryptoSign, timingSafeEqual } from "node:crypto";
 
 const MAX_WEBHOOK_BYTES = 10 * 1024 * 1024;
 const APP_JWT_LIFETIME_SECONDS = 9 * 60;
+const SCANNABLE_PULL_REQUEST_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review"]);
 
 export interface GitHubAppTokenOptions {
   apiVersion?: string;
@@ -107,7 +108,9 @@ export function parseVerifiedGitHubAppWebhook(input: {
 
   let payload: Record<string, unknown>;
   try {
-    payload = objectValue(JSON.parse(rawBytes(input.body).toString("utf8"))) ?? (() => { throw new Error(); })();
+    const parsed = objectValue(JSON.parse(rawBytes(input.body).toString("utf8")));
+    if (!parsed) throw new Error();
+    payload = parsed;
   } catch {
     throw new Error("GitHub webhook body must be a JSON object.");
   }
@@ -159,6 +162,24 @@ export function parseVerifiedGitHubAppWebhook(input: {
     installationId,
     ...(repository ? { repository } : {}),
   };
+}
+
+/**
+ * Decide whether a verified App event may enqueue a repository scan.
+ * Installation-management events are bookkeeping only and PR scans use an explicit action allowlist.
+ */
+export function shouldScanGitHubAppWebhook(event: GitHubAppWebhook): boolean {
+  if (event.event === "push") return Boolean(event.repository && event.headSha && event.installationId);
+  if (event.event !== "pull_request") return false;
+  return Boolean(
+    event.repository
+      && event.headSha
+      && event.baseSha
+      && event.pullRequestNumber
+      && event.installationId
+      && event.action
+      && SCANNABLE_PULL_REQUEST_ACTIONS.has(event.action),
+  );
 }
 
 /** Create a short-lived RS256 GitHub App JWT. */
