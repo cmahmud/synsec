@@ -262,7 +262,12 @@ async function reviewGroups(
     const context = config.ai.sendSourceContext
       ? await getFindingContext(root, group.primary)
       : undefined;
-    reviews[group.fingerprint] = await reviewFinding(group.primary, provider, context);
+    reviews[group.fingerprint] = await reviewFinding(
+      group.primary,
+      provider,
+      context,
+      workflow?.reviewInstructions,
+    );
   }
   return reviews;
 }
