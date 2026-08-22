@@ -52,6 +52,7 @@ export interface ProcessOptions {
 
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 2_000;
+const DEFAULT_MAX_OPERATIONAL_TEXT = 8 * 1024;
 const SAFE_ENV_KEYS = new Set([
   "PATH",
   "PATHEXT",
@@ -75,6 +76,26 @@ const SAFE_ENV_KEYS = new Set([
   "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
 ]);
+
+/**
+ * Sanitize scanner/process diagnostics before they cross the operational reporting boundary.
+ * This is deliberately conservative: diagnostics are for operators, not a source-evidence channel.
+ */
+export function sanitizeOperationalText(value: string, maxLength = DEFAULT_MAX_OPERATIONAL_TEXT): string {
+  if (!Number.isFinite(maxLength) || maxLength <= 0) throw new Error("maxLength must be a positive finite number.");
+  let text = value
+    .replace(/\0/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@")
+    .replace(/\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+)\b/g, "[REDACTED_TOKEN]")
+    .replace(/\bAKIA[A-Z0-9]{16}\b/g, "[REDACTED_ACCESS_KEY]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[REDACTED_JWT]")
+    .replace(/(\b(?:authorization|proxy-authorization)\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .trim();
+  if (text.length > maxLength) text = `${text.slice(0, maxLength)}…[truncated]`;
+  return text;
+}
 
 /**
  * Build the default environment for untrusted external scanner processes.
