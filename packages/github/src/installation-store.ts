@@ -158,6 +158,7 @@ export class FileGitHubInstallationStore {
 
   async get(installationIdValue: number): Promise<GitHubInstallationRecord | undefined> {
     const installationId = positiveInteger(installationIdValue, "GitHub installation id");
+    await ensurePrivateDirectory(this.directory);
     try {
       const record = await readRecord(recordPath(this.directory, installationId));
       if (record.installationId !== installationId) throw new Error("Stored GitHub installation id does not match its filename.");
@@ -170,6 +171,7 @@ export class FileGitHubInstallationStore {
 
   async remove(installationIdValue: number): Promise<boolean> {
     const installationId = positiveInteger(installationIdValue, "GitHub installation id");
+    await ensurePrivateDirectory(this.directory);
     const path = recordPath(this.directory, installationId);
     try {
       await stat(path);
