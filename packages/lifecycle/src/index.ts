@@ -356,3 +356,8 @@ export function verifyRemediation(
     },
   };
 }
+
+export async function writeRemediationVerification(path: string, verification: RemediationVerification): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(verification, null, 2)}\n`, "utf8");
+}
