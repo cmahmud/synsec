@@ -13,6 +13,7 @@
     "./base-scan": "./dist/base-scan.js",
     "./app": "./dist/app.js",
     "./app-token-provider": "./dist/app-token-provider.js",
+    "./app-permissions": "./dist/app-permissions.js",
     "./app-intake": "./dist/app-intake.js",
     "./app-dispatch": "./dist/app-dispatch.js",
     "./app-handler": "./dist/app-handler.js",
