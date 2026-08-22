@@ -1,4 +1,7 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { ReportHistory, ReportHistoryPoint } from "./history.js";
+import { buildHistoryFromStore } from "./history-store.js";
 
 function escapeHtml(value: string): string {
   return value
@@ -107,4 +110,23 @@ export function renderHistoryHtml(history: ReportHistory, options: { title?: str
     ${activeFindings.length ? `<table><thead><tr><th>Severity</th><th>Finding</th><th>Occurrences</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>${findingRows}</tbody></table>` : `<div class="empty">No findings are present in the latest scan.</div>`}
   </section>
 </main></body></html>`;
+}
+
+export async function writeHistoryHtml(
+  path: string,
+  history: ReportHistory,
+  options: { title?: string } = {},
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, renderHistoryHtml(history, options), { encoding: "utf8", mode: 0o600 });
+}
+
+export async function writeHistoryHtmlFromStore(
+  storePath: string,
+  outputPath: string,
+  options: { title?: string } = {},
+): Promise<ReportHistory> {
+  const history = await buildHistoryFromStore(storePath);
+  await writeHistoryHtml(outputPath, history, options);
+  return history;
 }
