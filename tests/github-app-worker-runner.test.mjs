@@ -50,9 +50,18 @@ test("configured PR worker scans exact base then head and publishes one baseline
   let cleanupCalls = 0;
   const queue = {
     async claimNext() { return job; },
+    async assertLease(id, attempts) {
+      assert.equal(id, job.jobId);
+      assert.equal(attempts, job.attempts);
+      return job;
+    },
     async release() { throw new Error("must not release successful job"); },
     async fail() { throw new Error("must not fail successful job"); },
-    async complete(id) { completed.push(id); return true; },
+    async complete(id, attempts) {
+      assert.equal(attempts, job.attempts);
+      completed.push(id);
+      return true;
+    },
   };
   const fakeFetch = async (url, init) => {
     requests.push({ url, init });
@@ -127,7 +136,12 @@ test("configured PR worker refuses a baseline report that does not bind to the q
   const result = await runConfiguredGitHubAppWorkerOnce({
     queue: {
       async claimNext() { return job; },
-      async release(id) { releases.push(id); return { ...job, status: "pending", leaseUntil: undefined }; },
+      async assertLease() { return job; },
+      async release(id, attempts) {
+        assert.equal(attempts, job.attempts);
+        releases.push(id);
+        return { ...job, status: "pending", leaseUntil: undefined };
+      },
       async fail() { throw new Error("must not fail"); },
       async complete() { throw new Error("must not complete"); },
     },
