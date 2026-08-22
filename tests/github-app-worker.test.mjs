@@ -46,6 +46,7 @@ class MemoryQueue {
     this.released = [];
     this.failed = [];
     this.asserted = [];
+    this.renewed = [];
     this.leaseValid = true;
   }
   async claimNext() {
@@ -57,6 +58,11 @@ class MemoryQueue {
     this.asserted.push([id, expectedLeaseId]);
     if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
     return job();
+  }
+  async renew(id, expectedLeaseId) {
+    this.renewed.push([id, expectedLeaseId]);
+    if (!this.leaseValid) throw new Error("GitHub scan job lease is stale or no longer owned by this worker.");
+    return { ...job(), leaseUntil: "2026-08-22T18:55:00.000Z" };
   }
   async release(id, expectedLeaseId) {
     this.released.push([id, expectedLeaseId]);
@@ -149,6 +155,32 @@ test("worker isolates transport credentials from scanning and publishes only a c
   assert.deepEqual(queue.completed, [fenced]);
   assert.deepEqual(queue.released, []);
   assert.equal(cleanupCalls, 1);
+});
+
+test("worker renews the exact lease fence while long-running work is active", async () => {
+  const queue = new MemoryQueue();
+  queue.leaseMs = 3_000;
+  const result = await runNextGitHubAppScanJob({
+    queue,
+    installationStore: { isRepositoryAllowed: async () => true },
+    getInstallationToken: async () => "token",
+    acquire: async (input) => ({
+      repository: input.repository,
+      commitSha: input.commitSha,
+      workspace: "/tmp/synsec-worker-repo",
+      cleanup: async () => {},
+    }),
+    scan: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      return report();
+    },
+    publish: async () => {},
+  });
+
+  assert.equal(result.status, "completed");
+  assert.ok(queue.renewed.length >= 1);
+  assert.ok(queue.renewed.every((entry) => entry[0] === fenced[0] && entry[1] === fenced[1]));
+  assert.deepEqual(queue.completed, [fenced]);
 });
 
 test("worker refuses stale scan output, cleans the workspace, and schedules bounded queue retry", async () => {
