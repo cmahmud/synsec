@@ -76,7 +76,7 @@ The orchestration layer should expose small reusable defensive workflows rather 
 - [x] Infrastructure/IaC review workflow
 - [x] Fix verification workflow
 - [x] Report-writing workflow
-- [ ] Provider/model routing policy by task and cost
+- [x] Provider/model routing policy by task and cost
 - [x] User-defined workflow/skill format with explicit capabilities
 - [x] Explicit capability declarations per built-in workflow
 - [x] Human approval boundary declared for any repository-changing action
