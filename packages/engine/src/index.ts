@@ -6,6 +6,7 @@ import { inventoryRepository } from "@synsec/repository";
 import {
   buildRepositoryIndex,
   findDependencyUsage,
+  findingRepositoryContext,
   packageNameFromPurl,
   type RepositoryIndex,
 } from "@synsec/repository/analysis";
@@ -171,6 +172,29 @@ function enrichDependencyUsage(scans: readonly ScanResult[], index: RepositoryIn
   }));
 }
 
+function enrichRepositorySecurityContext(scans: readonly ScanResult[], index: RepositoryIndex): ScanResult[] {
+  return scans.map((scan) => ({
+    ...scan,
+    findings: scan.findings.map((finding) => {
+      // Secret findings intentionally stay on the narrowest metadata boundary.
+      if (finding.category === "secret" || !finding.location?.path) return finding;
+      const context = findingRepositoryContext(index, finding.location.path, finding.location.startLine);
+      if (
+        context.nearbyRoutes.length === 0 &&
+        context.nearbyAuthSignals.length === 0 &&
+        context.nearbySinks.length === 0
+      ) return finding;
+      return {
+        ...finding,
+        metadata: {
+          ...(finding.metadata ?? {}),
+          repositoryContext: context,
+        },
+      };
+    }),
+  }));
+}
+
 export async function scannerStatuses(config: SynSecConfig): Promise<ScannerStatus[]> {
   const selectedIds = new Set(config.scanners);
   const scanners = builtInScanners();
@@ -275,7 +299,8 @@ export async function runScanEngine(input: {
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
   const changedScope = input.changedOnly ? await discoverChangedFiles(root, input.changedBase) : undefined;
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
-  const enrichedScans = enrichDependencyUsage(result.scans, repositoryIndex);
+  const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex);
+  const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex);
   const scans = changedScope ? scopeScansToChangedFiles(enrichedScans, root, changedScope.files) : enrichedScans;
   const failures = result.failures;
   if (scans.length === 0) {
