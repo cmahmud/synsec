@@ -1,5 +1,11 @@
-import type { Severity } from "@synsec/core";
-import type { AiFindingReview, ReviewAnswer } from "./index.js";
+import type { Finding, Severity } from "@synsec/core";
+import type { FindingContext } from "@synsec/repository";
+import {
+  reviewFinding,
+  type AiFindingReview,
+  type OpenAiCompatibleConfig,
+  type ReviewAnswer,
+} from "./index.js";
 
 export type ReviewConsensusAgreement = "unanimous" | "majority" | "split" | "insufficient";
 
@@ -25,6 +31,23 @@ export interface AiReviewConsensus {
   gate: ReviewConsensusGate[];
   /** Consensus aggregates model inference; deterministic scanner evidence remains authoritative. */
   interpretation: "model-consensus-not-scanner-evidence";
+}
+
+export interface ReviewConsensusFailure {
+  model: string;
+  message: string;
+}
+
+export interface MultiReviewConsensusResult {
+  reviews: AiFindingReview[];
+  failures: ReviewConsensusFailure[];
+  consensus: AiReviewConsensus;
+}
+
+export interface MultiReviewOptions {
+  minimumReviewers?: number;
+  concurrency?: number;
+  reviewer?: typeof reviewFinding;
 }
 
 const severityRank: Record<Severity, number> = {
@@ -55,6 +78,22 @@ function uniqueReviews(reviews: readonly AiFindingReview[]): AiFindingReview[] {
     byModel.set(model, review);
   }
   return [...byModel.values()];
+}
+
+function uniqueProviders(providers: readonly OpenAiCompatibleConfig[]): OpenAiCompatibleConfig[] {
+  const byModel = new Map<string, OpenAiCompatibleConfig>();
+  for (const provider of providers) {
+    const model = provider.model.trim();
+    if (!model || byModel.has(model)) continue;
+    byModel.set(model, { ...provider, model });
+  }
+  return [...byModel.values()].slice(0, 10);
+}
+
+function safeFailureMessage(error: unknown, apiKey?: string): string {
+  let message = error instanceof Error ? error.message : String(error);
+  if (apiKey) message = message.replaceAll(apiKey, "[REDACTED]");
+  return message.replace(/[\r\n]+/g, " ").slice(0, 500);
 }
 
 function winner<T extends string>(counts: Map<T, number>, rank: Record<T, number>): { value?: T; count: number; tied: boolean } {
@@ -144,5 +183,56 @@ export function buildReviewConsensus(
     dissentingModels,
     gate: consensusGates(reviews),
     interpretation: "model-consensus-not-scanner-evidence",
+  };
+}
+
+/**
+ * Execute independent defensive finding reviews with bounded concurrency and aggregate them.
+ * A secret finding can never cross this orchestration boundary with source context, even when a
+ * custom reviewer is injected. Provider failures are isolated and credentials are redacted from
+ * returned diagnostics. Fewer than the configured minimum successful reviewers yields an
+ * insufficient/uncertain consensus rather than silently lowering the requirement.
+ */
+export async function reviewFindingWithConsensus(
+  finding: Finding,
+  providers: readonly OpenAiCompatibleConfig[],
+  context?: FindingContext,
+  reviewInstructions?: string,
+  options: MultiReviewOptions = {},
+): Promise<MultiReviewConsensusResult> {
+  if (finding.category === "secret" && context) {
+    throw new Error("Source context is prohibited for secret findings at the multi-review boundary.");
+  }
+
+  const selected = uniqueProviders(providers);
+  const minimumReviewers = Math.max(2, Math.min(10, options.minimumReviewers ?? 2));
+  const concurrency = Math.max(1, Math.min(4, options.concurrency ?? 2));
+  const reviewer = options.reviewer ?? reviewFinding;
+  const queue = [...selected];
+  const reviews: AiFindingReview[] = [];
+  const failures: ReviewConsensusFailure[] = [];
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, queue.length)) }, async () => {
+    while (queue.length > 0) {
+      const provider = queue.shift();
+      if (!provider) return;
+      try {
+        const review = await reviewer(finding, provider, context, reviewInstructions);
+        reviews.push(review);
+      } catch (error) {
+        failures.push({
+          model: provider.model,
+          message: safeFailureMessage(error, provider.apiKey),
+        });
+      }
+    }
+  }));
+
+  reviews.sort((a, b) => a.model.localeCompare(b.model));
+  failures.sort((a, b) => a.model.localeCompare(b.model));
+  return {
+    reviews,
+    failures,
+    consensus: buildReviewConsensus(reviews, { minimumReviewers }),
   };
 }
