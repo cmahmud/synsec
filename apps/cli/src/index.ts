@@ -32,6 +32,7 @@ import {
   workflowFindings,
   type WorkflowDefinition,
 } from "@synsec/workflows";
+import { reconcileLifecycleFile, runTriage } from "./lifecycle.js";
 
 const VERSION = "0.2.0";
 const args = process.argv.slice(2);
@@ -92,6 +93,8 @@ Usage:
   synsec doctor [path] [--config <file>]
   synsec scan <path> [options]
   synsec review <report.json> [options]
+  synsec triage <report.json> --list [--store <file>]
+  synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>]
   synsec import-sarif <input.sarif> [options]
   synsec workflows
   synsec render <report.json> [--html <file>] [--sarif <file>]
@@ -108,7 +111,7 @@ Scan options:
   --fail-on <severity>     Exit non-zero when this severity or higher is found.
   --baseline <report>      Compare against a previous SynSec report.
   --json                   Print the report JSON to stdout.
-  --no-write               Do not write reports or the repository index.
+  --no-write               Do not write reports, lifecycle state, or the repository index.
   --ai                     Run optional AI triage after deterministic scanning.
   --workflow <id>          Restrict AI triage to a built-in defensive workflow.
   --ai-source              Allow source excerpts when the selected workflow permits it.
@@ -124,6 +127,9 @@ Review options:
   --ai-limit <n>           Maximum findings to review.
   --ai-base-url <url>      OpenAI-compatible API base URL.
   --ai-model <model>       Model ID.
+
+Triage states:
+  new, confirmed, false-positive, accepted-risk, fixed, regressed
 
 SARIF import options:
   --root <path>            Repository root represented by the imported findings (default: .).
@@ -319,7 +325,10 @@ async function scan(): Promise<void> {
 
   const paths = resolveReportPaths(root, config);
   const repositoryIndexPath = resolve(root, ".synsec/repository-index.json");
-  if (!flag("--no-write")) {
+  const persist = !flag("--no-write");
+  const lifecycle = await reconcileLifecycleFile(outcome.report, root, persist);
+
+  if (persist) {
     await Promise.all([
       writeReport(paths.json, outcome.report),
       writeHtml(paths.html, outcome.report),
@@ -347,6 +356,11 @@ async function scan(): Promise<void> {
       `Findings: ${outcome.report.findingCount} correlated (${outcome.report.rawFindingCount} raw) — ` +
       `${outcome.report.summary.critical} critical, ${outcome.report.summary.high} high, ` +
       `${outcome.report.summary.medium} medium, ${outcome.report.summary.low} low\n`,
+    );
+    console.log(
+      `Lifecycle: ${lifecycle.summary.new} new, ${lifecycle.summary.confirmed} confirmed, ` +
+      `${lifecycle.summary.falsePositive} false positive, ${lifecycle.summary.acceptedRisk} accepted risk, ` +
+      `${lifecycle.summary.fixed} fixed, ${lifecycle.summary.regressed} regressed\n`,
     );
     if (outcome.changedFiles) {
       console.log(`Changed-file scope: ${outcome.changedFiles.length} file(s) since ${outcome.changedBase ?? "base"}\n`);
@@ -377,11 +391,12 @@ async function scan(): Promise<void> {
       console.error(`Scanner unavailable: ${status.displayName}: ${status.availability.reason ?? "not installed"}`);
     }
 
-    if (!flag("--no-write")) {
-      console.log(`JSON:  ${paths.json}`);
-      console.log(`HTML:  ${paths.html}`);
-      console.log(`SARIF: ${paths.sarif}`);
-      console.log(`INDEX: ${repositoryIndexPath}`);
+    if (persist) {
+      console.log(`JSON:      ${paths.json}`);
+      console.log(`HTML:      ${paths.html}`);
+      console.log(`SARIF:     ${paths.sarif}`);
+      console.log(`INDEX:     ${repositoryIndexPath}`);
+      console.log(`LIFECYCLE: ${lifecycle.path}`);
     }
   }
 
@@ -408,6 +423,22 @@ async function review(): Promise<void> {
   const outputPath = explicitOutput ? resolve(explicitOutput) : resolve(dirname(reportPath), "ai-review.json");
   await writeAiReviews(outputPath, report, reviews, workflow);
   console.log(`Wrote ${Object.keys(reviews).length} AI review(s) to ${outputPath}`);
+}
+
+async function triage(): Promise<void> {
+  const reportArg = args[1];
+  if (!reportArg || reportArg.startsWith("--")) {
+    throw new Error("Usage: synsec triage <report.json> --list or synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>]");
+  }
+  const lines = await runTriage({
+    reportPath: reportArg,
+    fingerprint: args[2] && !args[2].startsWith("--") ? args[2] : undefined,
+    state: args[3] && !args[3].startsWith("--") ? args[3] : undefined,
+    note: option("--note"),
+    storePath: option("--store"),
+    listOnly: flag("--list"),
+  });
+  for (const line of lines) console.log(line);
 }
 
 async function importSarif(): Promise<void> {
@@ -483,6 +514,9 @@ async function main(): Promise<void> {
       break;
     case "review":
       await review();
+      break;
+    case "triage":
+      await triage();
       break;
     case "import-sarif":
       await importSarif();
