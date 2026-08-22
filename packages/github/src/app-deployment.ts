@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
+import type { GitHubWebhookSecret } from "./app.js";
 
 export type GitHubAppTlsMode = "local" | "terminated-upstream" | "none";
 export type GitHubAppDeploymentIssueLevel = "error" | "warning";
@@ -17,7 +18,7 @@ export interface GitHubAppScannerIsolationConfig {
 export interface GitHubAppDeploymentConfig {
   appId: number | string;
   privateKey: string;
-  webhookSecret: string;
+  webhookSecret: GitHubWebhookSecret;
   listenHost: string;
   tlsMode: GitHubAppTlsMode;
   stateDirectory: string;
@@ -32,6 +33,7 @@ export interface GitHubAppDeploymentIssue {
   code:
     | "invalid-app-id"
     | "invalid-private-key"
+    | "invalid-webhook-secret-set"
     | "weak-webhook-secret"
     | "invalid-listen-host"
     | "plaintext-public-listener"
@@ -52,6 +54,7 @@ export interface GitHubAppDeploymentReadiness {
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+const MAX_WEBHOOK_SECRET_BYTES = 4096;
 
 function isPositiveAppId(value: number | string): boolean {
   if (typeof value === "number") return Number.isSafeInteger(value) && value > 0;
@@ -82,6 +85,28 @@ function directoriesOverlap(left: string, right: string): boolean {
 
 function isolationLevel(config: GitHubAppDeploymentConfig): GitHubAppDeploymentIssueLevel {
   return config.requireScannerIsolation ? "error" : "warning";
+}
+
+function validateWebhookSecrets(config: GitHubAppDeploymentConfig, issues: GitHubAppDeploymentIssue[]): void {
+  const secrets = typeof config.webhookSecret === "string" ? [config.webhookSecret] : [...config.webhookSecret];
+  if (secrets.length < 1 || secrets.length > 2 || new Set(secrets.map((secret) => secret.trim())).size !== secrets.length) {
+    issues.push({
+      level: "error",
+      code: "invalid-webhook-secret-set",
+      message: "Webhook verification requires one secret, or exactly two distinct secrets during rotation overlap.",
+    });
+    return;
+  }
+  if (secrets.some((secret) => {
+    const bytes = Buffer.byteLength(secret, "utf8");
+    return bytes < 32 || bytes > MAX_WEBHOOK_SECRET_BYTES;
+  })) {
+    issues.push({
+      level: "error",
+      code: "weak-webhook-secret",
+      message: `Every webhook secret must contain between 32 and ${MAX_WEBHOOK_SECRET_BYTES} bytes.`,
+    });
+  }
 }
 
 function validateScannerIsolation(config: GitHubAppDeploymentConfig, issues: GitHubAppDeploymentIssue[]): void {
@@ -156,13 +181,7 @@ export function validateGitHubAppDeployment(
     });
   }
 
-  if (Buffer.byteLength(config.webhookSecret, "utf8") < 32) {
-    issues.push({
-      level: "error",
-      code: "weak-webhook-secret",
-      message: "Webhook secret must contain at least 32 bytes.",
-    });
-  }
+  validateWebhookSecrets(config, issues);
 
   if (!host || host === "*" || /[\s/]/.test(host)) {
     issues.push({
