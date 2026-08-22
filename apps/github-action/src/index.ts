@@ -1,7 +1,9 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { loadConfig } from "@synsec/config";
 import { runGitHubActionsRepositoryScan } from "@synsec/github/actions-runner";
+import { writeReport } from "@synsec/report";
 import {
   booleanInput,
   changedOnlyInput,
@@ -44,18 +46,23 @@ async function main(): Promise<void> {
     threshold: config.failOn,
   });
 
+  const reportPath = resolve(nonEmpty(process.env.RUNNER_TEMP) ?? tmpdir(), "synsec-report.json");
+  await writeReport(reportPath, result.outcome.report);
+  await chmod(reportPath, 0o600).catch(() => undefined);
+
   await Promise.all([
     writeOutput("security-score", result.outcome.report.securityScore),
     writeOutput("finding-count", result.outcome.report.findingCount),
     writeOutput("check-run-id", result.publication.publication.id),
     writeOutput("sarif-upload-id", result.sarifPublication?.id),
     writeOutput("baseline-source", result.baselineSource ?? "none"),
+    writeOutput("report-path", reportPath),
   ]);
 
   console.log(
     `SynSec scanned ${result.outcome.report.scope?.mode === "changed-files" ? "changed files" : "the repository"}: `
       + `${result.outcome.report.findingCount} finding(s), security score ${result.outcome.report.securityScore}/100.`
-      + ` Baseline: ${result.baselineSource ?? "none"}.`,
+      + ` Baseline: ${result.baselineSource ?? "none"}. Report: ${reportPath}.`,
   );
   if (result.outcome.shouldFail) process.exitCode = 1;
 }
