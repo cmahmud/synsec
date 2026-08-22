@@ -102,6 +102,8 @@ Scan options:
   --scanners <a,b,c>      Override enabled scanners for this run.
   --parallel <n>           Maximum scanners running at once.
   --timeout <seconds>      Per-scanner timeout.
+  --changed                Keep findings in files changed since a Git base ref.
+  --changed-base <ref>     Base ref for --changed (default: PR base or HEAD~1).
   --fail-on <severity>     Exit non-zero when this severity or higher is found.
   --baseline <report>      Compare against a previous SynSec report.
   --json                   Print the report JSON to stdout.
@@ -305,6 +307,8 @@ async function scan(): Promise<void> {
     config,
     baseline,
     toolVersion: VERSION,
+    changedOnly: flag("--changed"),
+    changedBase: option("--changed-base"),
   });
 
   const paths = resolveReportPaths(root, config);
@@ -336,6 +340,9 @@ async function scan(): Promise<void> {
       `${outcome.report.summary.critical} critical, ${outcome.report.summary.high} high, ` +
       `${outcome.report.summary.medium} medium, ${outcome.report.summary.low} low\n`,
     );
+    if (outcome.changedFiles) {
+      console.log(`Changed-file scope: ${outcome.changedFiles.length} file(s) since ${outcome.changedBase ?? "base"}\n`);
+    }
     const sbomPackages = (outcome.report.artifacts ?? [])
       .filter((artifact) => artifact.type === "sbom")
       .reduce((total, artifact) => total + artifact.packageCount, 0);
