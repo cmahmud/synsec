@@ -58,6 +58,19 @@ test("concurrent claims on one local queue instance are serialized", async () =>
   assert.equal(claimed[0].attempts, 1);
 });
 
+test("concurrent duplicate enqueues on one local queue instance persist only one delivery", async () => {
+  const { queue } = await setup();
+  const input = { deliveryId: "duplicate-race", installationId: 1, repository: "o/r", headSha: "a".repeat(40), event: "push" };
+  const results = await Promise.allSettled([queue.enqueue(input), queue.enqueue(input)]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const rejected = results.find((result) => result.status === "rejected");
+  assert.ok(rejected);
+  assert.match(String(rejected.reason), /already queued/);
+  const jobs = await queue.list();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].deliveryId, input.deliveryId);
+});
+
 test("expired leases can be reclaimed but active leases cannot", async () => {
   let now = Date.parse("2026-08-22T18:20:00.000Z");
   const { queue } = await setup({ now: () => now, leaseMs: 10_000 });
