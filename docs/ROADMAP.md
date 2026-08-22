@@ -119,10 +119,11 @@ These workflows operate on repository evidence and scanner results. They are not
 - [x] Durable local installation authorization state
 - [x] Installation/repository-selection event synchronization into authorization state
 - [x] Replay-protected authorization-gated local webhook handler
+- [x] Bounded framework-free webhook HTTP handler for deployment behind HTTPS
 - [x] Installation-scoped exact-commit GitHub repository acquisition primitive
 - [x] Authorization-aware local scan worker with commit-bound report verification
 - [x] Local worker composition through the existing scan engine and Checks/SARIF publishers
-- [ ] Minimal hosted HTTPS service and concrete App credential/token wiring
+- [ ] Hosted TLS/runtime service and concrete App credential/token wiring
 - [ ] Repository installation/setup UX and permission diagnostics
 - [ ] Exact-base acquisition for hosted changed-file PR scans
 - [ ] Transactional shared App state/queue for multi-host deployment
@@ -135,7 +136,7 @@ For PRs without an explicit baseline, the Action can scan the exact event-provid
 
 The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
-GitHub App support now has a coherent local hosting path rather than disconnected primitives: verified deliveries are replay-claimed, installation-management events synchronize bounded authorization state, scan-bearing events require authorization before durable queueing, workers recheck authorization at execution time, exact queued commits are acquired through a fixed GitHub transport, and `runScanEngine()` output must bind to that exact head before Checks/SARIF publication. Failed durable webhook processing releases only the exact still-current replay claim so GitHub can retry. This is still not a deployable hosted service: the HTTPS process, App credential configuration, OS/container isolation, setup UX, and shared transactional storage remain open. See [GITHUB_APP.md](./GITHUB_APP.md).
+GitHub App support now has a coherent local hosting path rather than disconnected primitives: a bounded HTTP handler accepts raw deliveries behind HTTPS; verified deliveries are replay-claimed; installation-management events synchronize bounded authorization state; scan-bearing events require authorization before durable queueing; workers recheck authorization at execution time; exact queued commits are acquired through a fixed GitHub transport; and `runScanEngine()` output must bind to that exact head before Checks/SARIF publication. Failed durable webhook processing releases only the exact still-current replay claim so GitHub can retry. This is still not a deployable hosted service: TLS/runtime deployment, concrete App credential configuration, OS/container isolation, setup UX, and shared transactional storage remain open. See [GITHUB_APP.md](./GITHUB_APP.md).
 
 See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
 
