@@ -37,9 +37,10 @@ test("scan queue leases, releases, and completes work deterministically", async 
   const leased = await queue.claimNext();
   assert.equal(leased.jobId, first.jobId);
   assert.equal(leased.attempts, 1);
-  await queue.release(leased.jobId);
-  assert.equal((await queue.claimNext()).jobId, first.jobId);
-  assert.equal(await queue.complete(first.jobId), true);
+  await queue.release(leased.jobId, leased.attempts);
+  const reclaimed = await queue.claimNext();
+  assert.equal(reclaimed.jobId, first.jobId);
+  assert.equal(await queue.complete(first.jobId, reclaimed.attempts), true);
   assert.equal((await queue.claimNext()).repository, "o/b");
 });
 
@@ -55,6 +56,32 @@ test("expired leases can be reclaimed but active leases cannot", async () => {
   assert.equal(second.attempts, 2);
 });
 
+test("stale lease generations cannot release, fail, or complete reclaimed work", async () => {
+  let now = Date.parse("2026-08-22T18:20:00.000Z");
+  const { queue } = await setup({ now: () => now, leaseMs: 10_000 });
+  await queue.enqueue({ deliveryId: "fence", installationId: 2, repository: "o/r", headSha: "c".repeat(40), event: "push" });
+  const first = await queue.claimNext();
+  now += 10_001;
+  const second = await queue.claimNext();
+  assert.equal(second.attempts, first.attempts + 1);
+
+  await assert.rejects(() => queue.release(first.jobId, first.attempts), /stale or no longer owned/);
+  await assert.rejects(() => queue.fail(first.jobId, first.attempts), /stale or no longer owned/);
+  await assert.rejects(() => queue.complete(first.jobId, first.attempts), /stale or no longer owned/);
+  assert.equal((await queue.list())[0].attempts, second.attempts);
+  assert.equal((await queue.list())[0].status, "leased");
+});
+
+test("expired lease generations cannot mutate work even before another worker reclaims it", async () => {
+  let now = Date.parse("2026-08-22T18:20:00.000Z");
+  const { queue } = await setup({ now: () => now, leaseMs: 10_000 });
+  await queue.enqueue({ deliveryId: "expired", installationId: 2, repository: "o/r", headSha: "c".repeat(40), event: "push" });
+  const leased = await queue.claimNext();
+  now += 10_001;
+  await assert.rejects(() => queue.assertLease(leased.jobId, leased.attempts), /lease has expired/);
+  await assert.rejects(() => queue.release(leased.jobId, leased.attempts), /lease has expired/);
+});
+
 test("queue rejects duplicate deliveries and malformed PR jobs", async () => {
   const { queue } = await setup();
   await queue.enqueue({ deliveryId: "same", installationId: 3, repository: "o/r", headSha: "d".repeat(40), event: "push" });
@@ -66,7 +93,7 @@ test("failed jobs are retained and not claimed again", async () => {
   const { queue } = await setup();
   await queue.enqueue({ deliveryId: "fail", installationId: 4, repository: "o/r", headSha: "f".repeat(40), event: "push" });
   const leased = await queue.claimNext();
-  const failed = await queue.fail(leased.jobId);
+  const failed = await queue.fail(leased.jobId, leased.attempts);
   assert.equal(failed.status, "failed");
   assert.equal(await queue.claimNext(), undefined);
   assert.equal((await queue.list())[0].status, "failed");
