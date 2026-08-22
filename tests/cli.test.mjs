@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildReport } from "../packages/report/dist/index.js";
 
 const exec = promisify(execFile);
 const cli = new URL("../apps/cli/dist/index.js", import.meta.url);
@@ -22,9 +23,10 @@ test("CLI lists capability-scoped defensive workflows", async () => {
   assert.match(stdout, /external network assessment: forbidden/);
 });
 
-test("CLI help documents finding lifecycle triage", async () => {
+test("CLI help documents finding lifecycle triage and remediation verification", async () => {
   const { stdout } = await exec(process.execPath, [cli.pathname, "help"]);
   assert.match(stdout, /synsec triage <report\.json>/);
+  assert.match(stdout, /synsec verify <before\.json> <after\.json>/);
   assert.match(stdout, /false-positive/);
   assert.match(stdout, /accepted-risk/);
 });
@@ -129,6 +131,55 @@ test("CLI triage persists explicit lifecycle decisions and lists them", async ()
     ]);
     assert.match(listed.stdout, /confirmed/);
     assert.match(listed.stdout, /Review me/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI verify confirms a remediation only when the detecting scanner reran over repository scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-verify-test-"));
+  try {
+    const scan = {
+      scanner: "fixture",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:01.000Z",
+      target: { path: root },
+      diagnostics: [],
+      findings: [{
+        id: "A",
+        title: "Finding A",
+        category: "sast",
+        severity: "high",
+        confidence: 1,
+        scanner: { name: "fixture", ruleId: "A" },
+        location: { path: "src/A.ts", startLine: 1 },
+      }],
+    };
+    const before = buildReport({ target: { path: root }, scans: [scan], scope: { mode: "repository" } });
+    const after = buildReport({
+      target: { path: root },
+      scans: [{ ...scan, findings: [] }],
+      scope: { mode: "repository" },
+    });
+    const beforePath = join(root, "before.json");
+    const afterPath = join(root, "after.json");
+    const outputPath = join(root, "verification.json");
+    await writeFile(beforePath, JSON.stringify(before), "utf8");
+    await writeFile(afterPath, JSON.stringify(after), "utf8");
+
+    const result = await exec(process.execPath, [
+      cli.pathname,
+      "verify",
+      beforePath,
+      afterPath,
+      "--output",
+      outputPath,
+    ]);
+    assert.match(result.stdout, /1 fixed/);
+    assert.match(result.stdout, /\[FIXED\] Finding A/);
+    const verification = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(verification.summary.fixed, 1);
+    assert.equal(verification.summary.inconclusive, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
