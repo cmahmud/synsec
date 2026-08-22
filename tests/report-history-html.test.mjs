@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { renderHistoryHtml } from "../packages/report/dist/history-html.js";
+import { renderHistoryHtml, writeHistoryHtmlFromStore } from "../packages/report/dist/history-html.js";
 
 function history() {
   return {
@@ -80,4 +83,34 @@ test("renderHistoryHtml handles empty history without malformed metrics", () => 
   assert.match(html, /No scan history is available yet/);
   assert.match(html, /Active findings<\/span><strong>0/);
   assert.equal(html.includes("NaN"), false);
+});
+
+test("writeHistoryHtmlFromStore renders a trend-safe store to a restrictive local file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-history-html-"));
+  try {
+    const storePath = join(root, "history.json");
+    const outputPath = join(root, "dashboard", "index.html");
+    await writeFile(storePath, JSON.stringify({
+      schemaVersion: 1,
+      reports: [{
+        reportId: "stored",
+        generatedAt: "2026-08-22T12:00:00.000Z",
+        target: { commitSha: "abcdef1234567890", branch: "main" },
+        securityScore: 94,
+        findingCount: 1,
+        summary: { critical: 0, high: 0, medium: 1, low: 0, info: 0, unknown: 0 },
+        findings: [{ fingerprint: "fp", primary: { title: "Stored finding", severity: "medium" } }],
+      }],
+    }));
+
+    const built = await writeHistoryHtmlFromStore(storePath, outputPath, { title: "Stored history" });
+    const html = await readFile(outputPath, "utf8");
+    const info = await stat(outputPath);
+    assert.equal(built.points.length, 1);
+    assert.match(html, /Stored history/);
+    assert.match(html, /94\/100/);
+    if (process.platform !== "win32") assert.equal(info.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
