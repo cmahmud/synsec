@@ -6,13 +6,14 @@ import {
   lifecycleSummary,
   reconcileLifecycle,
   setFindingState,
+  verifyRemediation,
 } from "../packages/lifecycle/dist/index.js";
 
-function reportWith(ruleIds) {
+function reportWith(ruleIds, options = {}) {
   return buildReport({
     target: { path: "/repo" },
     scans: [{
-      scanner: "fixture",
+      scanner: options.scanner ?? "fixture",
       startedAt: "2026-01-01T00:00:00.000Z",
       completedAt: "2026-01-01T00:00:01.000Z",
       target: { path: "/repo" },
@@ -23,10 +24,11 @@ function reportWith(ruleIds) {
         category: "sast",
         severity: "high",
         confidence: 1,
-        scanner: { name: "fixture", ruleId },
+        scanner: { name: options.scanner ?? "fixture", ruleId },
         location: { path: `src/${ruleId}.ts`, startLine: 1 },
       })),
     }],
+    scope: options.scope ?? { mode: "repository" },
   });
 }
 
@@ -70,4 +72,41 @@ test("false-positive and accepted-risk decisions are not rewritten just because 
   const next = reconcileLifecycle(reportWith([]), store);
   assert.equal(next.records[a].state, "false-positive");
   assert.equal(next.records[b].state, "accepted-risk");
+});
+
+test("remediation verification only calls a missing finding fixed when detecting coverage was repeated", () => {
+  const before = reportWith(["A"]);
+  const fingerprint = before.findings[0].fingerprint;
+  const after = reportWith([]);
+  const verification = verifyRemediation(before, after, [fingerprint], "2026-01-02T00:00:00.000Z");
+  assert.equal(verification.items[0].status, "fixed");
+  assert.equal(verification.summary.fixed, 1);
+});
+
+test("remediation verification is inconclusive when the detecting scanner did not rerun", () => {
+  const before = reportWith(["A"], { scanner: "fixture" });
+  const after = reportWith([], { scanner: "different-scanner" });
+  const verification = verifyRemediation(before, after);
+  assert.equal(verification.items[0].status, "inconclusive");
+  assert.match(verification.items[0].reasons.join(" "), /None of the scanner/);
+});
+
+test("changed-file verification is inconclusive when the affected path was outside the rescan scope", () => {
+  const before = reportWith(["A"]);
+  const after = reportWith([], {
+    scope: { mode: "changed-files", baseRef: "main", changedFiles: ["src/B.ts"] },
+  });
+  const verification = verifyRemediation(before, after);
+  assert.equal(verification.items[0].status, "inconclusive");
+  assert.match(verification.items[0].reasons.join(" "), /did not scan the finding path/);
+});
+
+test("remediation verification reports persisting and newly introduced findings", () => {
+  const before = reportWith(["A"]);
+  const after = reportWith(["A", "B"]);
+  const verification = verifyRemediation(before, after);
+  assert.equal(verification.items[0].status, "persisting");
+  assert.equal(verification.summary.persisting, 1);
+  assert.equal(verification.summary.newFindings, 1);
+  assert.equal(verification.newFindings.length, 1);
 });
