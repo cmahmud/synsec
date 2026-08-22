@@ -19,6 +19,8 @@ export interface RouteSignal {
   method: string;
   route: string;
   frameworkHint?: string;
+  /** Conservative same-line named-handler candidate; never inferred from dynamic expressions. */
+  handler?: string;
 }
 
 export interface AuthSignal {
@@ -134,6 +136,14 @@ function collectModuleEdges(path: string, content: string): ModuleEdge[] {
   return edges;
 }
 
+function namedNodeRouteHandler(line: string): string | undefined {
+  const match = line.match(/\b(?:app|router|server)\.(?:get|post|put|patch|delete|options|head)\s*\(\s*(?:"[^"]*"|'[^']*'|`[^`]*`)\s*,\s*([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)\s*\)\s*;?\s*(?:\/\/.*)?$/i);
+  const argumentsList = match?.[1];
+  if (!argumentsList) return undefined;
+  const names = argumentsList.split(",").map((value) => value.trim()).filter(Boolean);
+  return names.at(-1);
+}
+
 function collectRoutes(path: string, content: string): RouteSignal[] {
   const routes: RouteSignal[] = [];
   const lines = content.split(/\r?\n/);
@@ -144,7 +154,15 @@ function collectRoutes(path: string, content: string): RouteSignal[] {
 
     const express = line.match(/\b(?:app|router|server)\.(get|post|put|patch|delete|options|head|use)\s*\(\s*["'`]([^"'`]+)["'`]/i);
     if (express?.[1] && express[2]) {
-      routes.push({ path, line: lineNumber, method: express[1].toUpperCase(), route: express[2], frameworkHint: "Node HTTP router" });
+      const handler = namedNodeRouteHandler(line);
+      routes.push({
+        path,
+        line: lineNumber,
+        method: express[1].toUpperCase(),
+        route: express[2],
+        frameworkHint: "Node HTTP router",
+        ...(handler ? { handler } : {}),
+      });
       continue;
     }
 
