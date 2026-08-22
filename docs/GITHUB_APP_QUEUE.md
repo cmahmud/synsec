@@ -38,6 +38,14 @@ The previous worker's fence is immediately stale. It cannot release, fail, compl
 
 This protects against a common failure mode where a slow or paused worker resumes after another worker has already taken ownership.
 
+## Operational status
+
+The aggregate runtime status reports `queue.expiredLeases` in addition to total, pending, leased, and failed counts. An expired lease is still a durable `leased` record, so it contributes to both `leased` and `expiredLeases`; the second count identifies the subset that is already eligible for reclaim.
+
+The status remains identity-free. It does not expose repository names, installation ids, delivery ids, commit SHAs, job ids, lease ids, source paths, or scanner output.
+
+A non-zero `expiredLeases` value is an operator signal rather than proof of data loss. It can mean a worker process exited, was paused longer than its lease, or failed to renew. A healthy worker loop should reclaim eligible work on its next claim pass. Repeated or growing expired-lease counts should prompt inspection of worker liveness, scanner duration, resource pressure, and service supervision before operators change lease settings.
+
 ## Retry and terminal state
 
 Recoverable worker failures release the exact currently leased job back to `pending`. Terminal authorization revocation can move the exact current lease to `failed`. Successful completion deletes only the exact current leased record after fenced validation.
