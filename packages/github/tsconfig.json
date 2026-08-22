@@ -6,8 +6,11 @@
     "rootDir": "src"
   },
   "references": [
+    { "path": "../config" },
     { "path": "../core" },
-    { "path": "../report" }
+    { "path": "../report" },
+    { "path": "../scanner-sdk" },
+    { "path": "../engine" }
   ],
   "include": ["src/**/*.ts"]
 }
