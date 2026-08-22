@@ -17,6 +17,8 @@ export interface FindingLifecycleRecord {
   updatedAt: string;
   note?: string;
   reportId?: string;
+  /** Last source path observed for scope-aware incremental reconciliation. */
+  lastSeenPath?: string;
 }
 
 export interface FindingLifecycleStore {
@@ -102,13 +104,17 @@ export function setFindingState(
     schemaVersion: 1,
     records: { ...store.records },
   };
+  const previous = store.records[fingerprint];
   const record: FindingLifecycleRecord = {
     fingerprint,
     state,
     updatedAt: options.updatedAt ?? new Date().toISOString(),
   };
-  if (options.note?.trim()) record.note = options.note.trim();
-  if (options.reportId) record.reportId = options.reportId;
+  const note = options.note?.trim() || previous?.note;
+  if (note) record.note = note;
+  const reportId = options.reportId ?? previous?.reportId;
+  if (reportId) record.reportId = reportId;
+  if (previous?.lastSeenPath) record.lastSeenPath = previous.lastSeenPath;
   updated.records[fingerprint] = record;
   return updated;
 }
@@ -125,28 +131,50 @@ function autoTransition(previous: FindingLifecycleRecord | undefined, present: b
   return previous.state;
 }
 
+function normalizePath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
+}
+
+function reportCanConcludeAbsence(report: SynSecReport, previous: FindingLifecycleRecord): boolean {
+  if (report.scope?.mode === "repository") return true;
+  if (report.scope?.mode !== "changed-files" || !previous.lastSeenPath) return false;
+  const changed = new Set((report.scope.changedFiles ?? []).map(normalizePath));
+  return changed.has(normalizePath(previous.lastSeenPath));
+}
+
 export function reconcileLifecycle(
   report: SynSecReport,
   previous: FindingLifecycleStore,
   updatedAt = new Date().toISOString(),
 ): FindingLifecycleStore {
-  const currentFingerprints = new Set(report.findings.map((finding) => finding.fingerprint));
-  const all = new Set([...Object.keys(previous.records), ...currentFingerprints]);
+  const currentByFingerprint = new Map(report.findings.map((finding) => [finding.fingerprint, finding]));
+  const all = new Set([...Object.keys(previous.records), ...currentByFingerprint.keys()]);
   const next: FindingLifecycleStore = { schemaVersion: 1, records: {} };
 
   for (const fingerprint of all) {
     const prior = previous.records[fingerprint];
-    const present = currentFingerprints.has(fingerprint);
-    const state = autoTransition(prior, present);
+    const current = currentByFingerprint.get(fingerprint);
+    const present = Boolean(current);
+    const absenceCovered = prior ? reportCanConcludeAbsence(report, prior) : false;
+    const state = present
+      ? autoTransition(prior, true)
+      : absenceCovered
+        ? autoTransition(prior, false)
+        : prior?.state;
     if (!state) continue;
 
+    const stateChanged = prior?.state !== state;
     const record: FindingLifecycleRecord = {
       fingerprint,
       state,
-      updatedAt: prior?.state === state ? prior.updatedAt : updatedAt,
-      reportId: report.reportId,
+      updatedAt: stateChanged ? updatedAt : (prior?.updatedAt ?? updatedAt),
     };
+
+    if (present || absenceCovered) record.reportId = report.reportId;
+    else if (prior?.reportId) record.reportId = prior.reportId;
     if (prior?.note) record.note = prior.note;
+    const lastSeenPath = current?.primary.location?.path ?? prior?.lastSeenPath;
+    if (lastSeenPath) record.lastSeenPath = lastSeenPath;
     next.records[fingerprint] = record;
   }
 
@@ -181,10 +209,6 @@ export function currentLifecycleRecords(
   return Object.values(store.records)
     .filter((record) => current.has(record.fingerprint))
     .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
-}
-
-function normalizePath(value: string): string {
-  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
 }
 
 function afterScopeCoversFinding(after: SynSecReport, finding: CorrelatedFinding): { covered: boolean; reason?: string } {
