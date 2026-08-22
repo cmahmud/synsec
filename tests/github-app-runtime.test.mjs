@@ -25,7 +25,7 @@ async function textFiles(root) {
   return result;
 }
 
-test("local App runtime composes durable stores and an idle worker without persisting credentials", async () => {
+test("local App runtime composes durable stores, maintenance, and an idle worker without persisting credentials", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-app-runtime-"));
   const stateDirectory = join(root, "state");
   const workspaceRoot = join(root, "workspaces");
@@ -44,6 +44,10 @@ test("local App runtime composes durable stores and an idle worker without persi
   assert.equal(runtime.workspaceRoot, workspaceRoot);
   assert.equal(typeof runtime.webhookHandler, "function");
   assert.deepEqual(await runtime.runWorkerOnce(), { status: "idle" });
+  assert.deepEqual(await runtime.runMaintenance(), {
+    expiredReplayRecordsDeleted: 0,
+    failedJobs: { inspected: 0, deleted: 0, retainedFailed: 0 },
+  });
 
   const persisted = (await textFiles(stateDirectory)).join("\n");
   assert.equal(persisted.includes(webhookSecret), false);
