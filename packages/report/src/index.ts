@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   CorrelatedFinding,
@@ -177,9 +177,14 @@ export async function readReport(path: string): Promise<SynSecReport> {
   return parsed;
 }
 
-export async function writeReport(path: string, report: SynSecReport): Promise<void> {
+async function writePrivateFile(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+  await chmod(path, 0o600).catch(() => undefined);
+}
+
+export async function writeReport(path: string, report: SynSecReport): Promise<void> {
+  await writePrivateFile(path, `${JSON.stringify(report, null, 2)}\n`);
 }
 
 function sarifLevel(severity: Severity): "error" | "warning" | "note" | "none" {
@@ -273,8 +278,7 @@ export function toSarif(report: SynSecReport): Record<string, unknown> {
 }
 
 export async function writeSarif(path: string, report: SynSecReport): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(toSarif(report), null, 2)}\n`, "utf8");
+  await writePrivateFile(path, `${JSON.stringify(toSarif(report), null, 2)}\n`);
 }
 
 function escapeHtml(value: string): string {
@@ -345,8 +349,7 @@ export function renderHtml(report: SynSecReport): string {
 }
 
 export async function writeHtml(path: string, report: SynSecReport): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, renderHtml(report), "utf8");
+  await writePrivateFile(path, renderHtml(report));
 }
 
 export function findingIsNew(report: SynSecReport, finding: CorrelatedFinding): boolean {
