@@ -66,6 +66,42 @@ test("detectGitHubContext extracts safe repository and pull-request metadata", (
   assert.equal(detectGitHubContext({ GITHUB_REPOSITORY: "bad repo", GITHUB_SHA: "abc" }), undefined);
 });
 
+test("pull-request event payload overrides the synthetic merge SHA", () => {
+  const context = detectGitHubContext(
+    {
+      GITHUB_REPOSITORY: "cmahmud/synsec",
+      GITHUB_SHA: "synthetic-merge-sha",
+      GITHUB_REF: "refs/pull/42/merge",
+      GITHUB_BASE_REF: "stale-base",
+      GITHUB_HEAD_REF: "stale-head",
+    },
+    {
+      repository: { full_name: "cmahmud/synsec" },
+      pull_request: {
+        number: 42,
+        head: { sha: "real-head-sha", ref: "feature/security" },
+        base: { ref: "main" },
+      },
+    },
+  );
+
+  assert.equal(context.sha, "real-head-sha");
+  assert.equal(context.pullRequestNumber, 42);
+  assert.equal(context.baseRef, "main");
+  assert.equal(context.headRef, "feature/security");
+});
+
+test("push payload can supply repository and after SHA", () => {
+  assert.deepEqual(
+    detectGitHubContext({}, {
+      repository: { full_name: "cmahmud/synsec" },
+      after: "push-head",
+      ref: "refs/heads/main",
+    }),
+    { repository: "cmahmud/synsec", sha: "push-head", ref: "refs/heads/main" },
+  );
+});
+
 test("GitHub annotations normalize paths, collapse newlines, and use severity levels", () => {
   const [annotation] = buildGitHubAnnotations(report());
   assert.equal(annotation.path, "src/handler.ts");
