@@ -144,6 +144,7 @@ export function parseVerifiedGitHubInstallationStateEvent(input: {
   if (!account) throw new Error("GitHub installation webhook is missing account metadata.");
   const selection = repositorySelection(installation.repository_selection);
   const repositories = selection === "all" ? [] : repositoryList(payload.repositories, "GitHub installation repositories");
+  const suspendedAt = optionalTimestamp(installation.suspended_at);
 
   return {
     event: input.eventName,
@@ -152,7 +153,7 @@ export function parseVerifiedGitHubInstallationStateEvent(input: {
     accountLogin: requiredString(account.login, "GitHub installation account login", MAX_LOGIN_LENGTH),
     accountType: accountType(account.type),
     repositorySelection: selection,
-    ...(optionalTimestamp(installation.suspended_at) ? { suspendedAt: optionalTimestamp(installation.suspended_at) } : {}),
+    ...(suspendedAt ? { suspendedAt } : {}),
     repositories,
     repositoriesAdded: repositoryList(payload.repositories_added, "GitHub added repositories"),
     repositoriesRemoved: repositoryList(payload.repositories_removed, "GitHub removed repositories"),
@@ -215,11 +216,15 @@ export async function synchronizeGitHubInstallationState(
 
   let repositories: string[] | undefined;
   if (metadata.repositorySelection === "selected") {
-    repositories = event.repositories.length > 0
-      ? event.repositories
-      : existing?.repositorySelection === "selected"
-        ? existing.repositories
-        : [];
+    if (event.action === "created") {
+      repositories = event.repositories;
+    } else {
+      repositories = event.repositories.length > 0
+        ? event.repositories
+        : existing?.repositorySelection === "selected"
+          ? existing.repositories
+          : [];
+    }
   }
 
   const suspendedAt = event.action === "unsuspend"
