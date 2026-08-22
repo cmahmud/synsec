@@ -108,8 +108,9 @@ See [GITHUB.md](./GITHUB.md) for the current integration contract and security b
 ## Phase 6 — Persistent web application
 
 - [x] Deterministic report-history aggregation for score, finding count, churn, and finding lifetime
+- [x] Bounded local scan-history store with atomic writes and trend-safe snapshots
 - [ ] Project/repository dashboard
-- [ ] Persisted scan history store
+- [ ] Multi-project/server persistence layer
 - [ ] Security-score history UI
 - [ ] New/fixed/regressed views
 - [ ] Finding detail page with source evidence
@@ -118,7 +119,7 @@ See [GITHUB.md](./GITHUB.md) for the current integration contract and security b
 - [ ] Team triage workflow
 - [ ] Finding comments/ownership
 
-The history primitive derives trends from existing normalized reports without retaining additional source excerpts or secret material. Persistent storage and the web UI remain future work.
+The local history store retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. A multi-project database and web UI remain future work.
 
 ## Phase 7 — Isolated scan workers
 
