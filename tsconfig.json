@@ -6,6 +6,7 @@
     { "path": "./packages/report" },
     { "path": "./packages/repository" },
     { "path": "./packages/lifecycle" },
+    { "path": "./packages/dashboard" },
     { "path": "./packages/workflows" },
     { "path": "./packages/ai" },
     { "path": "./packages/scanner-sdk" },
