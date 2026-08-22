@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   assertWorkflowSourceContextAllowed,
+  builtInWorkflows,
   getWorkflow,
   workflowFindings,
 } from "../packages/workflows/dist/index.js";
@@ -45,10 +46,34 @@ test("secrets workflow prohibits source-context transmission", () => {
   assert.doesNotThrow(() => assertWorkflowSourceContextAllowed(workflow, false));
 });
 
-test("all built-in workflows prohibit external network assessment", () => {
-  for (const id of ["repository-review", "dependency-review", "secrets-review", "infrastructure-review"]) {
-    const workflow = getWorkflow(id);
-    assert.ok(workflow);
+test("fix verification workflow requires deterministic report and lifecycle evidence", () => {
+  const workflow = getWorkflow("fix-verification");
+  assert.ok(workflow);
+  assert.equal(workflow.categories, "all");
+  assert.equal(workflow.sourceContextAllowed, true);
+  assert.ok(workflow.capabilities.includes("read-scan-reports"));
+  assert.ok(workflow.capabilities.includes("read-lifecycle-state"));
+  assert.match(workflow.reviewInstructions, /deterministic remediation verification/i);
+  assert.match(workflow.reviewInstructions, /inconclusive/i);
+});
+
+test("report writing workflow cannot request source context", () => {
+  const workflow = getWorkflow("report-writing");
+  assert.ok(workflow);
+  assert.equal(workflow.categories, "all");
+  assert.equal(workflow.sourceContextAllowed, false);
+  assert.ok(workflow.capabilities.includes("read-normalized-findings"));
+  assert.ok(workflow.capabilities.includes("read-lifecycle-state"));
+  assert.throws(
+    () => assertWorkflowSourceContextAllowed(workflow, true),
+    /does not permit source context/,
+  );
+});
+
+test("all built-in workflows prohibit external network assessment and require approval for writes", () => {
+  const workflows = builtInWorkflows();
+  assert.ok(workflows.length >= 6);
+  for (const workflow of workflows) {
     assert.equal(workflow.externalNetworkAssessment, "forbidden");
     assert.equal(workflow.repositoryWriteRequiresApproval, true);
   }
