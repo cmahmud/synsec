@@ -12,7 +12,8 @@
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-sink-context": "./dist/route-sink-context.js",
     "./posture": "./dist/posture.js",
-    "./test-ownership": "./dist/test-ownership.js"
+    "./test-ownership": "./dist/test-ownership.js",
+    "./incremental-plan": "./dist/incremental-plan.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
