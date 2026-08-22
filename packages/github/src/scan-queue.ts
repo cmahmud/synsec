@@ -184,6 +184,8 @@ export class FileGitHubScanQueue {
   readonly directory: string;
   readonly leaseMs: number;
   private readonly now: () => number;
+  /** Serialize claims within this queue instance. Cross-process/multi-host atomicity is intentionally not claimed. */
+  private claimTail: Promise<void> = Promise.resolve();
 
   constructor(directory: string, options: GitHubScanQueueOptions = {}) {
     const normalized = directory.trim();
@@ -233,27 +235,41 @@ export class FileGitHubScanQueue {
   }
 
   async claimNext(): Promise<GitHubScanJob | undefined> {
-    const now = this.now();
-    if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub scan-queue clock must be a positive timestamp.");
-    const jobs = await this.list();
-    const candidate = jobs.find((job) => job.status === "pending" || (job.status === "leased" && Date.parse(job.leaseUntil ?? "") <= now));
-    if (!candidate) return undefined;
-    if (candidate.attempts >= MAX_ATTEMPTS) {
-      const failed = { ...candidate, status: "failed" as const };
-      delete failed.leaseUntil;
-      delete failed.leaseId;
-      await writeJob(this.directory, failed);
-      return this.claimNext();
+    let release!: () => void;
+    const previous = this.claimTail;
+    this.claimTail = new Promise<void>((resolveClaim) => { release = resolveClaim; });
+    await previous;
+    try {
+      return await this.claimNextSerialized();
+    } finally {
+      release();
     }
-    const leased: GitHubScanJob = {
-      ...candidate,
-      attempts: candidate.attempts + 1,
-      status: "leased",
-      leaseUntil: new Date(now + this.leaseMs).toISOString(),
-      leaseId: randomBytes(16).toString("hex"),
-    };
-    await writeJob(this.directory, leased);
-    return leased;
+  }
+
+  private async claimNextSerialized(): Promise<GitHubScanJob | undefined> {
+    while (true) {
+      const now = this.now();
+      if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub scan-queue clock must be a positive timestamp.");
+      const jobs = await this.list();
+      const candidate = jobs.find((job) => job.status === "pending" || (job.status === "leased" && Date.parse(job.leaseUntil ?? "") <= now));
+      if (!candidate) return undefined;
+      if (candidate.attempts >= MAX_ATTEMPTS) {
+        const failed = { ...candidate, status: "failed" as const };
+        delete failed.leaseUntil;
+        delete failed.leaseId;
+        await writeJob(this.directory, failed);
+        continue;
+      }
+      const leased: GitHubScanJob = {
+        ...candidate,
+        attempts: candidate.attempts + 1,
+        status: "leased",
+        leaseUntil: new Date(now + this.leaseMs).toISOString(),
+        leaseId: randomBytes(16).toString("hex"),
+      };
+      await writeJob(this.directory, leased);
+      return leased;
+    }
   }
 
   async assertLease(jobIdValue: string, expectedLeaseId: string): Promise<GitHubScanJob> {
