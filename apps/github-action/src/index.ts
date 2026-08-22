@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { loadConfig } from "@synsec/config";
 import { runGitHubActionsRepositoryScan } from "@synsec/github/actions-runner";
-import { writeReport } from "@synsec/report";
+import { writeReport, type SynSecReport } from "@synsec/report";
 import {
   booleanInput,
   changedOnlyInput,
@@ -16,6 +16,43 @@ async function writeOutput(name: string, value: string | number | undefined): Pr
   if (!path || value === undefined) return;
   const normalized = String(value).replace(/[\r\n]/g, "");
   await appendFile(path, `${name}=${normalized}\n`, "utf8");
+}
+
+async function writeStepSummary(report: SynSecReport, baselineSource: string): Promise<void> {
+  const path = nonEmpty(process.env.GITHUB_STEP_SUMMARY);
+  if (!path) return;
+  const delta = report.baseline;
+  const lines = [
+    "## SynSec repository security",
+    "",
+    `**Security score:** ${report.securityScore}/100  `,
+    `**Findings:** ${report.findingCount}  `,
+    `**Scope:** ${report.scope?.mode === "changed-files" ? "changed files" : "full repository"}  `,
+    `**Baseline:** ${baselineSource}`,
+    "",
+    "| Severity | Count |",
+    "| --- | ---: |",
+    `| Critical | ${report.summary.critical} |`,
+    `| High | ${report.summary.high} |`,
+    `| Medium | ${report.summary.medium} |`,
+    `| Low | ${report.summary.low} |`,
+    `| Info | ${report.summary.info} |`,
+    `| Unknown | ${report.summary.unknown} |`,
+  ];
+  if (delta) {
+    lines.push(
+      "",
+      "### Baseline delta",
+      "",
+      `New: **${delta.new.length}** · Fixed: **${delta.fixed.length}** · Persisting: **${delta.persisting.length}**`,
+    );
+  }
+  lines.push(
+    "",
+    "_This summary intentionally contains aggregate metadata only. Review the normalized report/check annotations for finding details._",
+    "",
+  );
+  await appendFile(path, `${lines.join("\n")}\n`, "utf8");
 }
 
 async function main(): Promise<void> {
@@ -49,6 +86,7 @@ async function main(): Promise<void> {
   const reportPath = resolve(nonEmpty(process.env.RUNNER_TEMP) ?? tmpdir(), "synsec-report.json");
   await writeReport(reportPath, result.outcome.report);
   await chmod(reportPath, 0o600).catch(() => undefined);
+  await writeStepSummary(result.outcome.report, result.baselineSource ?? "none");
 
   await Promise.all([
     writeOutput("security-score", result.outcome.report.securityScore),
