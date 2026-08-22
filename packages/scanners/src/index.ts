@@ -15,6 +15,7 @@ export { GitleaksAdapter, parseGitleaksJson } from "./gitleaks.js";
 export { GrypeAdapter, parseGrypeJson } from "./grype.js";
 export { OpengrepAdapter, parseOpengrepJson } from "./opengrep.js";
 export { OsvScannerAdapter, parseOsvJson } from "./osv.js";
+export { parseSarifJson } from "./sarif.js";
 export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
 export { SyftAdapter, parseSyftJson } from "./syft.js";
 export { TrivyAdapter, parseTrivyJson } from "./trivy.js";
