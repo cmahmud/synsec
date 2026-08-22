@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { SynSecConfig } from "@synsec/config";
 import type { ApprovedRemediationExecution } from "@synsec/workflows/remediation";
+import type { GitHubWebhookSecret } from "./app.js";
 import { createGitHubAppWebhookHttpHandler } from "./app-http.js";
 import { buildGitHubAppRuntimeStatus, type GitHubAppRuntimeStatus } from "./app-status.js";
 import { createGitHubAppInstallationTokenProvider } from "./app-token-provider.js";
@@ -25,7 +26,8 @@ import type { GitHubPublisherOptions } from "./publisher.js";
 export interface LocalGitHubAppRuntimeOptions extends GitHubPublisherOptions {
   stateDirectory: string;
   workspaceRoot: string;
-  webhookSecret: string;
+  /** One active webhook secret, or [new, previous] during a bounded rotation overlap. */
+  webhookSecret: GitHubWebhookSecret;
   appId: string | number;
   privateKey: string;
   config: SynSecConfig;
@@ -90,12 +92,14 @@ function pathsOverlap(a: string, b: string): boolean {
  *
  * State and source workspaces must be separate directory trees so scanner working copies are never
  * created inside durable authorization/queue storage. App credentials remain in the returned
- * token-provider closure only; they are not written to any local store. The token provider also
+ * token-provider closure only; they are not written to any local store. Webhook verification accepts
+ * at most two distinct in-memory secrets so operators can overlap a new and previous secret during a
+ * coordinated rotation without weakening replay or authorization checks. The token provider also
  * fails closed when GitHub reports that the installation lacks the permissions required for
  * repository acquisition, publication, or an explicitly invoked approved remediation write.
  * Workspace maintenance observes only marker-proven SynSec acquisition directories by default;
  * deletion requires an explicit bounded runtime option. The caller still owns TLS, listener binding,
- * process/container isolation, network policy, and secret injection/rotation.
+ * process/container isolation, network policy, and secret injection/reload.
  */
 export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntimeOptions): Promise<LocalGitHubAppRuntime> {
   const stateDirectory = requiredDirectory(options.stateDirectory, "GitHub App state directory");
@@ -103,7 +107,8 @@ export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntime
   if (pathsOverlap(stateDirectory, workspaceRoot)) {
     throw new Error("GitHub App state directory and workspace root must be separate directory trees.");
   }
-  if (!options.webhookSecret.trim()) throw new Error("GitHub App webhook secret is required.");
+  const secretCount = typeof options.webhookSecret === "string" ? 1 : options.webhookSecret.length;
+  if (secretCount < 1) throw new Error("GitHub App webhook secret is required.");
 
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   await mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
