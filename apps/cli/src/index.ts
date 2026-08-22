@@ -32,7 +32,7 @@ import {
   workflowFindings,
   type WorkflowDefinition,
 } from "@synsec/workflows";
-import { reconcileLifecycleFile, runTriage } from "./lifecycle.js";
+import { reconcileLifecycleFile, runTriage, runVerification } from "./lifecycle.js";
 
 const VERSION = "0.2.0";
 const args = process.argv.slice(2);
@@ -95,6 +95,7 @@ Usage:
   synsec review <report.json> [options]
   synsec triage <report.json> --list [--store <file>]
   synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>]
+  synsec verify <before.json> <after.json> [--fingerprint <id>] [--output <file>]
   synsec import-sarif <input.sarif> [options]
   synsec workflows
   synsec render <report.json> [--html <file>] [--sarif <file>]
@@ -130,6 +131,11 @@ Review options:
 
 Triage states:
   new, confirmed, false-positive, accepted-risk, fixed, regressed
+
+Verify options:
+  --fingerprint <id>       Verify only one finding fingerprint. Repeat with comma-separated IDs via --fingerprints.
+  --fingerprints <a,b,c>   Verify a specific set of finding fingerprints.
+  --output <file>          Write machine-readable verification JSON.
 
 SARIF import options:
   --root <path>            Repository root represented by the imported findings (default: .).
@@ -441,6 +447,27 @@ async function triage(): Promise<void> {
   for (const line of lines) console.log(line);
 }
 
+async function verify(): Promise<void> {
+  const beforeArg = args[1];
+  const afterArg = args[2];
+  if (!beforeArg || beforeArg.startsWith("--") || !afterArg || afterArg.startsWith("--")) {
+    throw new Error("Usage: synsec verify <before.json> <after.json> [--fingerprint <id>] [--fingerprints <a,b,c>] [--output <file>]");
+  }
+  const requested = [
+    ...(option("--fingerprint") ? [option("--fingerprint") as string] : []),
+    ...(option("--fingerprints")?.split(",").map((value) => value.trim()).filter(Boolean) ?? []),
+  ];
+  const result = await runVerification({
+    beforeReportPath: beforeArg,
+    afterReportPath: afterArg,
+    fingerprints: requested.length > 0 ? requested : undefined,
+    outputPath: option("--output"),
+  });
+  for (const line of result.lines) console.log(line);
+  if (result.verification.summary.persisting > 0) process.exitCode = 2;
+  else if (result.verification.summary.inconclusive > 0 || result.verification.summary.missingBaseline > 0) process.exitCode = 3;
+}
+
 async function importSarif(): Promise<void> {
   const inputArg = args[1];
   if (!inputArg || inputArg.startsWith("--")) {
@@ -517,6 +544,9 @@ async function main(): Promise<void> {
       break;
     case "triage":
       await triage();
+      break;
+    case "verify":
+      await verify();
       break;
     case "import-sarif":
       await importSarif();
