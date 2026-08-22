@@ -16,6 +16,7 @@
     "@synsec/config": "0.2.0",
     "@synsec/core": "0.1.0",
     "@synsec/engine": "0.2.0",
+    "@synsec/lifecycle": "0.2.0",
     "@synsec/report": "0.2.0",
     "@synsec/repository": "0.2.0",
     "@synsec/scanners": "0.1.0",
