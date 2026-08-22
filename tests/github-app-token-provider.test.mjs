@@ -35,6 +35,48 @@ test("App token provider signs a fresh short-lived JWT per operation without cac
   assert.equal(exchanges[1].payload.iat - exchanges[0].payload.iat, 1);
 });
 
+test("App token provider enforces purpose-specific installation permissions before returning credentials", async () => {
+  const now = Date.UTC(2026, 7, 22, 19, 30, 0);
+  let permissions = { contents: "read", checks: "write", security_events: "write" };
+  const provider = createGitHubAppInstallationTokenProvider({
+    appId: 1,
+    privateKey: privateKeyPem(),
+    now: () => now,
+    requiredPermissionsByPurpose: {
+      acquire: { contents: "read" },
+      publish: { checks: "write", security_events: "write" },
+    },
+    exchange: async () => ({
+      token: "transport-secret",
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+      permissions,
+    }),
+  });
+
+  assert.equal(await provider(1, "acquire"), "transport-secret");
+  assert.equal(await provider(1, "publish"), "transport-secret");
+  permissions = { contents: "read", checks: "read", security_events: "write" };
+  await assert.rejects(() => provider(1, "publish"), /checks:write/);
+  permissions = undefined;
+  await assert.rejects(() => provider(1, "acquire"), /missing permission metadata/);
+});
+
+test("write permission satisfies a read requirement without weakening write requirements", async () => {
+  const now = Date.UTC(2026, 7, 22, 19, 30, 0);
+  const provider = createGitHubAppInstallationTokenProvider({
+    appId: 1,
+    privateKey: privateKeyPem(),
+    now: () => now,
+    requiredPermissionsByPurpose: { acquire: { contents: "read" } },
+    exchange: async () => ({
+      token: "transport-secret",
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+      permissions: { contents: "write" },
+    }),
+  });
+  assert.equal(await provider(1, "acquire"), "transport-secret");
+});
+
 test("App token provider rejects malformed or nearly expired token metadata", async () => {
   const now = Date.UTC(2026, 7, 22, 19, 30, 0);
   const key = privateKeyPem();
@@ -56,7 +98,7 @@ test("App token provider rejects malformed or nearly expired token metadata", as
   await assert.rejects(() => expiring(1), /expires too soon/);
 });
 
-test("App token provider bounds private-key and lifetime configuration before exchange", () => {
+test("App token provider bounds private-key, lifetime, and permission configuration before exchange", () => {
   assert.throws(() => createGitHubAppInstallationTokenProvider({
     appId: 1,
     privateKey: "x".repeat(64 * 1024 + 1),
@@ -66,4 +108,9 @@ test("App token provider bounds private-key and lifetime configuration before ex
     privateKey: privateKeyPem(),
     minRemainingMs: 600_001,
   }), /minimum remaining lifetime/);
+  assert.throws(() => createGitHubAppInstallationTokenProvider({
+    appId: 1,
+    privateKey: privateKeyPem(),
+    requiredPermissionsByPurpose: { publish: { "checks/write": "write" } },
+  }), /invalid permission name/);
 });
