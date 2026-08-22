@@ -1,9 +1,9 @@
-import type { Severity } from "@synsec/core";
 import type { SynSecReport } from "@synsec/report";
 import {
   buildGitHubCheck,
   loadGitHubContext,
   type GitHubCheckResult,
+  type GitHubCheckThreshold,
   type GitHubPullRequestContext,
 } from "./index.js";
 import {
@@ -14,7 +14,7 @@ import {
 
 export interface GitHubReportPublicationOptions extends GitHubPublisherOptions {
   env?: NodeJS.ProcessEnv;
-  threshold?: Severity;
+  threshold?: GitHubCheckThreshold;
   onlyNewAnnotations?: boolean;
   maxAnnotations?: number;
 }
