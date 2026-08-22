@@ -449,6 +449,16 @@ export function verifyRemediation(
 }
 
 export async function writeRemediationVerification(path: string, verification: RemediationVerification): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(verification, null, 2)}\n`, "utf8");
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const serialized = `${JSON.stringify(verification, null, 2)}\n`;
+  try {
+    await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await chmod(temporaryPath, 0o600).catch(() => undefined);
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600).catch(() => undefined);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
