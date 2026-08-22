@@ -10,7 +10,8 @@
     { "path": "../core" },
     { "path": "../report" },
     { "path": "../scanner-sdk" },
-    { "path": "../engine" }
+    { "path": "../engine" },
+    { "path": "../workflows" }
   ],
   "include": ["src/**/*.ts"]
 }
