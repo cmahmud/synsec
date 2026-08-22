@@ -6,6 +6,7 @@ import {
   parseGrypeJson,
   parseOpengrepJson,
   parseOsvJson,
+  parseSarifJson,
   parseScorecardJson,
   parseSyftJson,
 } from "../packages/scanners/dist/index.js";
@@ -113,4 +114,40 @@ test("Syft parser normalizes packages, licenses, and repository-relative locatio
   assert.deepEqual(artifact.packages[0].licenses, ["MIT"]);
   assert.deepEqual(artifact.packages[0].locations, ["package-lock.json"]);
   assert.equal(artifact.metadata.syftVersion, "1.31.0");
+});
+
+test("SARIF importer maps tool metadata, severity, identifiers, and location", () => {
+  const findings = parseSarifJson(JSON.stringify({
+    version: "2.1.0",
+    runs: [{
+      tool: { driver: {
+        name: "ExternalScanner",
+        semanticVersion: "3.4.5",
+        rules: [{
+          id: "EXT-1",
+          shortDescription: { text: "External unsafe operation" },
+          fullDescription: { text: "Detailed explanation" },
+          properties: { identifiers: ["CWE-79"] },
+        }],
+      } },
+      results: [{
+        ruleId: "EXT-1",
+        ruleIndex: 0,
+        level: "error",
+        message: { text: "External unsafe operation" },
+        locations: [{ physicalLocation: { artifactLocation: { uri: "src/app.ts" }, region: { startLine: 12, startColumn: 2 } } }],
+        partialFingerprints: { primaryLocationLineHash: "native-fingerprint" },
+        properties: { category: "sast", confidence: 0.91, remediation: "Use the safe API." },
+      }],
+    }],
+  }));
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].scanner.name, "ExternalScanner");
+  assert.equal(findings[0].severity, "high");
+  assert.equal(findings[0].category, "sast");
+  assert.equal(findings[0].location.path, "src/app.ts");
+  assert.equal(findings[0].location.startLine, 12);
+  assert.deepEqual(findings[0].identifiers.cwe, ["CWE-79"]);
+  assert.equal(findings[0].fingerprint, "native-fingerprint");
 });
