@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { renderHistoryHtml, writeHistoryHtmlFromStore } from "../packages/report/dist/history-html.js";
+import { renderHistoryHtml, writeHistoryHtml, writeHistoryHtmlFromStore } from "../packages/report/dist/history-html.js";
 
 function history() {
   return {
@@ -110,6 +110,20 @@ test("writeHistoryHtmlFromStore renders a trend-safe store to a restrictive loca
     assert.match(html, /Stored history/);
     assert.match(html, /94\/100/);
     if (process.platform !== "win32") assert.equal(info.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("history dashboard writer repairs permissive existing file modes where supported", async () => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(join(tmpdir(), "synsec-history-html-mode-"));
+  const outputPath = join(root, "history.html");
+  try {
+    await writeFile(outputPath, "old\n", { encoding: "utf8", mode: 0o644 });
+    await chmod(outputPath, 0o644);
+    await writeHistoryHtml(outputPath, history());
+    assert.equal((await stat(outputPath)).mode & 0o777, 0o600);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
