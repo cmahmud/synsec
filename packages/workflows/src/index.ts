@@ -15,6 +15,7 @@ export interface WorkflowDefinition {
   version: 1;
   displayName: string;
   description: string;
+  reviewInstructions: string;
   categories: readonly FindingCategory[] | "all";
   capabilities: readonly WorkflowCapability[];
   sourceContextAllowed: boolean;
@@ -28,6 +29,7 @@ const workflows: readonly WorkflowDefinition[] = [
     version: 1,
     displayName: "Repository Review",
     description: "Review normalized findings across the repository and explain the strongest evidence first.",
+    reviewInstructions: "Prioritize deterministic scanner evidence, actual repository reachability signals, and nearby mitigations. Do not infer an exploitable path merely from a vulnerability class or suspicious API name.",
     categories: "all",
     capabilities: [
       "read-normalized-findings",
@@ -45,6 +47,7 @@ const workflows: readonly WorkflowDefinition[] = [
     version: 1,
     displayName: "Dependency Review",
     description: "Review known vulnerable dependencies, package identity, fix availability, and available reachability evidence.",
+    reviewInstructions: "Distinguish package presence from observed application use. Treat dependencyUsage.status=observed-import as evidence of an import, not proof that a vulnerable function is reachable. Prefer fixed-version guidance already supplied by deterministic scanners.",
     categories: ["dependency", "container", "supply-chain", "license"],
     capabilities: [
       "read-normalized-findings",
@@ -62,6 +65,7 @@ const workflows: readonly WorkflowDefinition[] = [
     version: 1,
     displayName: "Secrets Review",
     description: "Review redacted secret findings and recommend rotation/removal without exposing secret values to the model layer.",
+    reviewInstructions: "Never request, reconstruct, guess, validate, or reproduce a credential value. Work only from redacted metadata. Recommend proportionate revocation, rotation, history cleanup, and secret-management controls.",
     categories: ["secret"],
     capabilities: [
       "read-normalized-findings",
@@ -77,6 +81,7 @@ const workflows: readonly WorkflowDefinition[] = [
     version: 1,
     displayName: "Infrastructure Review",
     description: "Review IaC, deployment, misconfiguration, and repository-posture findings.",
+    reviewInstructions: "Separate policy or posture heuristics from concrete vulnerable configuration. Account for deployment context when present and avoid treating a low Scorecard check as direct exploit evidence.",
     categories: ["iac", "misconfiguration", "repository-posture"],
     capabilities: [
       "read-normalized-findings",
