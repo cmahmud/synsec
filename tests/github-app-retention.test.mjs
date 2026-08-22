@@ -15,7 +15,7 @@ async function enqueueFailed(queue, input, modifiedAt) {
   const job = await queue.enqueue(input);
   const leased = await queue.claimNext();
   assert.equal(leased.jobId, job.jobId);
-  await queue.fail(job.jobId);
+  await queue.fail(job.jobId, leased.attempts);
   if (modifiedAt !== undefined) {
     const date = new Date(modifiedAt);
     await utimes(join(queue.directory, `${job.jobId}.json`), date, date);
