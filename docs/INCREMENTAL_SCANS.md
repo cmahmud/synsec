@@ -10,6 +10,16 @@ The engine then builds the existing repository index and resolved local module g
 
 The planner interpretation is deliberately `coverage-heuristic-not-proof-of-unaffected-code`. Resolved import relationships are structural evidence only; they do not prove runtime reachability.
 
+## Native adapter narrowing
+
+Adapters may use the planner's final changed-file list to reduce scanner work only when the underlying scanner exposes a file-scoped mode that preserves repository-local target boundaries.
+
+Opengrep and Betterleaks already narrow execution directly to changed files. Checkov now uses its supported repeated `-f/--file` mode for a bounded changed-file scope, runs from the authorized repository working directory, deduplicates paths, and independently rejects absolute or traversal-shaped file names. If no changed-file scope is supplied, Checkov retains its normal directory scan.
+
+Checkov's adapter-level changed-file list is capped at 500 entries even though the engine normally applies a tighter planner bound. The adapter check is defense in depth for direct SDK use. It does not silently truncate an oversized request; it fails instead.
+
+Other scanner adapters may still perform their normal repository analysis before SynSec filters file-located findings. A scanner is not described as natively incremental until its adapter explicitly narrows the underlying scanner command safely.
+
 ## Hosted GitHub App pull requests
 
 Hosted App workers already acquire the exact queued base and head commits into separate detached workspaces. `deriveExactChangedFiles()` compares those two local Git trees using bounded `git ls-tree` output. It does not trust branch names, webhook clone URLs, default branches, scanner-suggested targets, or an unbounded history fetch.
