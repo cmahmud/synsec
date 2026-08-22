@@ -22,6 +22,13 @@ import {
   type SynSecReport,
 } from "@synsec/report";
 import { getFindingContext } from "@synsec/repository";
+import {
+  assertWorkflowSourceContextAllowed,
+  builtInWorkflows,
+  getWorkflow,
+  workflowFindings,
+  type WorkflowDefinition,
+} from "@synsec/workflows";
 
 const VERSION = "0.2.0";
 const args = process.argv.slice(2);
@@ -62,6 +69,18 @@ function severityOption(name: string): SynSecConfig["failOn"] | undefined {
   throw new Error(`${name} must be one of critical, high, medium, low, info, unknown, none.`);
 }
 
+function workflowOption(): WorkflowDefinition | undefined {
+  const id = option("--workflow");
+  if (!id) return undefined;
+  const workflow = getWorkflow(id);
+  if (!workflow) {
+    throw new Error(
+      `Unknown workflow ${id}. Available workflows: ${builtInWorkflows().map((item) => item.id).join(", ")}`,
+    );
+  }
+  return workflow;
+}
+
 function printHelp(): void {
   console.log(`SynSec v${VERSION} — repository-first security scanning
 
@@ -70,6 +89,7 @@ Usage:
   synsec doctor [path] [--config <file>]
   synsec scan <path> [options]
   synsec review <report.json> [options]
+  synsec workflows
   synsec render <report.json> [--html <file>] [--sarif <file>]
   synsec baseline <report.json> [destination]
   synsec version
@@ -84,7 +104,8 @@ Scan options:
   --json                   Print the report JSON to stdout.
   --no-write               Do not write JSON/HTML/SARIF report files.
   --ai                     Run optional AI triage after deterministic scanning.
-  --ai-source              Allow source excerpts to be sent to the configured AI provider.
+  --workflow <id>          Restrict AI triage to a built-in defensive workflow.
+  --ai-source              Allow source excerpts when the selected workflow permits it.
   --ai-limit <n>           Maximum findings to review (default: 10).
   --ai-base-url <url>      OpenAI-compatible API base URL.
   --ai-model <model>       Model ID for AI triage.
@@ -92,7 +113,8 @@ Scan options:
 Review options:
   --root <path>            Repository root when it differs from the saved report path.
   --output <file>          AI review output path.
-  --ai-source              Allow bounded source excerpts to be sent.
+  --workflow <id>          Restrict review to a built-in defensive workflow.
+  --ai-source              Allow bounded source excerpts when the workflow permits it.
   --ai-limit <n>           Maximum findings to review.
   --ai-base-url <url>      OpenAI-compatible API base URL.
   --ai-model <model>       Model ID.
@@ -104,6 +126,7 @@ AI environment variables:
 
 SynSec never enables AI review by default. Source excerpts are only sent when
 sendSourceContext is enabled in config or --ai-source is explicitly supplied.
+Workflow capability rules can further prohibit source context.
 `);
 }
 
@@ -164,11 +187,23 @@ async function doctor(): Promise<void> {
   for (const status of statuses) {
     const marker = !status.selected ? "DISABLED" : status.availability.available ? "OK" : "MISSING";
     const detail = status.availability.version ?? status.availability.reason ?? "";
-    console.log(`${marker.padEnd(9)} ${status.displayName.padEnd(18)} ${detail}`);
+    console.log(`${marker.padEnd(9)} ${status.displayName.padEnd(20)} ${detail}`);
   }
 
   console.log("\nAI review:");
   console.log(`  ${config.ai.enabled ? "enabled" : "disabled"} (source context ${config.ai.sendSourceContext ? "allowed" : "not allowed"})`);
+}
+
+function listWorkflows(): void {
+  console.log("SynSec defensive workflows\n");
+  for (const workflow of builtInWorkflows()) {
+    const categories = workflow.categories === "all" ? "all findings" : workflow.categories.join(", ");
+    console.log(`${workflow.id}`);
+    console.log(`  ${workflow.description}`);
+    console.log(`  categories: ${categories}`);
+    console.log(`  source context: ${workflow.sourceContextAllowed ? "may be explicitly enabled" : "prohibited"}`);
+    console.log(`  external network assessment: ${workflow.externalNetworkAssessment}\n`);
+  }
 }
 
 function printFinding(group: CorrelatedFinding): void {
@@ -198,16 +233,20 @@ async function reviewGroups(
   root: string,
   config: SynSecConfig,
   limit: number,
+  workflow?: WorkflowDefinition,
 ): Promise<Record<string, AiFindingReview>> {
+  if (workflow) assertWorkflowSourceContextAllowed(workflow, config.ai.sendSourceContext);
   const reviews: Record<string, AiFindingReview> = {};
-  const candidates = report.findings.slice(0, limit);
+  const eligible = workflow ? workflowFindings(report.findings, workflow) : report.findings;
+  const candidates = eligible.slice(0, limit);
   if (candidates.length === 0) return reviews;
   const provider = aiProvider(config);
 
   for (let index = 0; index < candidates.length; index += 1) {
     const group = candidates[index];
     if (!group) continue;
-    console.error(`AI review ${index + 1}/${candidates.length}: ${group.primary.title}`);
+    const workflowLabel = workflow ? ` [${workflow.id}]` : "";
+    console.error(`AI review${workflowLabel} ${index + 1}/${candidates.length}: ${group.primary.title}`);
     const context = config.ai.sendSourceContext
       ? await getFindingContext(root, group.primary)
       : undefined;
@@ -216,11 +255,22 @@ async function reviewGroups(
   return reviews;
 }
 
-async function writeAiReviews(path: string, report: SynSecReport, reviews: Record<string, AiFindingReview>): Promise<void> {
+async function writeAiReviews(
+  path: string,
+  report: SynSecReport,
+  reviews: Record<string, AiFindingReview>,
+  workflow?: WorkflowDefinition,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(
     path,
-    `${JSON.stringify({ schemaVersion: 1, reportId: report.reportId, generatedAt: new Date().toISOString(), reviews }, null, 2)}\n`,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      reportId: report.reportId,
+      generatedAt: new Date().toISOString(),
+      workflow: workflow ? { id: workflow.id, version: workflow.version } : null,
+      reviews,
+    }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -259,10 +309,13 @@ async function scan(): Promise<void> {
 
   if (config.ai.enabled) {
     const limit = integerOption("--ai-limit") ?? 10;
-    const reviews = await reviewGroups(outcome.report, root, config, limit);
+    const workflow = workflowOption();
+    const reviews = await reviewGroups(outcome.report, root, config, limit, workflow);
     const aiPath = resolve(root, ".synsec/ai-review.json");
-    await writeAiReviews(aiPath, outcome.report, reviews);
+    await writeAiReviews(aiPath, outcome.report, reviews, workflow);
     if (!flag("--json")) console.error(`AI reviews: ${aiPath}`);
+  } else if (option("--workflow")) {
+    throw new Error("--workflow is an AI review option. Enable review with --ai or in synsec.config.json.");
   }
 
   if (flag("--json")) {
@@ -314,11 +367,12 @@ async function review(): Promise<void> {
   if (baseUrl) config.ai.baseUrl = baseUrl;
   const model = option("--ai-model");
   if (model) config.ai.model = model;
+  const workflow = workflowOption();
   const limit = integerOption("--ai-limit") ?? report.findings.length;
-  const reviews = await reviewGroups(report, root, config, limit);
+  const reviews = await reviewGroups(report, root, config, limit, workflow);
   const explicitOutput = option("--output");
   const outputPath = explicitOutput ? resolve(explicitOutput) : resolve(dirname(reportPath), "ai-review.json");
-  await writeAiReviews(outputPath, report, reviews);
+  await writeAiReviews(outputPath, report, reviews, workflow);
   console.log(`Wrote ${Object.keys(reviews).length} AI review(s) to ${outputPath}`);
 }
 
@@ -360,6 +414,9 @@ async function main(): Promise<void> {
       break;
     case "review":
       await review();
+      break;
+    case "workflows":
+      listWorkflows();
       break;
     case "render":
       await render();
