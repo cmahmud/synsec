@@ -13,7 +13,8 @@
     "./route-sink-context": "./dist/route-sink-context.js",
     "./posture": "./dist/posture.js",
     "./test-ownership": "./dist/test-ownership.js",
-    "./incremental-plan": "./dist/incremental-plan.js"
+    "./incremental-plan": "./dist/incremental-plan.js",
+    "./coverage-context": "./dist/coverage-context.js"
   },
   "types": "./dist/index.d.ts",
   "scripts": {
