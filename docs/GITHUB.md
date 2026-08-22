@@ -22,8 +22,11 @@ This keeps GitHub credentials out of scanners and prevents repository analysis f
 - A hard 50-annotation cap per generated payload, matching GitHub's check-run annotation request limit.
 - CI threshold evaluation independent of scanner exit-code quirks.
 - A narrow Checks API publisher with an injectable transport for testing.
+- A completed-report publication orchestrator that resolves local Actions context, builds the deterministic check, and publishes it through the fixed-host transport.
 
 `@synsec/github/publisher` posts completed check runs only to `https://api.github.com/repos/<owner>/<repo>/check-runs`. The repository comes from validated GitHub context, scanner output cannot control the request URL, redirects are rejected, and bearer tokens are never copied into returned errors.
+
+`@synsec/github/orchestrator` provides `publishSynSecReportToGitHub()`. It accepts an already-completed `SynSecReport`, resolves the repository/commit from bounded local Actions context, builds the check, and invokes the publisher. It does not run scanners, discover targets, mutate repositories, or perform external assessment. If valid GitHub context cannot be resolved, it fails before any transport call.
 
 A future GitHub App or Actions adapter should own token acquisition and installation authorization while reusing these deterministic publication primitives.
 
@@ -68,7 +71,9 @@ When a report includes a baseline, `buildGitHubCheck()` defaults to annotating o
 - validates the returned check-run id;
 - returns only publication metadata such as id, URL, status, and conclusion.
 
-Token acquisition is intentionally outside this function. GitHub App installation tokens, Actions `GITHUB_TOKEN`, and any future enterprise-hosting transport should remain separate concerns so credentials never enter scanners or normalized reports.
+`publishSynSecReportToGitHub()` is the higher-level completed-report path. It preserves the same transport restrictions while removing duplicate context/check/publisher glue from future Actions and GitHub App entrypoints.
+
+Token acquisition is intentionally outside these functions. GitHub App installation tokens, Actions `GITHUB_TOKEN`, and any future enterprise-hosting transport should remain separate concerns so credentials never enter scanners or normalized reports.
 
 ## Security boundaries
 
@@ -88,7 +93,7 @@ The remaining Phase 5 work is product orchestration and installation/authenticat
 
 1. Add a GitHub App installation/authentication layer.
 2. Wire PR events to changed-file scans and baseline selection.
-3. Invoke check publication from the PR orchestration path.
+3. Connect the completed scan result to `publishSynSecReportToGitHub()` in that PR event runner.
 4. Upload SARIF to GitHub code scanning where repository permissions allow it.
 5. Add scheduled repository scans.
 6. Add explicitly approved remediation pull requests.
