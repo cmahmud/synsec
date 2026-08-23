@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "synsec": "dist/index.js",
-    "synsec-github-app": "dist/github-app-cli.js"
+    "synsec-github-app": "dist/github-app-cli.js",
+    "synsec-github-app-evidence": "dist/github-app-shared-state-evidence-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
