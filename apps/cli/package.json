@@ -7,6 +7,7 @@
     "synsec": "dist/index.js",
     "synsec-github-app": "dist/github-app-cli.js",
     "synsec-github-app-evidence": "dist/github-app-shared-state-evidence-cli.js",
+    "synsec-github-app-reload": "dist/github-app-credential-reload-cli.js",
     "synsec-lifecycle-reviews": "dist/lifecycle-review-deadlines-cli.js",
     "synsec-scanner-isolation": "dist/scanner-isolation-profile-cli.js"
   },
