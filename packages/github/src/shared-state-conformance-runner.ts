@@ -7,11 +7,17 @@ import {
 const DEFAULT_SCENARIO_TIMEOUT_MS = 15_000;
 const MIN_SCENARIO_TIMEOUT_MS = 100;
 const MAX_SCENARIO_TIMEOUT_MS = 120_000;
+const MAX_IDENTIFIER_LENGTH = 128;
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export type GitHubAppSharedStateConformanceScenarioId =
   (typeof GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS)[number]["id"];
 
 export interface GitHubAppSharedStateConformanceAdapter {
+  /** Stable non-secret adapter identity matching the shared-state backend contract. */
+  backendId: string;
+  /** Exact adapter/build version matching the shared-state backend contract. */
+  implementationVersion: string;
   /**
    * Reset adapter-owned test state before a scenario. This hook must be safe to run repeatedly.
    * Credentials and connection strings remain adapter-private and must not be returned.
@@ -33,6 +39,8 @@ export interface GitHubAppSharedStateConformanceScenarioResult {
 
 export interface GitHubAppSharedStateConformanceRunReport {
   schemaVersion: 1;
+  backendId: string;
+  implementationVersion: string;
   complete: boolean;
   scenarioTimeoutMs: number;
   results: GitHubAppSharedStateConformanceScenarioResult[];
@@ -49,10 +57,25 @@ function validatedTimeout(value: number | undefined): number {
   return timeout;
 }
 
-function validateAdapter(adapter: GitHubAppSharedStateConformanceAdapter): void {
+function validatedIdentifier(value: string, field: string): string {
+  if (typeof value !== "string" || value.length > MAX_IDENTIFIER_LENGTH || !IDENTIFIER_PATTERN.test(value)) {
+    throw new Error(`${field} must be a bounded non-secret identifier.`);
+  }
+  return value;
+}
+
+function validateAdapter(adapter: GitHubAppSharedStateConformanceAdapter): {
+  backendId: string;
+  implementationVersion: string;
+} {
   if (!adapter || typeof adapter !== "object") {
     throw new Error("Shared-state conformance adapter is required.");
   }
+  const backendId = validatedIdentifier(adapter.backendId, "Shared-state backend id");
+  const implementationVersion = validatedIdentifier(
+    adapter.implementationVersion,
+    "Shared-state implementation version",
+  );
   if (typeof adapter.reset !== "function") {
     throw new Error("Shared-state conformance adapter reset() is required.");
   }
@@ -69,6 +92,7 @@ function validateAdapter(adapter: GitHubAppSharedStateConformanceAdapter): void 
   if (missing.length > 0 || unknown.length > 0) {
     throw new Error("Shared-state conformance adapter must implement exactly the required scenario ids.");
   }
+  return { backendId, implementationVersion };
 }
 
 async function runWithTimeout(
@@ -99,14 +123,14 @@ async function runWithTimeout(
  * can contain credentials, hostnames, queries, or customer data. Adapter test harnesses may log their
  * own sanitized diagnostics separately.
  *
- * A passing report is evidence that these callbacks completed; it is not backend certification by
- * itself. Production claims should bind the report to the exact adapter/backend version in CI.
+ * The report is bound to the same bounded backend id and implementation version used by the versioned
+ * shared-state contract. A passing report is still evidence, not backend certification by itself.
  */
 export async function runGitHubAppSharedStateConformance(
   adapter: GitHubAppSharedStateConformanceAdapter,
   options: GitHubAppSharedStateConformanceRunOptions = {},
 ): Promise<GitHubAppSharedStateConformanceRunReport> {
-  validateAdapter(adapter);
+  const { backendId, implementationVersion } = validateAdapter(adapter);
   const scenarioTimeoutMs = validatedTimeout(options.scenarioTimeoutMs);
   const now = options.now ?? Date.now;
   const results: GitHubAppSharedStateConformanceScenarioResult[] = [];
@@ -135,6 +159,8 @@ export async function runGitHubAppSharedStateConformance(
 
   return {
     schemaVersion: 1,
+    backendId,
+    implementationVersion,
     complete: coverage.complete,
     scenarioTimeoutMs,
     results,
