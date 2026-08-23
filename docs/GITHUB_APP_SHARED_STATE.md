@@ -4,6 +4,8 @@ SynSec's built-in GitHub App replay store, installation state, and scan queue ar
 
 `validateGitHubAppDeployment()` now makes that boundary machine-checkable. `replicaCount` defaults to `1`. A deployment declaring more than one replica fails readiness unless it also declares a `shared-transactional` state backend with every coordination guarantee SynSec's hosted runtime depends on.
 
+The concrete `createLocalGitHubAppRuntime()` factory adds a second guard at the implementation boundary. Its filesystem-backed runtime accepts an omitted `replicaCount` or exactly `1`; any other declared cardinality is rejected before runtime state directories are created. This prevents callers that bypass deployment preflight from representing the local runtime as horizontally safe.
+
 ## Required guarantees
 
 A multi-replica backend must provide all of the following as backend-level atomic operations:
@@ -47,7 +49,8 @@ For `replicaCount > 1`:
 
 - an omitted backend or `kind: "filesystem"` produces `shared-state-required`;
 - a `shared-transactional` backend missing any required guarantee produces `shared-state-capabilities-incomplete`;
-- invalid replica counts produce `invalid-replica-count` before shared-state evaluation.
+- invalid replica counts produce `invalid-replica-count` before shared-state evaluation;
+- `createLocalGitHubAppRuntime()` rejects the configuration regardless of a declared backend because that factory always instantiates the filesystem stores.
 
 A single replica retains the current filesystem behavior. This keeps local and single-host deployments compatible while preventing configuration from overstating horizontal-scaling safety.
 
