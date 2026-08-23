@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -70,6 +70,25 @@ test("rotation CLI rejects credential-bearing fields without echoing their value
     const error = await runExpectingExit(["rotation", path], 1);
     assert.match(error.stderr, /unsupported field secret/);
     assert.doesNotMatch(error.stderr, /do-not-echo-this-secret-value/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitHub App diagnostic inputs reject symlinks without reading their target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-rotation-symlink-"));
+  try {
+    const target = join(root, "target.json");
+    const link = join(root, "rotation.json");
+    await writeFile(target, JSON.stringify({
+      kind: "webhook-secret",
+      secret: "target-secret-must-not-be-read",
+    }), "utf8");
+    await symlink(target, link);
+
+    const error = await runExpectingExit(["rotation", link], 1);
+    assert.match(error.stderr, /non-symlink regular file/);
+    assert.doesNotMatch(error.stderr, /target-secret-must-not-be-read/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
