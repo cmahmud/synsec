@@ -1,3 +1,4 @@
+import { sanitizeOperationalText } from "@synsec/scanner-sdk";
 import {
   intakeGitHubAppWebhook,
   type GitHubWebhookReplayClaimer,
@@ -30,7 +31,7 @@ export type GitHubAppWebhookHandleResult =
 
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/g, " ").trim().slice(0, 1000) || "unknown replay-store error";
+  return sanitizeOperationalText(message, 1000) || "GitHub App webhook processing failed.";
 }
 
 /**
@@ -41,6 +42,8 @@ function safeError(error: unknown): string {
  * installation state or enqueue work. Installation-management events never trigger scans.
  * If durable processing fails after an accepted replay claim, that exact unexpired claim is
  * released before the error is propagated so GitHub can retry rather than losing the delivery.
+ * Operational failures are sanitized before they cross this hosted boundary so queue/database
+ * credentials or credential-bearing URLs cannot be forwarded into HTTP/operator logging hooks.
  */
 export async function handleGitHubAppWebhook(input: {
   body: string | Uint8Array;
@@ -91,15 +94,16 @@ export async function handleGitHubAppWebhook(input: {
       queue: input.queue,
     });
   } catch (error) {
+    const processingError = safeError(error);
     let released: boolean;
     try {
       released = await input.replayStore.release(deliveryId, intake.replayReceivedAt);
     } catch (releaseError) {
-      throw new Error(`${safeError(error)} Replay claim release failed: ${safeError(releaseError)}`);
+      throw new Error(`${processingError} Replay claim release failed: ${safeError(releaseError)}`);
     }
     if (!released) {
-      throw new Error(`${safeError(error)} Replay claim could not be released safely for retry.`);
+      throw new Error(`${processingError} Replay claim could not be released safely for retry.`);
     }
-    throw error;
+    throw new Error(processingError);
   }
 }
