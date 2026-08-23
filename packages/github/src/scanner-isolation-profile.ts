@@ -8,10 +8,14 @@ export interface SynSecScannerIsolationProfile {
   memoryLimit: true;
   networkPolicy: SynSecScannerIsolationNetworkPolicy;
   repositoryReadOnly: true;
+  rootFilesystemReadOnly: true;
   scratchSeparated: true;
   credentialsExcluded: true;
   durableStateExcluded: true;
   privileged: false;
+  allowPrivilegeEscalation: false;
+  runAsNonRoot: true;
+  capabilitiesDropped: true;
   hostNetwork: false;
   hostPid: false;
   hostIpc: false;
@@ -24,10 +28,14 @@ export type SynSecScannerIsolationControl =
   | "memory-limit"
   | "restricted-network"
   | "read-only-repository"
+  | "read-only-root-filesystem"
   | "separate-scratch"
   | "credentials-excluded"
   | "durable-state-excluded"
   | "not-privileged"
+  | "no-privilege-escalation"
+  | "run-as-non-root"
+  | "capabilities-dropped"
   | "no-host-network"
   | "no-host-pid"
   | "no-host-ipc"
@@ -45,10 +53,14 @@ export const REQUIRED_SYNSEC_SCANNER_ISOLATION_CONTROLS = [
   "memory-limit",
   "restricted-network",
   "read-only-repository",
+  "read-only-root-filesystem",
   "separate-scratch",
   "credentials-excluded",
   "durable-state-excluded",
   "not-privileged",
+  "no-privilege-escalation",
+  "run-as-non-root",
+  "capabilities-dropped",
   "no-host-network",
   "no-host-pid",
   "no-host-ipc",
@@ -67,6 +79,8 @@ function hasControl(profile: Partial<SynSecScannerIsolationProfile>, control: Sy
       return profile.networkPolicy === "none" || profile.networkPolicy === "egress-filtered";
     case "read-only-repository":
       return profile.repositoryReadOnly === true;
+    case "read-only-root-filesystem":
+      return profile.rootFilesystemReadOnly === true;
     case "separate-scratch":
       return profile.scratchSeparated === true;
     case "credentials-excluded":
@@ -75,6 +89,12 @@ function hasControl(profile: Partial<SynSecScannerIsolationProfile>, control: Sy
       return profile.durableStateExcluded === true;
     case "not-privileged":
       return profile.privileged === false;
+    case "no-privilege-escalation":
+      return profile.allowPrivilegeEscalation === false;
+    case "run-as-non-root":
+      return profile.runAsNonRoot === true;
+    case "capabilities-dropped":
+      return profile.capabilitiesDropped === true;
     case "no-host-network":
       return profile.hostNetwork === false;
     case "no-host-pid":
