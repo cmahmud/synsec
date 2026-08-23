@@ -61,6 +61,7 @@ const severityRank: Record<Severity, number> = {
   unknown: 0,
 };
 const EXECUTION_INTERPRETATION = "scanner-execution-scope-not-coverage-proof" as const;
+const MAX_SCANNER_DIAGNOSTICS = 1_000;
 
 function sanitizeRemoteUrl(value: string): string {
   try {
@@ -83,6 +84,21 @@ function sanitizeRemoteUrl(value: string): string {
 export function scannerFailureMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return sanitizeOperationalText(raw) || "Scanner failed without an operational diagnostic.";
+}
+
+/**
+ * Sanitize successful scanner diagnostics at the engine boundary without modifying scanner
+ * findings or source evidence. Diagnostic volume is bounded independently from finding volume.
+ */
+export function sanitizeScanDiagnostics(scan: ScanResult): ScanResult {
+  const diagnostics = scan.diagnostics
+    .slice(0, MAX_SCANNER_DIAGNOSTICS)
+    .map((value) => sanitizeOperationalText(value))
+    .filter(Boolean);
+  if (scan.diagnostics.length > MAX_SCANNER_DIAGNOSTICS) {
+    diagnostics.push(`Additional scanner diagnostics omitted after ${MAX_SCANNER_DIAGNOSTICS} entries.`);
+  }
+  return { ...scan, diagnostics };
 }
 
 async function gitValue(root: string, args: string[]): Promise<string | undefined> {
@@ -314,9 +330,10 @@ async function runSelectedScanners(
         if (!scanner) return;
         try {
           const result = await scanner.scan({ target, timeoutMs: config.timeoutMs, changedFiles });
+          const sanitized = sanitizeScanDiagnostics(result);
           scans.push({
-            ...result,
-            executionScope: result.executionScope ?? defaultScannerExecutionScope(scanner.id, changedFiles),
+            ...sanitized,
+            executionScope: sanitized.executionScope ?? defaultScannerExecutionScope(scanner.id, changedFiles),
           });
         } catch (error) {
           failures.push({
