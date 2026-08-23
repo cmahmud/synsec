@@ -28,6 +28,7 @@
     "./shared-state-evidence": "./dist/shared-state-evidence.js",
     "./shared-runtime": "./dist/shared-runtime.js",
     "./app-status": "./dist/app-status.js",
+    "./app-readiness-policy": "./dist/app-readiness-policy.js",
     "./app-server": "./dist/app-server.js",
     "./app-intake": "./dist/app-intake.js",
     "./app-dispatch": "./dist/app-dispatch.js",
