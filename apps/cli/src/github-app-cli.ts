@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   buildSynSecGitHubAppSetupContract,
@@ -86,8 +86,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 async function readBoundedJsonObject(path: string, label: string): Promise<Record<string, unknown>> {
   const absolute = resolve(path);
-  const info = await stat(absolute).catch(() => undefined);
-  if (!info?.isFile()) throw new Error(`${label} file is not a regular file: ${absolute}`);
+  const info = await lstat(absolute).catch(() => undefined);
+  if (!info || info.isSymbolicLink() || !info.isFile()) {
+    throw new Error(`${label} file must be a non-symlink regular file.`);
+  }
   if (info.size > MAX_SETUP_FILE_BYTES) throw new Error(`${label} file exceeds ${MAX_SETUP_FILE_BYTES} bytes.`);
 
   let parsed: unknown;
