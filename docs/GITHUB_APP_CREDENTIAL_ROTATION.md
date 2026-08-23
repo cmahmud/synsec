@@ -60,6 +60,32 @@ The assessment is intentionally strict. `observedReplicaCount` must equal `expec
 
 SynSec does not discover Kubernetes pods, inspect a service mesh, read a secret manager, or contact a deployment API here. The host integration remains responsible for producing trustworthy observations and for keeping the declared expected replica count aligned with the actual deployment topology.
 
+### Offline reload verifier
+
+The same reload assessment is available to deployment automation through:
+
+```text
+synsec-github-app-reload <reload-state.json> [--json]
+```
+
+The verifier exits `0` only when every expected replica is ready on the exact target generation, exits `2` for incomplete/stale/missing/extra rollout state, and exits `1` for malformed input or CLI usage. Its input file is capped at 256 KiB, must be a non-symlink regular file, and has a strict credential-free schema. Unknown top-level or per-replica fields are rejected rather than ignored.
+
+Example input:
+
+```json
+{
+  "kind": "app-private-key",
+  "targetGeneration": "key-v7",
+  "expectedReplicaCount": 2,
+  "replicas": [
+    { "replicaId": "synsec-0", "loadedGeneration": "key-v7", "ready": true },
+    { "replicaId": "synsec-1", "loadedGeneration": "key-v7", "ready": true }
+  ]
+}
+```
+
+Use the verifier as a rollout gate before acknowledging `runtimeReloaded` in the base rotation CLI. For programmatic production integrations, prefer `buildSynSecGitHubAppCredentialRotationWithReloadAssessment()` because it derives that acknowledgement internally.
+
 ## Webhook secret
 
 Use a coordinated overlap:
@@ -99,6 +125,6 @@ The planner intentionally does not model installation tokens as rotatable creden
 
 ## Security boundary
 
-These APIs and the CLI are rollout guidance and deployment-state evaluation, not runtime authorization. GitHub-issued installation-token permissions and SynSec's durable repository authorization state remain authoritative. Rotation/reload state must never broaden repository scope, grant permissions, trigger remediation, or authorize network assessment.
+These APIs and the CLIs are rollout guidance and deployment-state evaluation, not runtime authorization. GitHub-issued installation-token permissions and SynSec's durable repository authorization state remain authoritative. Rotation/reload state must never broaden repository scope, grant permissions, trigger remediation, or authorize network assessment.
 
 The reload assessment also does not certify that a secret value is correct. It proves only that the declared fleet observations agree on a target configuration generation. External webhook authentication or a fresh installation-token exchange is still required before the previous credential can be retired.
