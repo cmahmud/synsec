@@ -7,14 +7,14 @@ import {
   type ConfiguredGitHubAppWorkerOptions,
 } from "./app-worker-runner.js";
 import type { GitHubAppWorkerQueue } from "./app-worker.js";
-import {
-  assertGitHubAppSharedStateBackendContract,
-  type GitHubAppSharedStateBackendContract,
-} from "./shared-state-contract.js";
+import type { GitHubAppSharedStateBackendContract } from "./shared-state-contract.js";
+import { assessGitHubAppSharedStateConformanceEvidence } from "./shared-state-evidence.js";
 
 export interface GitHubAppSharedRuntimeOptions {
-  /** Concrete adapter/version declaration. Validating this is necessary but not backend certification. */
+  /** Concrete adapter/version declaration bound to the supplied conformance report. */
   backendContract: GitHubAppSharedStateBackendContract;
+  /** Portable report produced by the real-backend adversarial conformance harness. */
+  conformanceReport: unknown;
   webhookSecret: GitHubWebhookSecret;
   replayStore: GitHubWebhookReplayManager;
   installationStore: GitHubAppInstallationStore;
@@ -34,14 +34,20 @@ export interface GitHubAppSharedRuntime {
 /**
  * Compose externally implemented shared stores into SynSec's hosted intake/worker pipeline.
  *
- * This function deliberately does not create a database client or claim that supplied stores are
- * transactionally correct. It requires a complete versioned backend contract before composition,
- * then preserves the same replay, authorization, queue-fencing, exact-commit, and publication
- * boundaries used by the single-host runtime. Backend credentials remain owned by the adapter and
- * are not accepted by this API.
+ * Composition fails closed unless the supplied versioned backend contract is paired with complete,
+ * structurally valid conformance evidence for that exact adapter build. This still does not create a
+ * database client or independently certify that the adapter's harness used a real backend; it makes
+ * evidence consumption mandatory at the runtime integration boundary instead of trusting capability
+ * declarations alone. Backend credentials remain owned by the adapter and are not accepted by this API.
  */
 export function createGitHubAppSharedRuntime(options: GitHubAppSharedRuntimeOptions): GitHubAppSharedRuntime {
-  assertGitHubAppSharedStateBackendContract(options.backendContract);
+  const evidence = assessGitHubAppSharedStateConformanceEvidence(
+    options.backendContract,
+    options.conformanceReport,
+  );
+  if (!evidence.ready) {
+    throw new Error(`GitHub App shared-state conformance evidence is not ready: ${evidence.issues.map((issue) => issue.code).join(", ")}`);
+  }
 
   const httpOptions: GitHubAppWebhookHttpOptions = {
     webhookSecret: options.webhookSecret,
