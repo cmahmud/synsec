@@ -16,6 +16,7 @@
     "./route-sink-context": "./dist/route-sink-context.js",
     "./route-sink-flow": "./dist/route-sink-flow.js",
     "./route-flow-analysis": "./dist/route-flow-analysis.js",
+    "./route-security-review": "./dist/route-security-review.js",
     "./posture": "./dist/posture.js",
     "./posture-html": "./dist/posture-html.js",
     "./test-ownership": "./dist/test-ownership.js",
