@@ -32,9 +32,11 @@ The imported route-handler path is narrower than general JavaScript module seman
 - ES named imports, including a single `as` alias; and
 - destructured CommonJS `require()` bindings, including a simple property alias.
 
-The module graph must already resolve the import to exactly one repository file, the imported name must map to exactly one lexical function node in that file, and SynSec must not observe a declaration, assignment, or function parameter that could shadow the imported local name before the route registration. Multiple viable targets remain unresolved.
+The module graph must already resolve the import to exactly one repository file, the imported name must map to exactly one lexical function node in that file, and the target module must contain explicit matching named-export evidence. For ES modules SynSec accepts a direct named export or a same-name export list; for CommonJS it requires a matching `exports.<name>` / `module.exports.<name>` assignment or a same-name object export. A merely same-named unexported local function is not sufficient evidence.
 
-Default imports, namespace-member route handlers, re-exports, dynamic expressions, external packages, unresolved module targets, and ambiguous target functions are intentionally not inferred. Resolved imported handlers are labeled `imported-named-function`; that label denotes static repository evidence only.
+SynSec must also not observe a declaration, assignment, or function parameter that could shadow the imported local name before the route registration. Multiple viable targets remain unresolved.
+
+Default imports, namespace-member route handlers, re-exports, dynamic expressions, external packages, unresolved module targets, missing export evidence, and ambiguous target functions are intentionally not inferred. Resolved imported handlers are labeled `imported-named-function`; that label denotes static repository evidence only.
 
 This lets a pattern such as an Express router importing `listUsers` from a handlers module participate in route-to-sink analysis without pretending that arbitrary framework wiring or dependency injection has been resolved.
 
