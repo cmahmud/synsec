@@ -41,10 +41,10 @@ function requireIdentifier(value: unknown, name: string): string {
 }
 
 function requireReplicaCount(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_REPLICA_COUNT) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_REPLICA_COUNT) {
     throw new Error(`expectedReplicaCount must be an integer between 1 and ${MAX_REPLICA_COUNT}.`);
   }
-  return value as number;
+  return value;
 }
 
 /**
