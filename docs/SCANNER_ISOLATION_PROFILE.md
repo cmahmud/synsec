@@ -14,10 +14,14 @@ The profile is versioned and intentionally small:
   "memoryLimit": true,
   "networkPolicy": "none",
   "repositoryReadOnly": true,
+  "rootFilesystemReadOnly": true,
   "scratchSeparated": true,
   "credentialsExcluded": true,
   "durableStateExcluded": true,
   "privileged": false,
+  "allowPrivilegeEscalation": false,
+  "runAsNonRoot": true,
+  "capabilitiesDropped": true,
   "hostNetwork": false,
   "hostPid": false,
   "hostIpc": false,
@@ -25,7 +29,9 @@ The profile is versioned and intentionally small:
 }
 ```
 
-`runtime` may be `container` or `sandbox`. `networkPolicy` may be `none` or `egress-filtered`. A complete profile must also declare that repository source is read-only, writable scratch is separate, GitHub credentials and durable App state are outside the scanner namespace, privileged mode is disabled, host namespaces are not shared, and host control sockets are not mounted.
+`runtime` may be `container` or `sandbox`. `networkPolicy` may be `none` or `egress-filtered`. A complete profile must also declare that repository source is read-only, the scanner root filesystem is read-only, writable scratch is separate, GitHub credentials and durable App state are outside the scanner namespace, privileged mode and privilege escalation are disabled, the scanner runs as a non-root identity with ambient/additional Linux capabilities dropped, host namespaces are not shared, and host control sockets are not mounted.
+
+The root-filesystem and process-identity controls are deliberately separate from the repository mount. A read-only checkout does not stop a scanner from persisting into another writable container path, and a non-privileged container alone does not imply `allowPrivilegeEscalation=false`, non-root execution, or dropped capabilities. Production deployment generators should enforce all of these independently.
 
 The profile deliberately does not contain image names, registry credentials, filesystem paths, database URLs, Kubernetes credentials, GitHub tokens, or other secret-bearing deployment data.
 
@@ -54,6 +60,12 @@ Programmatic callers can use `assessSynSecScannerIsolationProfile()` from `@syns
 `assertGitHubAppScannerProductionReady()` provides the same policy as a startup assertion. Failure diagnostics contain only deployment issue codes and scanner-isolation control identifiers; they do not include webhook secrets, private-key material, filesystem contents, or scanner output.
 
 This composition is intended to prevent a production host from accidentally treating the development/advisory isolation mode as sufficient. It still validates declarations rather than inspecting the running container or orchestrator.
+
+## Mapping to common orchestrators
+
+A Kubernetes-style deployment would normally map these declarations to controls such as container CPU/memory limits, a read-only repository volume mount, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `runAsNonRoot: true`, and `capabilities.drop: ["ALL"]`, plus disabled host namespace sharing and an independently enforced NetworkPolicy. Docker or another sandbox runtime needs equivalent controls.
+
+These examples are conceptual mappings, not proof that a particular manifest is safe. SynSec does not currently parse or certify Kubernetes, Docker, systemd, seccomp, AppArmor, SELinux, cgroup, or network-policy configuration.
 
 ## What the profile proves
 
