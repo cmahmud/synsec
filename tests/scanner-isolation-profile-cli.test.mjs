@@ -26,10 +26,14 @@ const completeProfile = {
   memoryLimit: true,
   networkPolicy: "none",
   repositoryReadOnly: true,
+  rootFilesystemReadOnly: true,
   scratchSeparated: true,
   credentialsExcluded: true,
   durableStateExcluded: true,
   privileged: false,
+  allowPrivilegeEscalation: false,
+  runAsNonRoot: true,
+  capabilitiesDropped: true,
   hostNetwork: false,
   hostPid: false,
   hostIpc: false,
@@ -61,12 +65,18 @@ test("scanner isolation CLI exits 2 with deterministic missing controls", async 
       memoryLimit: false,
       networkPolicy: "none",
       repositoryReadOnly: false,
+      rootFilesystemReadOnly: false,
+      allowPrivilegeEscalation: true,
+      runAsNonRoot: false,
       hostSocketMounts: true,
     }), "utf8");
     const error = await runExpectingExit([path, "--json"], 2);
     assert.deepEqual(JSON.parse(error.stdout).missing, [
       "memory-limit",
       "read-only-repository",
+      "read-only-root-filesystem",
+      "no-privilege-escalation",
+      "run-as-non-root",
       "no-host-socket-mounts",
     ]);
   } finally {
