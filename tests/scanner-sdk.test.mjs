@@ -54,6 +54,17 @@ test("buildScannerProcessEnv applies scanner working-tree PATH isolation", () =>
   assert.equal(env.PATH, outsideBin);
 });
 
+test("runProcess rejects relative executable paths before spawning", async () => {
+  await assert.rejects(
+    runProcess("./repository-controlled-scanner", [], { cwd: resolve("synsec-test-worktree") }),
+    /Relative scanner executable paths are not allowed/,
+  );
+  await assert.rejects(
+    runProcess("tools/repository-controlled-scanner", []),
+    /Relative scanner executable paths are not allowed/,
+  );
+});
+
 test("runProcess does not implicitly pass parent credentials to scanners", async () => {
   const previous = process.env.SYNSEC_TEST_SECRET;
   process.env.SYNSEC_TEST_SECRET = "should-not-reach-scanner";
