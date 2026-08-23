@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -121,6 +121,27 @@ test("lifecycle review CLI has distinct policy exit codes", async () => {
     await assert.rejects(
       runCli([storePath, "--now", "2026-08-19T00:00:00.000Z", "--fail-unscheduled"]),
       (error) => error?.code === 3,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle review CLI rejects symlink inputs before reading their target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-lifecycle-review-symlink-"));
+  const targetPath = join(root, "target.json");
+  const linkPath = join(root, "lifecycle.json");
+  try {
+    await writeLifecycleStore(targetPath, fixtureStore());
+    await symlink(targetPath, linkPath);
+    await assert.rejects(
+      runCli([linkPath, "--summary-only", "--json"]),
+      (error) => {
+        assert.equal(error?.code, 1);
+        assert.match(error?.stderr ?? "", /non-symlink regular file/);
+        assert.doesNotMatch(error?.stdout ?? "", /overdue|unscheduled|fingerprint/);
+        return true;
+      },
     );
   } finally {
     await rm(root, { recursive: true, force: true });
