@@ -55,6 +55,29 @@ The default per-scenario timeout is 15 seconds. Adapter suites may select an int
 
 The report deliberately excludes thrown error text. Database exceptions frequently contain hostnames, SQL, connection strings, credentials, or tenant data. Adapter CI may retain its own separately sanitized diagnostics, but SynSec's portable conformance artifact only records bounded structural results.
 
+## Evidence binding gate
+
+Use `assessGitHubAppSharedStateConformanceEvidence()` from `@synsec/github/shared-state-evidence` before accepting a stored conformance artifact as deployment evidence.
+
+The assessor validates the versioned backend contract, parses the report as untrusted input, requires exactly one canonical result per scenario, recomputes coverage from those results, verifies the derived coverage object matches that recomputation, and requires `backendId` plus `implementationVersion` to match the backend contract exactly. Duplicate ids, invented scenarios, unsupported fields, inconsistent `complete` claims, tampered coverage arrays, malformed durations, and identity mismatches fail closed.
+
+```ts
+import {
+  assessGitHubAppSharedStateConformanceEvidence,
+} from "@synsec/github/shared-state-evidence";
+
+const assessment = assessGitHubAppSharedStateConformanceEvidence(
+  backendContract,
+  JSON.parse(conformanceArtifact),
+);
+
+if (!assessment.ready) {
+  throw new Error("Shared-state backend evidence is not ready for horizontal deployment.");
+}
+```
+
+The returned issues use bounded issue codes and fixed messages rather than backend-provided text. This keeps the policy surface safe for startup logs and CI summaries even when the rejected artifact or database error originally contained credentials, internal hostnames, SQL, or tenant data.
+
 ## What a pass means
 
 A complete report means every canonical callback completed successfully within its bound. It does **not** certify a storage product by itself. Production evidence should bind all of the following to the same tested revision:
@@ -69,6 +92,6 @@ Do not replace the adversarial operations with mocks of the adapter itself. The 
 
 ## Relationship to deployment readiness
 
-`validateGitHubAppDeployment()` still fails multi-replica configurations closed unless every required capability is declared. The conformance runner adds evidence; it does not bypass deployment validation, automatically enable horizontal scaling, or turn the built-in filesystem stores into distributed infrastructure.
+`validateGitHubAppDeployment()` still fails multi-replica configurations closed unless every required capability is declared. The conformance runner and evidence gate add proof structure; they do not bypass deployment validation, automatically enable horizontal scaling, or turn the built-in filesystem stores into distributed infrastructure.
 
 A production shared-state adapter remains responsible for implementing atomic replay claims, idempotent queue insertion, fenced ownership and terminal transitions, compare-and-set lease renewal, transactional installation state, and shared durable authorization using primitives provided by the selected backend.
