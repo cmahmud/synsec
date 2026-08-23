@@ -179,3 +179,65 @@ test("GitHub App setup CLI rejects credential-shaped or malformed setup document
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("GitHub App shared-state CLI reports exact missing guarantees and exits 2", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-shared-state-"));
+  try {
+    const path = join(root, "capabilities.json");
+    await writeFile(path, JSON.stringify({
+      atomicReplayClaim: true,
+      atomicQueueInsertion: false,
+      atomicQueueClaimWithFence: true,
+      compareAndSetLeaseRenewal: false,
+      fencedQueueTransitions: true,
+      transactionalInstallationState: true,
+      sharedAuthorizationState: true,
+    }), "utf8");
+
+    const error = await runExpectingExit(["shared-state", path, "--json"], 2);
+    assert.deepEqual(JSON.parse(error.stdout), {
+      complete: false,
+      missing: ["atomicQueueInsertion", "compareAndSetLeaseRenewal"],
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitHub App shared-state CLI succeeds only when every guarantee is declared true", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-shared-state-ready-"));
+  try {
+    const path = join(root, "capabilities.json");
+    await writeFile(path, JSON.stringify({
+      atomicReplayClaim: true,
+      atomicQueueInsertion: true,
+      atomicQueueClaimWithFence: true,
+      compareAndSetLeaseRenewal: true,
+      fencedQueueTransitions: true,
+      transactionalInstallationState: true,
+      sharedAuthorizationState: true,
+    }), "utf8");
+
+    const { stdout } = await exec(process.execPath, [cli.pathname, "shared-state", path, "--json"]);
+    assert.deepEqual(JSON.parse(stdout), { complete: true, missing: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitHub App shared-state CLI rejects backend connection details without echoing values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-app-shared-state-invalid-"));
+  try {
+    const path = join(root, "capabilities.json");
+    await writeFile(path, JSON.stringify({
+      atomicReplayClaim: true,
+      databaseUrl: "postgres://user:must-not-echo@example.invalid/db",
+    }), "utf8");
+
+    const error = await runExpectingExit(["shared-state", path], 1);
+    assert.match(error.stderr, /unsupported field databaseUrl/);
+    assert.doesNotMatch(error.stderr, /must-not-echo/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
