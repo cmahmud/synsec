@@ -64,9 +64,13 @@ function parseDestructuredRequire(line: string, edge: ResolvedModuleEdge): Impor
   return output;
 }
 
+function escapeIdentifier(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function bindingShadowedBeforeRoute(content: string, binding: ImportBinding, routeLine: number): boolean {
   if (routeLine <= binding.edge.line) return true;
-  const escaped = binding.localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeIdentifier(binding.localName);
   const lines = content.split(/\r?\n/).slice(binding.edge.line, routeLine - 1);
   const declaration = new RegExp(`\\b(?:const|let|var|function|class)\\s+${escaped}\\b`);
   const assignment = new RegExp(`(^|[^.\\w$])${escaped}\\s*=(?!=)`);
@@ -83,12 +87,35 @@ function targetNode(graph: CallGraph, binding: ImportBinding): CallGraphNode | u
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function hasNamedExportEvidence(content: string, binding: ImportBinding): boolean {
+  const escaped = escapeIdentifier(binding.importedName);
+  if (binding.edge.kind === "import") {
+    const directFunction = new RegExp(`(^|\\n)\\s*export\\s+(?:async\\s+)?function\\s+${escaped}\\b`);
+    const directValue = new RegExp(`(^|\\n)\\s*export\\s+(?:const|let|var|class)\\s+${escaped}\\b`);
+    const exportList = new RegExp(`(^|\\n)\\s*export\\s*\\{[^}]*\\b${escaped}\\b(?:\\s*,|\\s*\\})`);
+    return directFunction.test(content) || directValue.test(content) || exportList.test(content);
+  }
+
+  if (binding.edge.kind === "require") {
+    const propertyAssignment = new RegExp(
+      `(^|\\n)\\s*(?:module\\.)?exports\\.${escaped}\\s*=\\s*${escaped}\\b`,
+    );
+    const objectAssignment = new RegExp(
+      `(^|\\n)\\s*module\\.exports\\s*=\\s*\\{[^}]*\\b${escaped}\\b(?:\\s*[:,}]|\\s*,)`,
+    );
+    return propertyAssignment.test(content) || objectAssignment.test(content);
+  }
+
+  return false;
+}
+
 /**
  * Resolve unresolved Node router handlers through explicit repository-local named imports.
  *
  * Only ES named imports and destructured CommonJS require bindings are supported. Default imports,
- * namespace members, re-exports, dynamic expressions, shadowed bindings, ambiguous module targets,
- * and ambiguous target functions remain unresolved. This is structural evidence only.
+ * namespace members, re-exports, dynamic expressions, shadowed bindings, missing export evidence,
+ * ambiguous module targets, and ambiguous target functions remain unresolved. This is structural
+ * evidence only.
  */
 export async function resolveImportedNodeRouteEntrypoints(
   rootPath: string,
@@ -104,6 +131,15 @@ export async function resolveImportedNodeRouteEntrypoints(
   const maxCallNodes = Math.max(1, Math.min(1_000, options.maxCallNodes ?? 100));
   const output: RouteEntrypoint[] = [];
 
+  async function sourceFor(path: string): Promise<string | undefined> {
+    const normalized = normalizePath(path);
+    if (sourceCache.has(normalized)) return sourceCache.get(normalized);
+    const file = fileByPath.get(normalized);
+    const content = file ? await safeReadSource(rootPath, file) : undefined;
+    sourceCache.set(normalized, content);
+    return content;
+  }
+
   for (const entrypoint of entrypoints) {
     const route = entrypoint.route;
     if (
@@ -116,16 +152,7 @@ export async function resolveImportedNodeRouteEntrypoints(
     }
 
     const routePath = normalizePath(route.path);
-    const file = fileByPath.get(routePath);
-    if (!file) {
-      output.push(entrypoint);
-      continue;
-    }
-    let content = sourceCache.get(routePath);
-    if (!sourceCache.has(routePath)) {
-      content = await safeReadSource(rootPath, file);
-      sourceCache.set(routePath, content);
-    }
+    const content = await sourceFor(routePath);
     if (content === undefined) {
       output.push(entrypoint);
       continue;
@@ -149,10 +176,18 @@ export async function resolveImportedNodeRouteEntrypoints(
       }
     }
 
-    const uniqueTargets = bindings
-      .map((binding) => targetNode(graph, binding))
-      .filter((node): node is CallGraphNode => node !== undefined);
-    const distinct = [...new Map(uniqueTargets.map((node) => [node.id, node])).values()];
+    const eligibleTargets: CallGraphNode[] = [];
+    for (const binding of bindings) {
+      const node = targetNode(graph, binding);
+      const targetPath = binding.edge.target;
+      if (!node || !targetPath) continue;
+      const targetSource = await sourceFor(targetPath);
+      if (targetSource !== undefined && hasNamedExportEvidence(targetSource, binding)) {
+        eligibleTargets.push(node);
+      }
+    }
+
+    const distinct = [...new Map(eligibleTargets.map((node) => [node.id, node])).values()];
     const handler = distinct.length === 1 ? distinct[0] : undefined;
     if (!handler) {
       output.push(entrypoint);
