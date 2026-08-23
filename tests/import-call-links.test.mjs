@@ -137,3 +137,43 @@ test("does not treat default imports or unresolved external modules as cross-mod
     await repo.cleanup();
   }
 });
+
+test("refuses a JS import binding shadowed inside the calling function", async () => {
+  const repo = await fixture({
+    "src/handler.ts": [
+      'import { execute as run } from "./exec.js";',
+      "export function handler() {",
+      "  const run = localFactory();",
+      "  run();",
+      "}",
+    ].join("\n"),
+    "src/exec.ts": "export function execute() { return 1; }\n",
+  });
+  try {
+    const { importCalls } = await buildGraphs(repo.root, repo.files);
+    assert.equal(importCalls.linkedCallCount, 0);
+    assert.deepEqual(importCalls.links, []);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("refuses a Python import binding shadowed by a function parameter", async () => {
+  const repo = await fixture({
+    "pkg/__init__.py": "",
+    "pkg/service.py": "def execute():\n    return 1\n",
+    "app.py": [
+      "from pkg.service import execute as run",
+      "",
+      "def handler(run):",
+      "    run()",
+    ].join("\n"),
+  });
+  try {
+    const { importCalls } = await buildGraphs(repo.root, repo.files);
+    assert.equal(importCalls.linkedCallCount, 0);
+    assert.deepEqual(importCalls.links, []);
+  } finally {
+    await repo.cleanup();
+  }
+});
