@@ -1,4 +1,5 @@
 import type { SynSecReport } from "@synsec/report";
+import { sanitizeOperationalText } from "@synsec/scanner-sdk";
 import {
   acquireGitHubRepositoryScanTarget,
   type AcquiredGitHubScanTarget,
@@ -43,7 +44,7 @@ export type GitHubAppWorkerResult =
 
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/g, " ").trim().slice(0, 1000) || "GitHub App worker failed.";
+  return sanitizeOperationalText(message, 1000) || "GitHub App worker failed.";
 }
 
 interface LeaseHeartbeat {
@@ -103,6 +104,8 @@ function startLeaseHeartbeat(queue: GitHubAppWorkerQueue, job: GitHubScanJob): L
  * a random durable lease id as a fencing token. The local queue renews that exact lease while work is
  * active, revalidates it immediately before publication, and requires the same id for retry/terminal
  * mutations so an expired or concurrently superseded worker cannot publish or mutate newer work.
+ * Operational errors are sanitized before they enter retry/status results so transport or tool
+ * failures cannot echo bearer tokens, URL credentials, or other common secret forms.
  */
 export async function runNextGitHubAppScanJob(options: GitHubAppWorkerOptions): Promise<GitHubAppWorkerResult> {
   const job = await options.queue.claimNext();
