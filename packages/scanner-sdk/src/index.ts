@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { delimiter, isAbsolute, relative, resolve } from "node:path";
 import type { ScanResult, ScanTarget } from "@synsec/core";
 
 export type ScannerCapability =
@@ -99,18 +100,51 @@ export function sanitizeOperationalText(value: string, maxLength = DEFAULT_MAX_O
   return text;
 }
 
+function isWithinDirectory(candidate: string, root: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Remove relative/empty PATH entries and, when a scanner working directory is known, directories
+ * inside that working tree. This prevents repository-controlled executables from shadowing the
+ * intended scanner binary through `.` or repository-local `.bin` entries.
+ */
+export function sanitizeScannerSearchPath(value: string, cwd?: string): string | undefined {
+  const root = cwd ? resolve(cwd) : undefined;
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const raw of value.split(delimiter)) {
+    const entry = raw.trim();
+    if (!entry || !isAbsolute(entry)) continue;
+    const absolute = resolve(entry);
+    if (root && isWithinDirectory(absolute, root)) continue;
+    const key = process.platform === "win32" ? absolute.toLowerCase() : absolute;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push(absolute);
+  }
+  return entries.length > 0 ? entries.join(delimiter) : undefined;
+}
+
 /**
  * Build the default environment for untrusted external scanner processes.
  * Credentials, CI tokens, cloud secrets, registry tokens, proxy URLs, and user configuration roots
  * are not inherited implicitly. In particular, HOME/USERPROFILE/AppData/XDG_CONFIG_HOME are omitted
  * because scanner-specific config files under those roots can contain credentials even when token
- * environment variables themselves have been removed.
+ * environment variables themselves have been removed. PATH is restricted to absolute directories
+ * outside the scanner working tree when `cwd` is provided.
  */
-export function buildScannerProcessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildScannerProcessEnv(source: NodeJS.ProcessEnv = process.env, cwd?: string): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     const normalized = key.toUpperCase();
+    if (normalized === "PATH") {
+      const safePath = sanitizeScannerSearchPath(value, cwd);
+      if (safePath) result[key] = safePath;
+      continue;
+    }
     if (SAFE_ENV_KEYS.has(normalized) || normalized.startsWith("LC_")) result[key] = value;
   }
   return result;
@@ -137,7 +171,7 @@ export async function runProcess(
   return await new Promise<ProcessOutput>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env ?? buildScannerProcessEnv(),
+      env: options.env ?? buildScannerProcessEnv(process.env, options.cwd),
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
