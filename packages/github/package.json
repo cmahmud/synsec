@@ -17,6 +17,7 @@
     "./app-setup": "./dist/app-setup.js",
     "./credential-rotation": "./dist/credential-rotation.js",
     "./app-deployment": "./dist/app-deployment.js",
+    "./shared-state-contract": "./dist/shared-state-contract.js",
     "./app-status": "./dist/app-status.js",
     "./app-server": "./dist/app-server.js",
     "./app-intake": "./dist/app-intake.js",
