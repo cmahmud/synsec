@@ -18,6 +18,7 @@
     "./credential-rotation": "./dist/credential-rotation.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./shared-state-contract": "./dist/shared-state-contract.js",
+    "./shared-state-conformance": "./dist/shared-state-conformance.js",
     "./shared-runtime": "./dist/shared-runtime.js",
     "./app-status": "./dist/app-status.js",
     "./app-server": "./dist/app-server.js",
