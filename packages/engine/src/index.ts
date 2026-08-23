@@ -6,13 +6,13 @@ import { applyEvidenceAwareBaseline } from "@synsec/report/baseline";
 import { inventoryRepository } from "@synsec/repository";
 import {
   buildRepositoryIndex,
-  findDependencyUsage,
   findingRepositoryContext,
   packageNameFromPurl,
   type RepositoryIndex,
 } from "@synsec/repository/analysis";
 import { buildCallGraph } from "@synsec/repository/call-graph";
-import { buildModuleGraph } from "@synsec/repository/module-graph";
+import { findExternalDependencyUsage } from "@synsec/repository/dependency-usage";
+import { buildModuleGraph, type ModuleGraph } from "@synsec/repository/module-graph";
 import {
   buildIncrementalScanPlan,
   type IncrementalScanPlan,
@@ -184,7 +184,11 @@ function dependencyPackageName(finding: Finding): string | undefined {
   return typeof purl === "string" ? packageNameFromPurl(purl) : undefined;
 }
 
-function enrichDependencyUsage(scans: readonly ScanResult[], index: RepositoryIndex): ScanResult[] {
+function enrichDependencyUsage(
+  scans: readonly ScanResult[],
+  index: RepositoryIndex,
+  moduleGraph: ModuleGraph,
+): ScanResult[] {
   return scans.map((scan) => ({
     ...scan,
     findings: scan.findings.map((finding) => {
@@ -193,7 +197,7 @@ function enrichDependencyUsage(scans: readonly ScanResult[], index: RepositoryIn
       }
       const packageName = dependencyPackageName(finding);
       if (!packageName) return finding;
-      const usage = findDependencyUsage(index, packageName);
+      const usage = findExternalDependencyUsage(index, moduleGraph, packageName);
       return {
         ...finding,
         metadata: {
@@ -354,6 +358,7 @@ export async function runScanEngine(input: {
   if (availableSelected.length === 0) throw new Error(unavailableSummary(statuses));
 
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
+  const moduleGraph = buildModuleGraph(repositoryIndex, inventory.files);
   let routeFlows: RouteSinkFlowContext[] = [];
   if (repositoryIndex.routes.length > 0 && repositoryIndex.sinks.length > 0) {
     const callGraph = await buildCallGraph(root, inventory.files);
@@ -374,15 +379,14 @@ export async function runScanEngine(input: {
   let changedScope: { base: string; files: string[] } | undefined;
   let incrementalPlan: IncrementalScanPlan | undefined;
   if (requestedScope) {
-    const graph = buildModuleGraph(repositoryIndex, inventory.files);
-    incrementalPlan = buildIncrementalScanPlan(graph, requestedScope.files);
+    incrementalPlan = buildIncrementalScanPlan(moduleGraph, requestedScope.files);
     if (incrementalPlan.mode === "targeted" && incrementalPlan.selectedFiles.length > 0) {
       changedScope = { base: requestedScope.base, files: incrementalPlan.selectedFiles };
     }
   }
 
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
-  const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex);
+  const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex, moduleGraph);
   const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex, routeFlows);
   const scans = changedScope ? scopeScansToChangedFiles(enrichedScans, root, changedScope.files) : enrichedScans;
   const failures = result.failures;
