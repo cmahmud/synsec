@@ -231,6 +231,47 @@ function bindingMatch(binding: ImportBinding, callee: string): string | undefine
   return callee === binding.localName ? binding.importedName : undefined;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function callerShadowsBinding(
+  source: string,
+  callerLine: number,
+  callLine: number,
+  localName: string,
+): boolean {
+  if (!Number.isSafeInteger(callerLine) || !Number.isSafeInteger(callLine) || callerLine < 1 || callLine < callerLine) {
+    return true;
+  }
+  const escaped = escapeRegExp(localName);
+  const declaration = new RegExp(`\\b(?:const|let|var|class|function|def|for|catch|except)\\b[^;\\n]*\\b${escaped}\\b`);
+  const assignment = new RegExp(`^\\s*${escaped}\\s*=`);
+  const parameter = new RegExp(`\\([^)]*\\b${escaped}\\b[^)]*\\)`);
+  const lines = source.split(/\r?\n/);
+  const start = Math.max(0, callerLine - 1);
+  const end = Math.min(lines.length, callLine);
+
+  for (let index = start; index < end; index += 1) {
+    const line = lines[index] ?? "";
+    if (declaration.test(line) || assignment.test(line)) return true;
+    if (index === start && parameter.test(line)) return true;
+  }
+  return false;
+}
+
+async function sourceForPath(
+  root: string,
+  path: string,
+  cache: Map<string, string | undefined>,
+): Promise<string | undefined> {
+  const normalized = normalizedPath(path);
+  if (cache.has(normalized)) return cache.get(normalized);
+  const source = await readBoundedSource(root, { path: normalized, size: 0 });
+  cache.set(normalized, source);
+  return source;
+}
+
 export async function buildImportCallLinkGraph(
   rootPath: string,
   files: readonly IndexFileInput[],
@@ -241,6 +282,7 @@ export async function buildImportCallLinkGraph(
   const bindings = await collectImportBindings(root, files, moduleGraph);
   const nodeById = new Map(callGraph.nodes.map((node) => [node.id, node]));
   const functionsByPathAndName = new Map<string, string[]>();
+  const sourceCache = new Map<string, string | undefined>();
   for (const node of callGraph.nodes) {
     const key = `${normalizedPath(node.path)}\u0000${node.name}`;
     const bucket = functionsByPathAndName.get(key) ?? [];
@@ -262,6 +304,10 @@ export async function buildImportCallLinkGraph(
     if (matches.length !== 1) continue;
     const match = matches[0];
     if (!match) continue;
+
+    const source = await sourceForPath(root, callerPath, sourceCache);
+    if (source === undefined || callerShadowsBinding(source, caller.line, edge.line, match.binding.localName)) continue;
+
     const targets = functionsByPathAndName.get(`${normalizedPath(match.binding.targetPath)}\u0000${match.importedName}`) ?? [];
     if (targets.length !== 1) continue;
     const target = targets[0];
