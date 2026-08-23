@@ -1,3 +1,9 @@
+import {
+  buildSynSecGitHubAppCredentialRotationPlan,
+  type SynSecGitHubAppCredentialRotationInput,
+  type SynSecGitHubAppCredentialRotationPlan,
+} from "./credential-rotation.js";
+
 export type SynSecGitHubAppCredentialReloadKind = "webhook-secret" | "app-private-key";
 
 export interface SynSecGitHubAppCredentialReloadReplica {
@@ -25,6 +31,21 @@ export interface SynSecGitHubAppCredentialReloadAssessment {
   missingReplicaCount: number;
   complete: boolean;
   interpretation: "deployment-observed-reload-state-not-secret-management";
+}
+
+export type SynSecGitHubAppRotationWithoutReload = Omit<
+  SynSecGitHubAppCredentialRotationInput,
+  "runtimeReloaded"
+>;
+
+export interface SynSecGitHubAppCredentialRotationWithReloadInput {
+  rotation: SynSecGitHubAppRotationWithoutReload;
+  reload: SynSecGitHubAppCredentialReloadInput;
+}
+
+export interface SynSecGitHubAppCredentialRotationWithReloadAssessment {
+  reload: SynSecGitHubAppCredentialReloadAssessment;
+  rotation: SynSecGitHubAppCredentialRotationPlan;
 }
 
 const MAX_REPLICA_COUNT = 1000;
@@ -113,13 +134,23 @@ export function assessSynSecGitHubAppCredentialReload(
 }
 
 /**
- * Convert a deployment-wide reload assessment into the acknowledgement expected by the rotation
- * planner. This intentionally returns only a boolean so credential values and replica metadata do
- * not cross into the rotation state machine.
+ * Compose deployment-wide reload observations with the existing credential-rotation state machine.
+ * The reload acknowledgement is derived internally from the raw observations so callers cannot
+ * substitute a hand-authored `complete: true` assessment. This remains an observation/evaluation
+ * boundary: it does not retrieve secrets, reload processes, contact GitHub, or revoke credentials.
  */
-export function credentialReloadAcknowledgement(
-  assessment: SynSecGitHubAppCredentialReloadAssessment,
-): boolean {
-  if (assessment.version !== 1) throw new Error("Unsupported credential reload assessment version.");
-  return assessment.complete === true;
+export function buildSynSecGitHubAppCredentialRotationWithReloadAssessment(
+  input: SynSecGitHubAppCredentialRotationWithReloadInput,
+): SynSecGitHubAppCredentialRotationWithReloadAssessment {
+  if (input.rotation.kind !== input.reload.kind) {
+    throw new Error("Credential rotation and reload kinds must match.");
+  }
+
+  const reload = assessSynSecGitHubAppCredentialReload(input.reload);
+  const rotation = buildSynSecGitHubAppCredentialRotationPlan({
+    ...input.rotation,
+    runtimeReloaded: reload.complete,
+  });
+
+  return { reload, rotation };
 }
