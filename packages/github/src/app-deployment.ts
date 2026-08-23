@@ -6,6 +6,7 @@ export type GitHubAppDeploymentIssueLevel = "error" | "warning";
 export type GitHubAppScannerProcessBoundary = "container" | "sandbox" | "host";
 export type GitHubAppScannerNetworkPolicy = "none" | "egress-filtered" | "host";
 export type GitHubAppScannerRepositoryFilesystem = "read-only" | "writable";
+export type GitHubAppStateBackendKind = "filesystem" | "shared-transactional";
 
 export interface GitHubAppScannerIsolationConfig {
   processBoundary: GitHubAppScannerProcessBoundary;
@@ -13,6 +14,28 @@ export interface GitHubAppScannerIsolationConfig {
   memoryLimit: boolean;
   networkPolicy: GitHubAppScannerNetworkPolicy;
   repositoryFilesystem: GitHubAppScannerRepositoryFilesystem;
+}
+
+/**
+ * Atomicity guarantees a shared backend must provide before more than one SynSec runtime can
+ * safely coordinate webhook intake, repository authorization, and scan workers.
+ *
+ * These flags are an operator/backend integration contract only. SynSec's built-in filesystem
+ * stores do not implement or inherit these guarantees merely because a filesystem is networked.
+ */
+export interface GitHubAppSharedStateCapabilities {
+  atomicReplayClaim: boolean;
+  atomicQueueInsertion: boolean;
+  atomicQueueClaimWithFence: boolean;
+  compareAndSetLeaseRenewal: boolean;
+  fencedQueueTransitions: boolean;
+  transactionalInstallationState: boolean;
+  sharedAuthorizationState: boolean;
+}
+
+export interface GitHubAppStateBackendConfig {
+  kind: GitHubAppStateBackendKind;
+  capabilities?: GitHubAppSharedStateCapabilities;
 }
 
 export interface GitHubAppDeploymentConfig {
@@ -26,6 +49,10 @@ export interface GitHubAppDeploymentConfig {
   scannerIsolation?: GitHubAppScannerIsolationConfig;
   /** Fail deployment readiness when scanner isolation is absent or incomplete. */
   requireScannerIsolation?: boolean;
+  /** Number of application replicas that can concurrently access durable GitHub App state. */
+  replicaCount?: number;
+  /** Durable-state backend contract. Omitted means the built-in single-host filesystem backend. */
+  stateBackend?: GitHubAppStateBackendConfig;
 }
 
 export interface GitHubAppDeploymentIssue {
@@ -44,7 +71,10 @@ export interface GitHubAppDeploymentIssue {
     | "scanner-process-unisolated"
     | "scanner-resource-limits-missing"
     | "scanner-network-unrestricted"
-    | "scanner-repository-writable";
+    | "scanner-repository-writable"
+    | "invalid-replica-count"
+    | "shared-state-required"
+    | "shared-state-capabilities-incomplete";
   message: string;
 }
 
@@ -55,6 +85,7 @@ export interface GitHubAppDeploymentReadiness {
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_WEBHOOK_SECRET_BYTES = 4096;
+const MAX_REPLICA_COUNT = 1000;
 
 function isPositiveAppId(value: number | string): boolean {
   if (typeof value === "number") return Number.isSafeInteger(value) && value > 0;
@@ -151,6 +182,49 @@ function validateScannerIsolation(config: GitHubAppDeploymentConfig, issues: Git
   }
 }
 
+function hasCompleteSharedStateCapabilities(capabilities: GitHubAppSharedStateCapabilities | undefined): boolean {
+  return Boolean(
+    capabilities?.atomicReplayClaim &&
+    capabilities.atomicQueueInsertion &&
+    capabilities.atomicQueueClaimWithFence &&
+    capabilities.compareAndSetLeaseRenewal &&
+    capabilities.fencedQueueTransitions &&
+    capabilities.transactionalInstallationState &&
+    capabilities.sharedAuthorizationState,
+  );
+}
+
+function validateStateBackend(config: GitHubAppDeploymentConfig, issues: GitHubAppDeploymentIssue[]): void {
+  const replicaCount = config.replicaCount ?? 1;
+  if (!Number.isSafeInteger(replicaCount) || replicaCount < 1 || replicaCount > MAX_REPLICA_COUNT) {
+    issues.push({
+      level: "error",
+      code: "invalid-replica-count",
+      message: `GitHub App replica count must be an integer between 1 and ${MAX_REPLICA_COUNT}.`,
+    });
+    return;
+  }
+
+  if (replicaCount === 1) return;
+
+  if (!config.stateBackend || config.stateBackend.kind !== "shared-transactional") {
+    issues.push({
+      level: "error",
+      code: "shared-state-required",
+      message: "Multiple GitHub App replicas require a shared transactional state backend; the filesystem backend is single-host only.",
+    });
+    return;
+  }
+
+  if (!hasCompleteSharedStateCapabilities(config.stateBackend.capabilities)) {
+    issues.push({
+      level: "error",
+      code: "shared-state-capabilities-incomplete",
+      message: "The shared state backend must provide atomic replay and queue insertion, fenced claims/transitions, compare-and-set lease renewal, and transactional shared authorization state.",
+    });
+  }
+}
+
 /**
  * Validate operator-controlled GitHub App deployment settings before a hosted runtime starts.
  *
@@ -158,6 +232,8 @@ function validateScannerIsolation(config: GitHubAppDeploymentConfig, issues: Git
  * contents are never echoed into messages, making the result safe to surface in startup logs.
  * Scanner-isolation fields describe controls enforced by the surrounding container/sandbox runtime;
  * this preflight validates that contract and does not pretend Node child processes implement it.
+ * Shared-state fields similarly validate a backend integration contract and do not make the
+ * built-in filesystem stores transactional or multi-host safe.
  */
 export function validateGitHubAppDeployment(
   config: GitHubAppDeploymentConfig,
@@ -226,6 +302,7 @@ export function validateGitHubAppDeployment(
   }
 
   validateScannerIsolation(config, issues);
+  validateStateBackend(config, issues);
 
   return {
     ready: !issues.some((issue) => issue.level === "error"),
