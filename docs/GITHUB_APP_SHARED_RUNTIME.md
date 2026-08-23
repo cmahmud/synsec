@@ -35,14 +35,20 @@ GitHub App credentials remain transport-only as elsewhere in SynSec. Scanner pro
 
 ## Required conformance work before production scaling
 
-An adapter should not be treated as production-ready until integration tests run against its actual database and exercise at least:
+`@synsec/github/shared-state-conformance` exports `GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS`, a stable minimum adversarial scenario for each required shared-state capability. `assessGitHubAppSharedStateConformanceCoverage()` maps completed scenario IDs back to the exact missing scenarios and capabilities. Unknown or duplicate IDs cannot manufacture coverage.
+
+The current required scenarios cover:
 
 - concurrent duplicate webhook replay claims;
 - concurrent idempotent queue insertion;
-- competing queue claimers receiving at most one active lease;
-- stale-fence lease renewal, retry, failure, and completion attempts;
-- authorization removal racing an already queued or leased job;
-- transaction rollback and reconnect/restart behavior;
-- durable visibility across independent application processes.
+- competing queue claimers with fresh fencing identities;
+- stale-fence lease renewal rejection;
+- stale-fence retry/failure/completion rejection;
+- transactional installation/repository-selection mutation;
+- cross-replica authorization revocation visibility.
 
-The versioned contract and composition seam make those tests attributable to a concrete adapter build. They are not a substitute for the tests themselves.
+Adapters should record these stable scenario IDs only after the corresponding test has passed against the real backend. The coverage assessor does not execute a database or validate the truth of a claimed test result; it prevents drift in what SynSec considers the minimum concurrency test matrix.
+
+Additional adapter tests should cover transaction rollback, reconnect/restart behavior, and durable visibility across independent application processes. Those operational tests remain backend-specific and should not be replaced by mocks.
+
+The versioned contract, composition seam, and conformance registry make tests attributable to a concrete adapter build. They are not a substitute for the tests themselves, and none of these APIs makes the built-in filesystem stores horizontally safe.
