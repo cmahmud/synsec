@@ -17,6 +17,7 @@
     "./app-setup": "./dist/app-setup.js",
     "./credential-rotation": "./dist/credential-rotation.js",
     "./app-deployment": "./dist/app-deployment.js",
+    "./production-readiness": "./dist/production-readiness.js",
     "./shared-state-contract": "./dist/shared-state-contract.js",
     "./shared-state-conformance": "./dist/shared-state-conformance.js",
     "./shared-state-conformance-runner": "./dist/shared-state-conformance-runner.js",
