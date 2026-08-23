@@ -7,6 +7,7 @@
     ".": "./dist/index.js",
     "./review-comments": "./dist/review-comments.js",
     "./review-deadlines": "./dist/review-deadlines.js",
+    "./review-policy": "./dist/review-policy.js",
     "./triage-view": "./dist/triage-view.js",
     "./triage-html": "./dist/triage-html.js"
   },
