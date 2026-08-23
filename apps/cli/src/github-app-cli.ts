@@ -8,6 +8,10 @@ import {
   evaluateSynSecGitHubAppSetup,
   type SynSecGitHubAppSetupOptions,
 } from "@synsec/github/app-setup";
+import {
+  buildSynSecGitHubAppCredentialRotationPlan,
+  type SynSecGitHubAppCredentialRotationInput,
+} from "@synsec/github/credential-rotation";
 
 const MAX_SETUP_FILE_BYTES = 256 * 1024;
 const args = process.argv.slice(2);
@@ -31,11 +35,13 @@ Usage:
   synsec-github-app requirements [--sarif] [--remediation] [--json]
   synsec-github-app evaluate <setup.json> [--sarif] [--remediation] [--json] [--strict]
   synsec-github-app recover <setup.json> [--sarif] [--remediation] [--json] [--strict]
+  synsec-github-app rotation <rotation-state.json> [--json]
 
 Commands:
   requirements  Print the minimum GitHub App permissions and webhook events for enabled features.
   evaluate      Compare an exported/declarative App setup with SynSec's minimum requirements.
   recover       Print deterministic operator actions for missing capability and least-privilege drift.
+  rotation      Evaluate secret-free credential rotation acknowledgements before retiring an old credential.
 
 Feature flags:
   --sarif        Require security_events:write for SARIF/code-scanning publication.
@@ -50,9 +56,14 @@ Evaluation/recovery exit codes:
   2  Required permissions or webhook events are missing.
   3  --strict was requested and extra write permissions or webhook events were detected.
 
-The setup evaluator and recovery planner are offline. They do not contact GitHub, inspect
-installation tokens, read repositories, mutate App settings, or accept credentials. Runtime GitHub
-authorization and installation-token permission checks remain authoritative.
+Rotation exit codes:
+  0  Every required rotation acknowledgement is complete; the previous credential can be retired.
+  2  One or more required rotation acknowledgements remain incomplete; keep the previous credential active.
+
+The setup evaluator, recovery planner, and rotation planner are offline. They do not contact GitHub,
+inspect installation tokens, read repositories, mutate App settings, reload services, revoke keys, or
+accept credential values. Runtime GitHub authorization and installation-token permission checks remain
+authoritative.
 `);
 }
 
@@ -62,31 +73,32 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-async function readSetupFile(path: string): Promise<{ permissions: Record<string, "read" | "write">; events: string[] }> {
+async function readBoundedJsonObject(path: string, label: string): Promise<Record<string, unknown>> {
   const absolute = resolve(path);
   const info = await stat(absolute).catch(() => undefined);
-  if (!info?.isFile()) throw new Error(`GitHub App setup file is not a regular file: ${absolute}`);
-  if (info.size > MAX_SETUP_FILE_BYTES) {
-    throw new Error(`GitHub App setup file exceeds ${MAX_SETUP_FILE_BYTES} bytes.`);
-  }
+  if (!info?.isFile()) throw new Error(`${label} file is not a regular file: ${absolute}`);
+  if (info.size > MAX_SETUP_FILE_BYTES) throw new Error(`${label} file exceeds ${MAX_SETUP_FILE_BYTES} bytes.`);
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(await readFile(absolute, "utf8"));
   } catch {
-    throw new Error("GitHub App setup file must contain valid JSON.");
+    throw new Error(`${label} file must contain valid JSON.`);
   }
   const root = record(parsed);
-  if (!root) throw new Error("GitHub App setup file must contain a JSON object.");
+  if (!root) throw new Error(`${label} file must contain a JSON object.`);
+  return root;
+}
+
+async function readSetupFile(path: string): Promise<{ permissions: Record<string, "read" | "write">; events: string[] }> {
+  const root = await readBoundedJsonObject(path, "GitHub App setup");
   const rawPermissions = record(root.permissions);
   if (!rawPermissions) throw new Error("GitHub App setup file must contain a permissions object.");
   if (!Array.isArray(root.events)) throw new Error("GitHub App setup file must contain an events array.");
 
   const permissions: Record<string, "read" | "write"> = {};
   for (const [name, level] of Object.entries(rawPermissions)) {
-    if (level !== "read" && level !== "write") {
-      throw new Error(`GitHub App permission ${name} must be read or write.`);
-    }
+    if (level !== "read" && level !== "write") throw new Error(`GitHub App permission ${name} must be read or write.`);
     permissions[name] = level;
   }
   const events = root.events.map((value) => {
@@ -96,27 +108,51 @@ async function readSetupFile(path: string): Promise<{ permissions: Record<string
   return { permissions, events };
 }
 
+async function readRotationStateFile(path: string): Promise<SynSecGitHubAppCredentialRotationInput> {
+  const root = await readBoundedJsonObject(path, "GitHub App rotation state");
+  const allowed = new Set([
+    "kind",
+    "replacementActivated",
+    "runtimeReloaded",
+    "externalConfigurationUpdated",
+    "verificationSucceeded",
+  ]);
+  for (const key of Object.keys(root)) {
+    if (!allowed.has(key)) throw new Error(`GitHub App rotation state contains unsupported field ${key}. Credential values are not accepted.`);
+  }
+  if (root.kind !== "webhook-secret" && root.kind !== "app-private-key") {
+    throw new Error("GitHub App rotation state kind must be webhook-secret or app-private-key.");
+  }
+  const input: SynSecGitHubAppCredentialRotationInput = { kind: root.kind };
+  for (const key of [
+    "replacementActivated",
+    "runtimeReloaded",
+    "externalConfigurationUpdated",
+    "verificationSucceeded",
+  ] as const) {
+    const value = root[key];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") throw new Error(`GitHub App rotation state ${key} must be boolean.`);
+    input[key] = value;
+  }
+  return input;
+}
+
 function printRequirements(): void {
   const contract = buildSynSecGitHubAppSetupContract(setupOptions());
   if (flag("--json")) {
     console.log(JSON.stringify(contract, null, 2));
     return;
   }
-
   console.log("Required permissions:");
-  for (const [permission, level] of Object.entries(contract.permissions)) {
-    console.log(`  ${permission}: ${level}`);
-  }
+  for (const [permission, level] of Object.entries(contract.permissions)) console.log(`  ${permission}: ${level}`);
   console.log("Required webhook events:");
   for (const event of contract.events) console.log(`  ${event}`);
   console.log(`Remediation writes: ${contract.remediationWriteEnabled ? "enabled" : "disabled"}`);
   for (const note of contract.notes) console.log(`Note: ${note}`);
 }
 
-function applyEvaluationExitCode(input: {
-  ready: boolean;
-  hasLeastPrivilegeDrift: boolean;
-}): void {
+function applyEvaluationExitCode(input: { ready: boolean; hasLeastPrivilegeDrift: boolean }): void {
   if (!input.ready) {
     process.exitCode = 2;
     return;
@@ -126,24 +162,16 @@ function applyEvaluationExitCode(input: {
 
 async function evaluate(): Promise<void> {
   const path = args[1];
-  if (!path || path.startsWith("--")) {
-    throw new Error("Usage: synsec-github-app evaluate <setup.json> [--sarif] [--remediation] [--json] [--strict]");
-  }
+  if (!path || path.startsWith("--")) throw new Error("Usage: synsec-github-app evaluate <setup.json> [--sarif] [--remediation] [--json] [--strict]");
   const setup = await readSetupFile(path);
-  const evaluation = evaluateSynSecGitHubAppSetup({
-    ...setup,
-    options: setupOptions(),
-  });
-
+  const evaluation = evaluateSynSecGitHubAppSetup({ ...setup, options: setupOptions() });
   if (flag("--json")) {
     console.log(JSON.stringify(evaluation, null, 2));
   } else {
     console.log(`Required capability: ${evaluation.ready ? "ready" : "missing"}`);
     if (evaluation.missingPermissions.length > 0) {
       console.log("Missing permissions:");
-      for (const item of evaluation.missingPermissions) {
-        console.log(`  ${item.permission}: required ${item.required}, actual ${item.actual ?? "absent"}`);
-      }
+      for (const item of evaluation.missingPermissions) console.log(`  ${item.permission}: required ${item.required}, actual ${item.actual ?? "absent"}`);
     }
     if (evaluation.missingEvents.length > 0) {
       console.log("Missing webhook events:");
@@ -159,25 +187,17 @@ async function evaluate(): Promise<void> {
     }
     console.log(`Interpretation: ${evaluation.interpretation}`);
   }
-
   applyEvaluationExitCode({
     ready: evaluation.ready,
-    hasLeastPrivilegeDrift:
-      evaluation.excessiveWritePermissions.length > 0 || evaluation.extraEvents.length > 0,
+    hasLeastPrivilegeDrift: evaluation.excessiveWritePermissions.length > 0 || evaluation.extraEvents.length > 0,
   });
 }
 
 async function recover(): Promise<void> {
   const path = args[1];
-  if (!path || path.startsWith("--")) {
-    throw new Error("Usage: synsec-github-app recover <setup.json> [--sarif] [--remediation] [--json] [--strict]");
-  }
+  if (!path || path.startsWith("--")) throw new Error("Usage: synsec-github-app recover <setup.json> [--sarif] [--remediation] [--json] [--strict]");
   const setup = await readSetupFile(path);
-  const plan = buildSynSecGitHubAppSetupRecoveryPlan({
-    ...setup,
-    options: setupOptions(),
-  });
-
+  const plan = buildSynSecGitHubAppSetupRecoveryPlan({ ...setup, options: setupOptions() });
   if (flag("--json")) {
     console.log(JSON.stringify(plan, null, 2));
   } else {
@@ -185,40 +205,47 @@ async function recover(): Promise<void> {
     if (plan.requiredActions.length > 0) {
       console.log("Required operator actions:");
       for (const action of plan.requiredActions) console.log(`  - ${action}`);
-    } else {
-      console.log("Required operator actions: none");
-    }
+    } else console.log("Required operator actions: none");
     if (plan.leastPrivilegeReview.length > 0) {
       console.log("Least-privilege review:");
       for (const action of plan.leastPrivilegeReview) console.log(`  - ${action}`);
-    } else {
-      console.log("Least-privilege review: none");
+    } else console.log("Least-privilege review: none");
+    console.log(`Interpretation: ${plan.interpretation}`);
+  }
+  applyEvaluationExitCode({ ready: plan.ready, hasLeastPrivilegeDrift: plan.leastPrivilegeReview.length > 0 });
+}
+
+async function rotation(): Promise<void> {
+  const path = args[1];
+  if (!path || path.startsWith("--")) throw new Error("Usage: synsec-github-app rotation <rotation-state.json> [--json]");
+  const plan = buildSynSecGitHubAppCredentialRotationPlan(await readRotationStateFile(path));
+  if (flag("--json")) {
+    console.log(JSON.stringify(plan, null, 2));
+  } else {
+    console.log(`Credential: ${plan.kind}`);
+    console.log(`Previous credential retirement: ${plan.readyToRetirePrevious ? "ready" : "blocked"}`);
+    if (plan.completedSteps.length > 0) {
+      console.log("Completed acknowledgements:");
+      for (const item of plan.completedSteps) console.log(`  - ${item}`);
+    }
+    if (plan.requiredActions.length > 0) {
+      console.log("Required operator actions:");
+      for (const item of plan.requiredActions) console.log(`  - ${item}`);
     }
     console.log(`Interpretation: ${plan.interpretation}`);
   }
-
-  applyEvaluationExitCode({
-    ready: plan.ready,
-    hasLeastPrivilegeDrift: plan.leastPrivilegeReview.length > 0,
-  });
+  if (!plan.readyToRetirePrevious) process.exitCode = 2;
 }
 
 async function main(): Promise<void> {
   switch (command) {
-    case "requirements":
-      printRequirements();
-      break;
-    case "evaluate":
-      await evaluate();
-      break;
-    case "recover":
-      await recover();
-      break;
+    case "requirements": printRequirements(); break;
+    case "evaluate": await evaluate(); break;
+    case "recover": await recover(); break;
+    case "rotation": await rotation(); break;
     case "help":
     case "--help":
-    case "-h":
-      printHelp();
-      break;
+    case "-h": printHelp(); break;
     default:
       printHelp();
       process.exitCode = 1;
