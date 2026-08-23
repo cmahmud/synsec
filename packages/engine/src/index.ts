@@ -86,6 +86,10 @@ function sanitizeRemoteUrl(value: string): string {
   }
 }
 
+function scannerIdentityLabel(value: string): string {
+  return sanitizeOperationalText(value, 256) || "scanner";
+}
+
 /**
  * Scanner adapters are an external-process/plugin boundary. Their thrown errors are operational
  * diagnostics, never evidence, so redact and bound them before they can enter reports, logs, or
@@ -324,19 +328,31 @@ export async function scannerStatuses(config: SynSecConfig): Promise<ScannerStat
   const scanners = builtInScanners();
   const knownIds = new Set(scanners.map((scanner) => scanner.id));
   const statuses = await Promise.all(
-    scanners.map(async (scanner) => ({
-      id: scanner.id,
-      displayName: scanner.displayName,
-      selected: selectedIds.has(scanner.id),
-      availability: await scanner.checkAvailability(),
-    })),
+    scanners.map(async (scanner) => {
+      let availability: ScannerAvailability;
+      try {
+        availability = await scanner.checkAvailability();
+      } catch (error) {
+        availability = {
+          available: false,
+          reason: scannerFailureMessage(error),
+        };
+      }
+      return {
+        id: scanner.id,
+        displayName: scanner.displayName,
+        selected: selectedIds.has(scanner.id),
+        availability,
+      };
+    }),
   );
 
   for (const id of selectedIds) {
     if (!knownIds.has(id)) {
+      const label = scannerIdentityLabel(id);
       statuses.push({
-        id,
-        displayName: id,
+        id: label,
+        displayName: label,
         selected: true,
         availability: { available: false, reason: "Unknown scanner id in configuration." },
       });
@@ -408,7 +424,7 @@ function unavailableSummary(statuses: readonly ScannerStatus[]): string {
   const selected = statuses.filter((status) => status.selected);
   if (selected.length === 0) return "No scanner engines are selected in the SynSec configuration.";
   const detail = selected
-    .map((status) => `${status.displayName}: ${sanitizeOperationalText(status.availability.reason ?? "unavailable", 2_048) || "unavailable"}`)
+    .map((status) => `${scannerIdentityLabel(status.displayName)}: ${sanitizeOperationalText(status.availability.reason ?? "unavailable", 2_048) || "unavailable"}`)
     .join("; ");
   return `No selected scanner engines are available. ${detail}`;
 }
