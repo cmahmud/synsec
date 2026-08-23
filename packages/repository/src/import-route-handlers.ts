@@ -153,12 +153,12 @@ export async function resolveImportedNodeRouteEntrypoints(
       .map((binding) => targetNode(graph, binding))
       .filter((node): node is CallGraphNode => node !== undefined);
     const distinct = [...new Map(uniqueTargets.map((node) => [node.id, node])).values()];
-    if (distinct.length !== 1) {
+    const handler = distinct.length === 1 ? distinct[0] : undefined;
+    if (!handler) {
       output.push(entrypoint);
       continue;
     }
 
-    const handler = distinct[0];
     output.push({
       route,
       resolution: "imported-named-function",
