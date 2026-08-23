@@ -10,17 +10,15 @@ import {
   packageNameFromPurl,
   type RepositoryIndex,
 } from "@synsec/repository/analysis";
-import { buildCallGraph } from "@synsec/repository/call-graph";
 import { findExternalDependencyUsage } from "@synsec/repository/dependency-usage";
 import { buildModuleGraph, type ModuleGraph } from "@synsec/repository/module-graph";
 import {
   buildIncrementalScanPlan,
   type IncrementalScanPlan,
 } from "@synsec/repository/incremental-plan";
-import { resolveRouteEntrypoints } from "@synsec/repository/route-entrypoints";
+import { buildRepositoryRouteFlowAnalysis } from "@synsec/repository/route-flow-analysis";
 import {
   findingRouteSinkFlowEvidence,
-  repositoryRouteSinkFlowContexts,
   type RouteSinkFlowContext,
 } from "@synsec/repository/route-sink-flow";
 import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
@@ -361,9 +359,13 @@ export async function runScanEngine(input: {
   const moduleGraph = buildModuleGraph(repositoryIndex, inventory.files);
   let routeFlows: RouteSinkFlowContext[] = [];
   if (repositoryIndex.routes.length > 0 && repositoryIndex.sinks.length > 0) {
-    const callGraph = await buildCallGraph(root, inventory.files);
-    const entrypoints = resolveRouteEntrypoints(repositoryIndex, callGraph);
-    routeFlows = repositoryRouteSinkFlowContexts(repositoryIndex, entrypoints, callGraph);
+    const routeAnalysis = await buildRepositoryRouteFlowAnalysis(
+      root,
+      inventory.files,
+      repositoryIndex,
+      moduleGraph,
+    );
+    routeFlows = routeAnalysis.routeFlows;
   }
 
   let requestedScope: { base: string; files: string[] } | undefined;
