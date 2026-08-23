@@ -71,10 +71,10 @@ async function readProfile(path: string): Promise<Partial<SynSecScannerIsolation
     "hostIpc",
     "hostSocketMounts",
   ]);
-  for (const key of Object.keys(root)) {
-    if (!allowed.has(key)) {
-      throw new Error(`Scanner isolation profile contains unsupported field ${key}. Credentials, paths, image registries, and connection details are not accepted.`);
-    }
+  if (Object.keys(root).some((key) => !allowed.has(key))) {
+    // Never reflect an attacker-controlled JSON key. Field names are log data too and can contain
+    // credentials or terminal/control sequences just like field values.
+    throw new Error("Scanner isolation profile contains an unsupported field. Credentials, paths, image registries, and connection details are not accepted.");
   }
 
   const profile: Partial<SynSecScannerIsolationProfile> = {};
