@@ -88,18 +88,23 @@ The current engines are Opengrep, Betterleaks, Gitleaks, OSV-Scanner, Trivy, Gry
 
 ### `@synsec/repository`
 
-Provides lightweight repository intelligence without executing the project under analysis.
+Provides bounded repository intelligence without executing the project under analysis.
 
 The v0.2 implementation:
 
 - walks files while excluding common generated/vendor directories;
 - skips symlinks;
-- caps inventory size;
+- caps inventory and per-file analysis size;
 - detects languages and common frameworks;
+- builds a structural local module graph for supported JavaScript/TypeScript/Python imports;
+- builds bounded lexical call-graph, route, authentication, sink, test-ownership, and coverage context;
+- expands incremental scan scope through bounded known local dependents;
 - retrieves bounded text around a finding only after verifying that the path remains inside the repository root;
 - refuses large/binary context files.
 
-This package is the beginning of the future code graph/reachability layer.
+Module resolution deliberately fails closed when identity is ambiguous. JavaScript/TypeScript local edges require relative specifiers. Python relative imports are resolved when a unique repository module/package exists. Absolute Python imports such as `service.db` are treated as repository-local only when the indexed repository contains an explicit top-level `service/__init__.py` package and exactly one matching module/package target. A standalone `requests.py` therefore does not cause `import requests` to be guessed as local, and a simultaneous `service/db.py` plus `service/db/__init__.py` remains unresolved.
+
+This module graph is structural import evidence, not function-level data flow or production reachability. Its immediate execution consequence is conservative incremental coverage: changing a uniquely resolved local Python dependency can include bounded importing modules, while unresolved imports do not manufacture dependent scope.
 
 ### `@synsec/report`
 
@@ -123,7 +128,8 @@ Responsibilities include:
 - scanner availability checks;
 - bounded concurrency;
 - failure isolation;
-- repository inventory;
+- repository inventory and structural context;
+- conservative dependency-aware incremental planning;
 - report construction;
 - CI severity threshold evaluation.
 
@@ -197,21 +203,19 @@ A workflow should declare the evidence it may read and the actions it may reques
 
 ## Current execution trust model
 
-Repositories under analysis are untrusted input. v0.2 avoids directly executing their application/build scripts, skips symlinks in repository inventory, and invokes scanner binaries without a shell.
+Repositories under analysis are untrusted input. v0.2 avoids directly executing their application/build scripts, skips symlinks in repository inventory, and invokes scanner binaries without a shell. Scanner subprocesses also use a credential-minimized environment and constrained command lookup as defense in depth.
 
-However, external scanners have their own parsers, archive handlers, network behavior, and implementation risks. A future worker layer should run scans in disposable containers with resource and egress policies before SynSec is positioned as a hosted service for arbitrary untrusted repositories.
+External scanners still have their own parsers, archive handlers, network behavior, and implementation risks. Hosted production operation therefore requires externally enforced disposable container/sandbox controls rather than treating the Node child-process boundary as isolation. SynSec's production isolation profile can fail closed on a reviewed declaration of those controls, but it does not itself create or certify the sandbox.
 
-## Future repository graph
+## Repository graph direction
 
-The next major intelligence layer should add:
+The current structural graph already includes bounded local module relationships, same-file lexical calls, conservative route/handler mapping, authentication and sensitive-sink signals, test ownership, and coverage context. The next intelligence steps should deepen these signals without overstating them, including:
 
-- import/module relationships;
-- functions and call sites;
-- routes/controllers and externally reachable entry points;
-- authentication/authorization middleware;
-- source-to-sink paths;
-- database/filesystem/process/network sinks;
-- dependency reachability;
-- relevant tests and version-control context.
+- framework-aware cross-module handler resolution where imports/exports are unambiguous;
+- bounded cross-module call relationships;
+- source-to-sink/data-flow analysis with explicit uncertainty handling;
+- dependency reachability beyond observed imports;
+- richer framework middleware/controller composition;
+- stronger linkage to relevant tests and version-control context.
 
-That graph should improve triage and fix suggestions without requiring the model to ingest an entire repository for each finding.
+These graph layers should improve triage and fix suggestions without requiring the model to ingest an entire repository for each finding and without authorizing live-target probing.
