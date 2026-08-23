@@ -19,4 +19,18 @@ To keep this artifact suitable for broader operational reporting, it deliberatel
 
 The due-soon window defaults to seven days and is bounded between zero and 365 days. Invalid assessment clocks or window values fail closed.
 
-This API is reporting and governance metadata only. An overdue accepted-risk or false-positive decision is not silently converted back into a scanner finding state. Teams can use the assessment to drive their own review workflow while preserving an explicit human decision boundary.
+## CLI governance checks
+
+The same minimized assessment is available through the credential-free CLI:
+
+```text
+synsec-lifecycle-reviews .synsec/lifecycle.json
+synsec-lifecycle-reviews .synsec/lifecycle.json --json
+synsec-lifecycle-reviews .synsec/lifecycle.json --due-soon-days 14 --fail-overdue --fail-unscheduled
+```
+
+`--fail-overdue` returns exit code `2` when at least one exception is overdue. `--fail-unscheduled` returns exit code `3` when reviewable exceptions exist without a deadline, unless the overdue policy already failed. Invalid input or unsupported options return exit code `1`. These policy codes make the command suitable for repository CI/governance workflows without changing finding state.
+
+The CLI bounds its input file to 1 MiB before lifecycle parsing and rejects unknown options without reflecting their values. It accepts `--now <timestamp>` for deterministic testing or scheduled policy evaluation and `--due-soon-days <0-365>` to tune the reporting window.
+
+This API and CLI are reporting/governance surfaces only. An overdue accepted-risk or false-positive decision is not silently converted back into a scanner finding state, and SynSec does not automatically revoke a human exception. Teams can use the assessment to require re-review while preserving an explicit human decision boundary.
