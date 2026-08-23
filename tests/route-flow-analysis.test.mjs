@@ -41,8 +41,11 @@ test("composed route analysis reaches an exact sink through one explicit local i
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
 
     assert.equal(analysis.interpretation, "repository-structural-route-flow-evidence-only");
+    assert.equal(analysis.inputFileCount, 2);
     assert.equal(analysis.analyzedFileCount, 2);
     assert.equal(analysis.skippedUnsafeFileCount, 0);
+    assert.equal(analysis.truncatedFileCount, 0);
+    assert.equal(analysis.coverage, "complete-input");
     assert.equal(analysis.importCallLinks.linkedCallCount, 1);
     assert.equal(analysis.routeFlows.length, 1);
     const flow = analysis.routeFlows[0];
@@ -78,8 +81,11 @@ test("composed route analysis remains same-file when the import is external or u
     const index = await buildRepositoryIndex(repo.root, repo.files);
     const moduleGraph = buildModuleGraph(index, repo.files);
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
+    assert.equal(analysis.inputFileCount, 1);
     assert.equal(analysis.analyzedFileCount, 1);
     assert.equal(analysis.skippedUnsafeFileCount, 0);
+    assert.equal(analysis.truncatedFileCount, 0);
+    assert.equal(analysis.coverage, "complete-input");
     assert.equal(analysis.importCallLinks.linkedCallCount, 0);
     assert.equal(analysis.routeFlows[0]?.callScope, "same-file");
     assert.deepEqual(analysis.routeFlows[0]?.evidence, []);
@@ -105,12 +111,58 @@ test("composed route analysis refuses symlink source entries even when caller me
     const moduleGraph = buildModuleGraph(index, files);
     const analysis = await buildRepositoryRouteFlowAnalysis(root, files, index, moduleGraph);
 
+    assert.equal(analysis.inputFileCount, 1);
     assert.equal(analysis.analyzedFileCount, 0);
     assert.equal(analysis.skippedUnsafeFileCount, 1);
+    assert.equal(analysis.truncatedFileCount, 0);
+    assert.equal(analysis.coverage, "complete-input");
     assert.equal(analysis.callGraph.nodes.length, 0);
     assert.equal(analysis.importCallLinks.linkedCallCount, 0);
     assert.deepEqual(analysis.routeFlows, []);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("composed route analysis reports bounded input coverage instead of silently dropping files", async () => {
+  const repo = await makeRepository({
+    "a.ts": "export function a() {}\n",
+    "b.ts": "export function b() {}\n",
+    "c.ts": "export function c() {}\n",
+  });
+
+  try {
+    const index = await buildRepositoryIndex(repo.root, repo.files);
+    const moduleGraph = buildModuleGraph(index, repo.files);
+    const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph, {
+      maxFiles: 2,
+    });
+
+    assert.equal(analysis.inputFileCount, 3);
+    assert.equal(analysis.analyzedFileCount, 2);
+    assert.equal(analysis.skippedUnsafeFileCount, 0);
+    assert.equal(analysis.truncatedFileCount, 1);
+    assert.equal(analysis.coverage, "bounded-input");
+    assert.deepEqual(analysis.callGraph.nodes.map((node) => node.path).sort(), ["a.ts", "b.ts"]);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("composed route analysis rejects invalid file bounds", async () => {
+  const repo = await makeRepository({ "server.ts": "export function handler() {}\n" });
+  try {
+    const index = await buildRepositoryIndex(repo.root, repo.files);
+    const moduleGraph = buildModuleGraph(index, repo.files);
+    await assert.rejects(
+      buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph, { maxFiles: 0 }),
+      /maxFiles must be an integer between 1 and 5000/,
+    );
+    await assert.rejects(
+      buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph, { maxFiles: 5_001 }),
+      /maxFiles must be an integer between 1 and 5000/,
+    );
+  } finally {
+    await repo.cleanup();
   }
 });
