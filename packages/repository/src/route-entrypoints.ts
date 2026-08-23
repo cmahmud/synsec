@@ -2,7 +2,11 @@ import type { RepositoryIndex, RouteSignal } from "./analysis.js";
 import type { CallGraph, CallGraphNode, CallNeighborhood } from "./call-graph.js";
 import { findCallNeighborhood } from "./call-graph.js";
 
-export type RouteEntrypointResolution = "decorated-function" | "named-function" | "unresolved";
+export type RouteEntrypointResolution =
+  | "decorated-function"
+  | "named-function"
+  | "imported-named-function"
+  | "unresolved";
 
 export interface RouteEntrypoint {
   route: RouteSignal;
