@@ -20,6 +20,7 @@
     "./shared-state-contract": "./dist/shared-state-contract.js",
     "./shared-state-conformance": "./dist/shared-state-conformance.js",
     "./shared-state-conformance-runner": "./dist/shared-state-conformance-runner.js",
+    "./shared-state-evidence": "./dist/shared-state-evidence.js",
     "./shared-runtime": "./dist/shared-runtime.js",
     "./app-status": "./dist/app-status.js",
     "./app-server": "./dist/app-server.js",
