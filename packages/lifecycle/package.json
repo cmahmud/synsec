@@ -6,6 +6,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./review-comments": "./dist/review-comments.js",
+    "./review-deadlines": "./dist/review-deadlines.js",
     "./triage-view": "./dist/triage-view.js",
     "./triage-html": "./dist/triage-html.js"
   },
