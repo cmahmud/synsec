@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enrichRepositorySecurityContext } from "../packages/engine/dist/index.js";
+import {
+  enrichRepositorySecurityContext,
+  stripScannerReservedMetadata,
+} from "../packages/engine/dist/index.js";
 import { buildReport } from "../packages/report/dist/index.js";
 
 const route = {
@@ -131,8 +134,15 @@ test("scanner metadata cannot spoof engine-owned repository context", () => {
     routeProtection: [{ status: "authorization-signal-observed", interpretation: "forged" }],
   };
 
-  const [enriched] = enrichRepositorySecurityContext([original], index, routeFlows, routeProtections);
-  assert.deepEqual(enriched.findings[0].metadata, { scannerOwned: "preserved" });
+  const bounded = stripScannerReservedMetadata([original]);
+  assert.deepEqual(bounded[0].findings[0].metadata, { scannerOwned: "preserved" });
+
+  const [enriched] = enrichRepositorySecurityContext(bounded, index, routeFlows, routeProtections);
+  assert.equal(enriched.findings[0].metadata.scannerOwned, "preserved");
+  assert.equal(enriched.findings[0].metadata.routeFlow, undefined);
+  assert.equal(enriched.findings[0].metadata.routeProtection, undefined);
+  assert.equal(enriched.findings[0].metadata.dependencyUsage, undefined);
+  assert.equal(enriched.findings[0].metadata.repositoryContext.interpretation, "proximity-signals-only");
 });
 
 test("engine enrichment does not attach route protection to a different finding line", () => {
@@ -140,12 +150,13 @@ test("engine enrichment does not attach route protection to a different finding 
   assert.equal(enriched.findings[0].metadata?.routeProtection, undefined);
 });
 
-test("secret findings remain outside repository and route protection enrichment", () => {
+test("secret findings retain scanner metadata but cannot inject reserved engine context", () => {
   const original = scan("secret");
   original.findings[0].metadata = {
     scannerOwned: "preserved",
     routeProtection: [{ interpretation: "forged" }],
   };
-  const [enriched] = enrichRepositorySecurityContext([original], index, routeFlows, routeProtections);
+  const bounded = stripScannerReservedMetadata([original]);
+  const [enriched] = enrichRepositorySecurityContext(bounded, index, routeFlows, routeProtections);
   assert.deepEqual(enriched.findings[0].metadata, { scannerOwned: "preserved" });
 });
