@@ -14,7 +14,7 @@ export { CheckovAdapter, buildCheckovArguments, parseCheckovJson } from "./check
 export { GitleaksAdapter, normalizeGitleaksChangedFiles, parseGitleaksJson } from "./gitleaks.js";
 export { GrypeAdapter, parseGrypeJson } from "./grype.js";
 export { OpengrepAdapter, parseOpengrepJson } from "./opengrep.js";
-export { OsvScannerAdapter, parseOsvJson } from "./osv.js";
+export { OsvScannerAdapter, buildOsvArguments, parseOsvJson } from "./osv.js";
 export { parseSarifJson } from "./sarif.js";
 export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
 export { SyftAdapter, parseSyftJson } from "./syft.js";
@@ -26,6 +26,7 @@ const NATIVE_CHANGED_FILE_SCANNERS = new Set([
   "gitleaks",
   "checkov",
   "trivy",
+  "osv-scanner",
 ]);
 
 /**
