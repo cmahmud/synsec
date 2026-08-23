@@ -79,6 +79,35 @@ test("lifecycle review CLI emits minimized deterministic JSON", async () => {
   }
 });
 
+test("lifecycle review CLI summary-only JSON omits paths, fingerprints, and review timestamps", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-lifecycle-review-summary-"));
+  const storePath = join(root, "private-lifecycle.json");
+  try {
+    await writeLifecycleStore(storePath, fixtureStore());
+    const result = await runCli([
+      storePath,
+      "--now", "2026-08-23T00:00:00.000Z",
+      "--due-soon-days", "3",
+      "--summary-only",
+      "--json",
+    ]);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.ready, true);
+    assert.deepEqual(summary.violations, []);
+    assert.deepEqual(summary.summary, {
+      reviewable: 3,
+      overdue: 1,
+      dueSoon: 1,
+      scheduled: 0,
+      unscheduled: 1,
+    });
+    assert.doesNotMatch(result.stdout, /private-lifecycle|"fingerprint"|"reviewAt"|"overdue"\s*:\s*"/);
+    assert.doesNotMatch(result.stdout, /must never appear|security-team|src\/private\.ts/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("lifecycle review CLI has distinct policy exit codes", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-lifecycle-review-policy-"));
   const storePath = join(root, "lifecycle.json");
