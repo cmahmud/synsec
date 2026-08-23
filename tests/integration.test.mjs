@@ -104,3 +104,58 @@ JSON
     await rm(bin, { recursive: true, force: true });
   }
 });
+
+test("scan engine enriches exact sink findings across an explicit local import", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-cross-module-engine-"));
+  const bin = await mkdtemp(join(tmpdir(), "synsec-cross-module-bin-"));
+  const originalPath = process.env.PATH ?? "";
+
+  try {
+    await writeFile(join(root, "server.ts"), [
+      'import { runQuery } from "./service.js";',
+      "export function listUsers() {",
+      "  runQuery();",
+      "}",
+      'router.get("/users", listUsers);',
+    ].join("\n"));
+    await writeFile(join(root, "service.ts"), [
+      "export function runQuery() {",
+      "  db.query(secretSql);",
+      "}",
+    ].join("\n"));
+
+    const opengrep = join(bin, "opengrep");
+    await writeFile(opengrep, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "opengrep 99.0.0-fixture"
+  exit 0
+fi
+cat <<'JSON'
+{"results":[{"check_id":"fixture.cross-module","path":"service.ts","start":{"line":2,"col":3},"end":{"line":2,"col":22},"extra":{"message":"Fixture imported sink","severity":"ERROR","metadata":{"cwe":["CWE-89"]}}}]}
+JSON
+`);
+    await chmod(opengrep, 0o755);
+    process.env.PATH = `${bin}${delimiter}${originalPath}`;
+
+    const config = structuredClone(defaultConfig);
+    config.scanners = ["opengrep"];
+    config.parallelism = 1;
+    const outcome = await runScanEngine({ rootPath: root, config, toolVersion: "test" });
+    const primary = outcome.report.findings[0].primary;
+    const routeFlow = primary.metadata.routeFlow;
+
+    assert.equal(routeFlow.length, 1);
+    assert.equal(routeFlow[0].callScope, "same-file-and-explicit-imports");
+    assert.equal(routeFlow[0].interpretation, "structural-route-call-sink-evidence-only");
+    assert.deepEqual(
+      routeFlow[0].evidence.map(({ path, line, kind, functionName, depth }) => ({ path, line, kind, functionName, depth })),
+      [{ path: "service.ts", line: 2, kind: "database", functionName: "runQuery", depth: 1 }],
+    );
+    assert.equal(JSON.stringify(routeFlow).includes("secretSql"), false);
+    assert.equal(JSON.stringify(routeFlow).includes("db.query"), false);
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(root, { recursive: true, force: true });
+    await rm(bin, { recursive: true, force: true });
+  }
+});
