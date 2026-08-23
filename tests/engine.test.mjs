@@ -12,6 +12,7 @@ import {
   runScanEngine,
   sanitizeScanDiagnostics,
   scannerFailureMessage,
+  scannerStatuses,
 } from "../packages/engine/dist/index.js";
 import { buildReport } from "../packages/report/dist/index.js";
 
@@ -30,6 +31,39 @@ test("scan engine refuses to produce a clean report when no selected scanner exi
     await assert.rejects(
       runScanEngine({ rootPath: root, config }),
       /No selected scanner engines are available/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("unknown scanner identities are sanitized before status or aggregate error reporting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-engine-status-test-"));
+  const githubToken = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  const configuredId = `${githubToken}\u001b[31m`;
+  try {
+    await writeFile(join(root, "README.md"), "fixture\n");
+    const config = structuredClone(defaultConfig);
+    config.scanners = [configuredId];
+
+    const statuses = await scannerStatuses(config);
+    const unknown = statuses.find((status) => status.selected);
+    assert.ok(unknown);
+    assert.doesNotMatch(unknown.id, new RegExp(githubToken));
+    assert.doesNotMatch(unknown.displayName, new RegExp(githubToken));
+    assert.equal(unknown.id.includes("\u001b"), false);
+    assert.match(unknown.displayName, /\[REDACTED\]/);
+
+    await assert.rejects(
+      runScanEngine({ rootPath: root, config }),
+      (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /No selected scanner engines are available/);
+        assert.doesNotMatch(message, new RegExp(githubToken));
+        assert.equal(message.includes("\u001b"), false);
+        assert.match(message, /\[REDACTED\]/);
+        return true;
+      },
     );
   } finally {
     await rm(root, { recursive: true, force: true });
