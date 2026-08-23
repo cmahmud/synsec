@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { enrichRepositorySecurityContext } from "../packages/engine/dist/index.js";
+import { buildReport } from "../packages/report/dist/index.js";
 
 const route = {
   path: "server.ts",
@@ -103,6 +104,18 @@ test("engine enrichment attaches minimized route protection only to exact route-
     interpretation: "structural-auth-signals-not-protection-proof",
   }]);
   const serialized = JSON.stringify(metadata.routeProtection);
+  assert.equal(serialized.includes("auth.ts"), false);
+  assert.equal(serialized.includes("checkRole"), false);
+  assert.equal(serialized.includes("exec(command)"), false);
+});
+
+test("minimized route protection metadata survives normalized report construction", () => {
+  const enriched = enrichRepositorySecurityContext([scan()], index, routeFlows, routeProtections);
+  const report = buildReport({ target: { path: "/repo" }, scans: enriched });
+  const serialized = JSON.stringify(report.findings[0].primary.metadata.routeProtection);
+
+  assert.match(serialized, /authorization-signal-observed/);
+  assert.match(serialized, /structural-auth-signals-not-protection-proof/);
   assert.equal(serialized.includes("auth.ts"), false);
   assert.equal(serialized.includes("checkRole"), false);
   assert.equal(serialized.includes("exec(command)"), false);
