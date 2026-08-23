@@ -144,15 +144,21 @@ JSON
     const primary = outcome.report.findings[0].primary;
     const routeFlow = primary.metadata.routeFlow;
 
-    assert.equal(routeFlow.length, 1);
-    assert.equal(routeFlow[0].callScope, "same-file-and-explicit-imports");
-    assert.equal(routeFlow[0].interpretation, "structural-route-call-sink-evidence-only");
-    assert.deepEqual(
-      routeFlow[0].evidence.map(({ path, line, kind, functionName, depth }) => ({ path, line, kind, functionName, depth })),
-      [{ path: "service.ts", line: 2, kind: "database", functionName: "runQuery", depth: 1 }],
-    );
+    assert.deepEqual(routeFlow, [{
+      method: "GET",
+      route: "/users",
+      frameworkHint: "node-router",
+      resolution: "named-handler",
+      handler: "listUsers",
+      sinkKind: "database",
+      functionName: "runQuery",
+      depth: 1,
+      callScope: "same-file-and-explicit-imports",
+      interpretation: "structural-route-call-sink-evidence-only",
+    }]);
     assert.equal(JSON.stringify(routeFlow).includes("secretSql"), false);
     assert.equal(JSON.stringify(routeFlow).includes("db.query"), false);
+    assert.equal(JSON.stringify(routeFlow).includes("service.ts"), false);
   } finally {
     process.env.PATH = originalPath;
     await rm(root, { recursive: true, force: true });
