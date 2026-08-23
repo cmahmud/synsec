@@ -21,6 +21,8 @@ function createPassingAdapter(overrides = {}) {
   return {
     calls,
     adapter: {
+      backendId: "postgres-v1",
+      implementationVersion: "0.2.0-test.1",
       async reset() {
         calls.push("reset");
       },
@@ -37,6 +39,8 @@ test("shared-state conformance runner executes the canonical matrix in stable or
   });
 
   assert.equal(report.schemaVersion, 1);
+  assert.equal(report.backendId, "postgres-v1");
+  assert.equal(report.implementationVersion, "0.2.0-test.1");
   assert.equal(report.complete, true);
   assert.equal(report.results.length, GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS.length);
   assert.deepEqual(
@@ -111,6 +115,16 @@ test("shared-state conformance runner rejects incomplete or expanded scenario ma
     runGitHubAppSharedStateConformance(expanded),
     /must implement exactly the required scenario ids/,
   );
+});
+
+test("shared-state conformance runner rejects unsafe identity fields", async () => {
+  const { adapter } = createPassingAdapter();
+  adapter.backendId = "postgres://user:secret@db.internal/synsec";
+  await assert.rejects(runGitHubAppSharedStateConformance(adapter), /backend id must be a bounded non-secret identifier/);
+
+  const { adapter: invalidVersion } = createPassingAdapter();
+  invalidVersion.implementationVersion = "build 1 with spaces";
+  await assert.rejects(runGitHubAppSharedStateConformance(invalidVersion), /implementation version must be a bounded non-secret identifier/);
 });
 
 test("shared-state conformance runner bounds per-scenario timeouts", async () => {
