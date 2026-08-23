@@ -117,12 +117,22 @@ function scannerOwnedMetadata(metadata: Finding["metadata"]): Finding["metadata"
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function withScannerOwnedMetadata(finding: Finding): Finding {
-  const metadata = scannerOwnedMetadata(finding.metadata);
-  return {
-    ...finding,
-    ...(metadata ? { metadata } : { metadata: undefined }),
-  };
+/**
+ * Remove keys reserved for SynSec-derived repository intelligence exactly once when scanner-owned
+ * findings cross into the engine. Later enrichment may safely populate those keys without being
+ * erased by another trust-boundary pass.
+ */
+export function stripScannerReservedMetadata(scans: readonly ScanResult[]): ScanResult[] {
+  return scans.map((scan) => ({
+    ...scan,
+    findings: scan.findings.map((finding) => {
+      const metadata = scannerOwnedMetadata(finding.metadata);
+      if (metadata) return { ...finding, metadata };
+      const output = { ...finding };
+      delete output.metadata;
+      return output;
+    }),
+  }));
 }
 
 async function gitValue(root: string, args: string[]): Promise<string | undefined> {
@@ -244,8 +254,7 @@ function enrichDependencyUsage(
 ): ScanResult[] {
   return scans.map((scan) => ({
     ...scan,
-    findings: scan.findings.map((rawFinding) => {
-      const finding = withScannerOwnedMetadata(rawFinding);
+    findings: scan.findings.map((finding) => {
       if (finding.category !== "dependency" && finding.category !== "container" && finding.category !== "supply-chain") {
         return finding;
       }
@@ -265,10 +274,9 @@ function enrichDependencyUsage(
 
 /**
  * Attach minimized repository intelligence only when it can be correlated to the finding's exact
- * normalized location. Scanner-provided values under engine-owned metadata keys are discarded so
- * adapters cannot spoof SynSec-derived context. Secret findings remain outside this enrichment
- * boundary. Route-protection context is structural auth evidence only; it never upgrades or
- * suppresses scanner evidence.
+ * normalized location. Inputs are expected to have crossed stripScannerReservedMetadata() first.
+ * Secret findings remain outside this enrichment boundary. Route-protection context is structural
+ * auth evidence only; it never upgrades or suppresses scanner evidence.
  */
 export function enrichRepositorySecurityContext(
   scans: readonly ScanResult[],
@@ -278,8 +286,7 @@ export function enrichRepositorySecurityContext(
 ): ScanResult[] {
   return scans.map((scan) => ({
     ...scan,
-    findings: scan.findings.map((rawFinding) => {
-      const finding = withScannerOwnedMetadata(rawFinding);
+    findings: scan.findings.map((finding) => {
       // Secret findings intentionally stay on the narrowest metadata boundary.
       if (finding.category === "secret" || !finding.location?.path) return finding;
       const context = findingRepositoryContext(index, finding.location.path, finding.location.startLine);
@@ -463,7 +470,8 @@ export async function runScanEngine(input: {
   }
 
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
-  const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex, moduleGraph);
+  const scannerBounded = stripScannerReservedMetadata(result.scans);
+  const dependencyEnriched = enrichDependencyUsage(scannerBounded, repositoryIndex, moduleGraph);
   const enrichedScans = enrichRepositorySecurityContext(
     dependencyEnriched,
     repositoryIndex,
