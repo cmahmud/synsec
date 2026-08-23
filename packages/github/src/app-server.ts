@@ -8,9 +8,11 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_HEADERS_TIMEOUT_MS = 10_000;
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_CONCURRENT_WEBHOOKS = 100;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_REQUESTS_PER_SOCKET = 100;
+const MAX_CONCURRENT_WEBHOOKS = 1_000;
 
 export type GitHubAppServerTlsMode = "local" | "terminated-upstream" | "none";
 
@@ -31,6 +33,8 @@ export interface GitHubAppServerOptions {
   headersTimeoutMs?: number;
   keepAliveTimeoutMs?: number;
   shutdownTimeoutMs?: number;
+  /** Maximum webhook handlers allowed to execute concurrently in this listener process. */
+  maxConcurrentWebhooks?: number;
 }
 
 export interface GitHubAppServerAddress {
@@ -51,6 +55,14 @@ function boundedTimeout(value: number | undefined, fallback: number, label: stri
     throw new Error(`${label} must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS} milliseconds.`);
   }
   return timeout;
+}
+
+function boundedConcurrentWebhooks(value: number | undefined): number {
+  const limit = value ?? DEFAULT_MAX_CONCURRENT_WEBHOOKS;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CONCURRENT_WEBHOOKS) {
+    throw new Error(`GitHub App concurrent webhook limit must be between 1 and ${MAX_CONCURRENT_WEBHOOKS}.`);
+  }
+  return limit;
 }
 
 function normalizedHost(value: string): string {
@@ -111,10 +123,12 @@ function safeStatus(status: GitHubAppRuntimeStatus): Record<string, unknown> {
  *
  * Plain HTTP is restricted to loopback unless the operator explicitly declares upstream TLS
  * termination. Local TLS requires an in-memory key/certificate pair. Request/header/keep-alive
- * timeouts and per-socket request counts are bounded, and shutdown forcibly closes remaining
- * sockets after a bounded grace period. The built-in health surface contains aggregate runtime
- * counts only; repository identities, delivery ids, commit SHAs, source paths, and credentials are
- * never accepted as health payload fields.
+ * timeouts, per-socket request counts, and in-process concurrent webhook handlers are bounded.
+ * Excess webhook concurrency fails fast with a retryable aggregate-only 503 response while the
+ * health endpoint remains available. Shutdown forcibly closes remaining sockets after a bounded
+ * grace period. The built-in health surface contains aggregate runtime counts only; repository
+ * identities, delivery ids, commit SHAs, source paths, and credentials are never accepted as
+ * health payload fields.
  */
 export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAppServer {
   const host = normalizedHost(options.host);
@@ -124,6 +138,7 @@ export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAp
   const headersTimeoutMs = boundedTimeout(options.headersTimeoutMs, DEFAULT_HEADERS_TIMEOUT_MS, "GitHub App headers timeout");
   const keepAliveTimeoutMs = boundedTimeout(options.keepAliveTimeoutMs, DEFAULT_KEEP_ALIVE_TIMEOUT_MS, "GitHub App keep-alive timeout");
   const shutdownTimeoutMs = boundedTimeout(options.shutdownTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS, "GitHub App shutdown timeout");
+  const maxConcurrentWebhooks = boundedConcurrentWebhooks(options.maxConcurrentWebhooks);
 
   if (options.tlsMode === "none" && !LOOPBACK_HOSTS.has(host)) {
     throw new Error("A plaintext GitHub App listener is allowed only on loopback.");
@@ -134,6 +149,8 @@ export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAp
   if (options.tlsMode !== "local" && options.tls !== undefined) {
     throw new Error("GitHub App TLS key/certificate material is accepted only in local TLS mode.");
   }
+
+  let activeWebhookRequests = 0;
 
   const requestListener = async (
     request: import("node:http").IncomingMessage,
@@ -155,11 +172,20 @@ export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAp
       return;
     }
 
+    if (activeWebhookRequests >= maxConcurrentWebhooks) {
+      response.setHeader("retry-after", "1");
+      sendJson(response, 503, { status: "busy" });
+      return;
+    }
+
+    activeWebhookRequests += 1;
     try {
       await options.webhookHandler(request, response);
     } catch {
       if (!response.headersSent) sendJson(response, 500, { status: "error" });
       else if (!response.writableEnded) response.end();
+    } finally {
+      activeWebhookRequests -= 1;
     }
   };
 

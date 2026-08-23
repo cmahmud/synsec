@@ -84,7 +84,58 @@ test("hosted App server delegates non-health requests and bounds health methods"
   }
 });
 
-test("hosted App server rejects unsafe plaintext and malformed TLS configurations", () => {
+test("hosted App server bounds concurrent webhook work and keeps health available", async () => {
+  let webhookCalls = 0;
+  let releaseFirst;
+  const firstMayFinish = new Promise((resolve) => { releaseFirst = resolve; });
+  let firstStartedResolve;
+  const firstStarted = new Promise((resolve) => { firstStartedResolve = resolve; });
+
+  const app = createGitHubAppServer({
+    host: "127.0.0.1",
+    port: 0,
+    tlsMode: "none",
+    maxConcurrentWebhooks: 1,
+    webhookHandler: async (_request, response) => {
+      webhookCalls += 1;
+      firstStartedResolve();
+      await firstMayFinish;
+      response.statusCode = 202;
+      response.end("queued");
+    },
+  });
+  const address = await app.start();
+  try {
+    const first = fetch(`http://127.0.0.1:${address.port}/github/webhooks`, {
+      method: "POST",
+      body: "first",
+    });
+    await firstStarted;
+
+    const busy = await getJson(`http://127.0.0.1:${address.port}/github/webhooks`, {
+      method: "POST",
+      body: "second",
+    });
+    assert.equal(busy.status, 503);
+    assert.deepEqual(busy.body, { status: "busy" });
+    assert.equal(busy.headers.get("retry-after"), "1");
+    assert.equal(webhookCalls, 1);
+
+    const health = await getJson(`http://127.0.0.1:${address.port}/healthz`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(health.body, { status: "ok" });
+
+    releaseFirst();
+    const firstResponse = await first;
+    assert.equal(firstResponse.status, 202);
+    assert.equal(await firstResponse.text(), "queued");
+  } finally {
+    releaseFirst?.();
+    await app.close();
+  }
+});
+
+test("hosted App server rejects unsafe plaintext and malformed TLS or concurrency configurations", () => {
   const handler = async (_request, response) => response.end();
   assert.throws(() => createGitHubAppServer({
     host: "0.0.0.0",
@@ -107,6 +158,16 @@ test("hosted App server rejects unsafe plaintext and malformed TLS configuration
     tls: { key: "key", cert: "cert" },
     webhookHandler: handler,
   }), /accepted only in local TLS mode/);
+
+  for (const maxConcurrentWebhooks of [0, 1.5, 1001]) {
+    assert.throws(() => createGitHubAppServer({
+      host: "127.0.0.1",
+      port: 3000,
+      tlsMode: "none",
+      maxConcurrentWebhooks,
+      webhookHandler: handler,
+    }), /concurrent webhook limit/);
+  }
 });
 
 test("hosted App server returns unavailable when status collection fails", async () => {
