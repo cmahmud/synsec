@@ -20,6 +20,34 @@ export interface RouteSecurityReviewContext {
   interpretation: "structural-route-security-review-context-only";
 }
 
+export interface RouteSecurityReviewSummary {
+  total: number;
+  needsAuthReview: number;
+  signals: Record<RouteSecurityReviewSignal, number>;
+  sinkKinds: Record<RouteSinkFlowContext["kinds"][number], number>;
+  /** Aggregate counts derived from validated structural contexts; never a vulnerability or protection verdict. */
+  interpretation: "aggregate-structural-route-security-review-only";
+}
+
+const REVIEW_SIGNALS = new Set<RouteSecurityReviewSignal>([
+  "sensitive-sink-with-authorization-signal",
+  "sensitive-sink-with-authentication-signal",
+  "sensitive-sink-without-auth-signal",
+  "sensitive-sink-auth-context-unavailable",
+]);
+const PROTECTION_STATUSES = new Set<RouteProtectionStatus | "not-assessed">([
+  "authorization-signal-observed",
+  "authentication-signal-observed",
+  "no-auth-signal-observed",
+  "not-assessed",
+]);
+const SINK_KINDS = new Set<RouteSinkFlowContext["kinds"][number]>([
+  "process",
+  "database",
+  "filesystem",
+  "network",
+]);
+
 function normalizePath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\//, "").toLowerCase();
 }
@@ -50,8 +78,8 @@ export function buildRouteSecurityReviewContexts(
   protections: readonly RouteProtectionContext[],
   maxRoutes = 1_000,
 ): RouteSecurityReviewContext[] {
-  if (!Number.isSafeInteger(maxRoutes) || maxRoutes < 1 || maxRoutes > 5_000) {
-    throw new Error("Route security review maxRoutes must be an integer between 1 and 5000.");
+  if (!Number.isSafeInteger(maxRoutes) || maxRoutes < 0 || maxRoutes > 5_000) {
+    throw new Error("Route security review maxRoutes must be an integer between 0 and 5000.");
   }
 
   const output: RouteSecurityReviewContext[] = [];
@@ -78,4 +106,81 @@ export function buildRouteSecurityReviewContexts(
   }
 
   return output;
+}
+
+function validBoundedLabel(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 1_024
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/**
+ * Derive a disclosure-minimized aggregate from route-security contexts while treating the supplied
+ * records as untrusted runtime data. Signal/status mismatches, unknown sink kinds, duplicate kinds,
+ * invalid labels, unsupported call scopes, and oversized collections fail closed instead of being
+ * counted. The summary never copies route names, handler names, paths, framework hints, or evidence.
+ */
+export function summarizeRouteSecurityReviews(
+  contexts: readonly RouteSecurityReviewContext[],
+): RouteSecurityReviewSummary {
+  if (!Array.isArray(contexts) || contexts.length > 5_000) {
+    throw new Error("Route security review summary accepts at most 5000 contexts.");
+  }
+
+  const signals: RouteSecurityReviewSummary["signals"] = {
+    "sensitive-sink-with-authorization-signal": 0,
+    "sensitive-sink-with-authentication-signal": 0,
+    "sensitive-sink-without-auth-signal": 0,
+    "sensitive-sink-auth-context-unavailable": 0,
+  };
+  const sinkKinds: RouteSecurityReviewSummary["sinkKinds"] = {
+    process: 0,
+    database: 0,
+    filesystem: 0,
+    network: 0,
+  };
+
+  for (const context of contexts) {
+    if (!context || typeof context !== "object") {
+      throw new Error("Route security review summary received an invalid context.");
+    }
+    if (!validBoundedLabel(context.method) || !validBoundedLabel(context.route) || !validBoundedLabel(context.handler)) {
+      throw new Error("Route security review summary received invalid route identity metadata.");
+    }
+    if (context.frameworkHint !== undefined && !validBoundedLabel(context.frameworkHint)) {
+      throw new Error("Route security review summary received invalid framework metadata.");
+    }
+    if (!PROTECTION_STATUSES.has(context.protectionStatus)
+      || !REVIEW_SIGNALS.has(context.signal)
+      || signalFor(context.protectionStatus) !== context.signal) {
+      throw new Error("Route security review summary received inconsistent protection metadata.");
+    }
+    if (context.callScope !== "same-file" && context.callScope !== "same-file-and-explicit-imports") {
+      throw new Error("Route security review summary received an invalid call scope.");
+    }
+    if (context.interpretation !== "structural-route-security-review-context-only") {
+      throw new Error("Route security review summary received an unsupported interpretation.");
+    }
+    if (!Array.isArray(context.sinkKinds) || context.sinkKinds.length < 1 || context.sinkKinds.length > SINK_KINDS.size) {
+      throw new Error("Route security review summary received invalid sink metadata.");
+    }
+    const uniqueKinds = new Set(context.sinkKinds);
+    if (uniqueKinds.size !== context.sinkKinds.length || [...uniqueKinds].some((kind) => !SINK_KINDS.has(kind))) {
+      throw new Error("Route security review summary received invalid sink metadata.");
+    }
+
+    signals[context.signal] += 1;
+    for (const kind of uniqueKinds) sinkKinds[kind] += 1;
+  }
+
+  return {
+    total: contexts.length,
+    needsAuthReview:
+      signals["sensitive-sink-without-auth-signal"]
+      + signals["sensitive-sink-auth-context-unavailable"],
+    signals,
+    sinkKinds,
+    interpretation: "aggregate-structural-route-security-review-only",
+  };
 }
