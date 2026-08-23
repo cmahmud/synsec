@@ -129,3 +129,20 @@ test("shared-state evidence CLI rejects malformed JSON without echoing file cont
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("shared-state evidence CLI rejects unsupported or duplicate flags", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-shared-state-evidence-flags-"));
+  try {
+    const contractPath = join(root, "contract.json");
+    const reportPath = join(root, "report.json");
+    await writeFile(contractPath, JSON.stringify(createContract()), "utf8");
+    await writeFile(reportPath, JSON.stringify(createReport()), "utf8");
+
+    let error = await runExpectingExit([contractPath, reportPath, "--jsno"], 1);
+    assert.match(error.stderr, /Usage:/);
+    error = await runExpectingExit([contractPath, reportPath, "--json", "--json"], 1);
+    assert.match(error.stderr, /Usage:/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
