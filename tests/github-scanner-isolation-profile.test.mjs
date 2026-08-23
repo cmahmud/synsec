@@ -12,10 +12,14 @@ const completeProfile = {
   memoryLimit: true,
   networkPolicy: "none",
   repositoryReadOnly: true,
+  rootFilesystemReadOnly: true,
   scratchSeparated: true,
   credentialsExcluded: true,
   durableStateExcluded: true,
   privileged: false,
+  allowPrivilegeEscalation: false,
+  runAsNonRoot: true,
+  capabilitiesDropped: true,
   hostNetwork: false,
   hostPid: false,
   hostIpc: false,
@@ -35,14 +39,22 @@ test("scanner isolation profile reports exact missing controls in deterministic 
     ...completeProfile,
     cpuLimit: false,
     repositoryReadOnly: false,
+    rootFilesystemReadOnly: false,
     privileged: true,
+    allowPrivilegeEscalation: true,
+    runAsNonRoot: false,
+    capabilitiesDropped: false,
     hostNetwork: true,
   });
   assert.equal(result.complete, false);
   assert.deepEqual(result.missing, [
     "cpu-limit",
     "read-only-repository",
+    "read-only-root-filesystem",
     "not-privileged",
+    "no-privilege-escalation",
+    "run-as-non-root",
+    "capabilities-dropped",
     "no-host-network",
   ]);
 });
