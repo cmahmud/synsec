@@ -16,6 +16,7 @@
     "./app-permissions": "./dist/app-permissions.js",
     "./app-setup": "./dist/app-setup.js",
     "./credential-rotation": "./dist/credential-rotation.js",
+    "./credential-reload": "./dist/credential-reload.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./scanner-isolation-profile": "./dist/scanner-isolation-profile.js",
     "./scanner-production-readiness": "./dist/scanner-production-readiness.js",
