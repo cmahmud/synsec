@@ -6,6 +6,8 @@ SynSec treats scanner findings and scanner operational diagnostics as different 
 
 Scanner findings are evidence-bearing product data. The engine does not apply the operational-text sanitizer to finding titles, locations, structured metadata, or source evidence. Scanner adapters remain responsible for producing valid finding data, and downstream report/lifecycle logic preserves that evidence for review.
 
+Some finding metadata keys are reserved for SynSec-derived repository intelligence. Scanner-provided values under `dependencyUsage`, `repositoryContext`, `routeFlow`, or `routeProtection` are discarded before engine enrichment so an adapter cannot impersonate context that SynSec claims to have derived itself. Other scanner-owned metadata is preserved. Secret findings remain outside repository-context enrichment, but the same reserved-key stripping applies so a secret scanner cannot inject forged engine-owned context into a report.
+
 ## Operational diagnostics
 
 Scanner errors and diagnostic strings are for operators, not an evidence channel. Before those strings cross the scan-engine boundary, SynSec:
