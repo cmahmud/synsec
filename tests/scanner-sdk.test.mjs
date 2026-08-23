@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildScannerProcessEnv, runProcess } from "../packages/scanner-sdk/dist/index.js";
+import { delimiter, resolve } from "node:path";
+import { buildScannerProcessEnv, runProcess, sanitizeScannerSearchPath } from "../packages/scanner-sdk/dist/index.js";
 
 test("buildScannerProcessEnv preserves execution variables but drops credentials, proxy URLs, and config roots", () => {
+  const systemBin = resolve("synsec-test-system-bin");
   const env = buildScannerProcessEnv({
-    PATH: "/usr/bin",
+    PATH: systemBin,
     HOME: "/tmp/home",
     USERPROFILE: "C:\\Users\\scanner",
     APPDATA: "C:\\Users\\scanner\\AppData\\Roaming",
@@ -19,7 +21,7 @@ test("buildScannerProcessEnv preserves execution variables but drops credentials
     HTTPS_PROXY: "http://user:password@proxy.invalid",
   });
 
-  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(env.PATH, systemBin);
   assert.equal(env.LANG, "en_US.UTF-8");
   assert.equal(env.LC_CTYPE, "en_US.UTF-8");
   assert.equal(env.XDG_CACHE_HOME, "/tmp/cache");
@@ -32,6 +34,24 @@ test("buildScannerProcessEnv preserves execution variables but drops credentials
   assert.equal(env.NPM_TOKEN, undefined);
   assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
   assert.equal(env.HTTPS_PROXY, undefined);
+});
+
+test("sanitizeScannerSearchPath drops relative and repository-controlled command lookup entries", () => {
+  const worktree = resolve("synsec-test-worktree");
+  const repositoryBin = resolve(worktree, "node_modules", ".bin");
+  const outsideBin = resolve("synsec-test-system-bin");
+  const rawPath = [".", "relative-tools", repositoryBin, outsideBin, outsideBin, ""].join(delimiter);
+
+  assert.equal(sanitizeScannerSearchPath(rawPath, worktree), outsideBin);
+});
+
+test("buildScannerProcessEnv applies scanner working-tree PATH isolation", () => {
+  const worktree = resolve("synsec-test-worktree");
+  const repositoryBin = resolve(worktree, "tools");
+  const outsideBin = resolve("synsec-test-system-bin");
+  const env = buildScannerProcessEnv({ PATH: [repositoryBin, outsideBin].join(delimiter) }, worktree);
+
+  assert.equal(env.PATH, outsideBin);
 });
 
 test("runProcess does not implicitly pass parent credentials to scanners", async () => {
