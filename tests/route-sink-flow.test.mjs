@@ -76,6 +76,7 @@ function flowFixture() {
 test("resolved route flow links sinks inside the handler and bounded callees without source text", () => {
   const context = flowFixture();
   assert.equal(context.interpretation, "structural-route-call-sink-evidence-only");
+  assert.equal(context.callScope, "same-file");
   assert.deepEqual(context.kinds, ["network", "database"]);
   assert.deepEqual(context.evidence.map((item) => [item.functionName, item.depth, item.kind]), [
     ["listUsers", 0, "network"],
@@ -98,10 +99,66 @@ test("exact finding route-flow evidence matches only the linked sink line and st
     sinkKind: "network",
     functionName: "listUsers",
     depth: 0,
+    callScope: "same-file",
     interpretation: "structural-route-call-sink-evidence-only",
   }]);
   assert.deepEqual(findingRouteSinkFlowEvidence([context], "server.ts", 24), []);
   assert.equal(JSON.stringify(direct).includes("secretUrl"), false);
+});
+
+test("explicit imported call links can extend route flow to a sink in another local module", () => {
+  const imported = {
+    id: "service.ts:loadUsers:10",
+    path: "service.ts",
+    name: "loadUsers",
+    line: 10,
+    endLine: 14,
+    kind: "function",
+  };
+  const crossModuleGraph = {
+    ...graph,
+    nodes: [handler, imported],
+    edges: [{ from: handler.id, callee: "service.loadUsers", line: 22, resolution: "external-or-unresolved" }],
+    resolvedEdgeCount: 0,
+    unresolvedEdgeCount: 1,
+  };
+  const crossModuleEntrypoint = {
+    ...entrypoint,
+    calls: { ...entrypoint.calls, callees: [] },
+  };
+  const index = {
+    schemaVersion: 1,
+    generatedAt: "2026-08-23T16:00:00.000Z",
+    indexedFileCount: 2,
+    moduleEdges: [],
+    routes: [route],
+    authSignals: [],
+    sinks: [{ path: "service.ts", line: 12, kind: "database", evidence: "db.query(secretSql)" }],
+  };
+  const importCallLinks = {
+    schemaVersion: 1,
+    links: [{
+      from: handler.id,
+      line: 22,
+      callee: "service.loadUsers",
+      target: imported.id,
+      targetPath: "service.ts",
+      importedName: "loadUsers",
+      bindingKind: "javascript-namespace-import",
+      evidence: "explicit-import-binding-to-unique-local-function",
+    }],
+    linkedCallCount: 1,
+    interpretation: "cross-module-import-call-evidence-only",
+  };
+
+  const context = routeSinkFlowContext(index, crossModuleEntrypoint, crossModuleGraph, { importCallLinks });
+  assert.equal(context.callScope, "same-file-and-explicit-imports");
+  assert.deepEqual(context.evidence.map((item) => [item.path, item.functionName, item.depth, item.kind]), [
+    ["service.ts", "loadUsers", 1, "database"],
+  ]);
+  const findingEvidence = findingRouteSinkFlowEvidence([context], "service.ts", 12);
+  assert.equal(findingEvidence[0]?.callScope, "same-file-and-explicit-imports");
+  assert.equal(JSON.stringify(findingEvidence).includes("secretSql"), false);
 });
 
 test("unresolved routes and ambiguous function ownership do not manufacture sink flow", () => {
