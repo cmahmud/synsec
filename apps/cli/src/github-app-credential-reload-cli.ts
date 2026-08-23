@@ -34,7 +34,7 @@ async function readInput(path: string): Promise<SynSecGitHubAppCredentialReloadI
 
   const root = record(parsed);
   if (!root) throw new Error("Credential reload input must contain a JSON object.");
-  const allowed = new Set(["kind", "targetGeneration", "expectedReplicaCount", "replicas"]);
+  const allowed = new Set(["kind", "targetGeneration", "expectedReplicaIds", "replicas"]);
   for (const key of Object.keys(root)) {
     if (!allowed.has(key)) {
       throw new Error(`Credential reload input contains unsupported field ${key}. Credential values are not accepted.`);
@@ -45,7 +45,10 @@ async function readInput(path: string): Promise<SynSecGitHubAppCredentialReloadI
     throw new Error("Credential reload kind must be webhook-secret or app-private-key.");
   }
   if (typeof root.targetGeneration !== "string") throw new Error("targetGeneration must be a string identifier.");
-  if (typeof root.expectedReplicaCount !== "number") throw new Error("expectedReplicaCount must be a number.");
+  if (!Array.isArray(root.expectedReplicaIds)) throw new Error("expectedReplicaIds must be an array.");
+  for (const replicaId of root.expectedReplicaIds) {
+    if (typeof replicaId !== "string") throw new Error("Every expectedReplicaId must be a string identifier.");
+  }
   if (!Array.isArray(root.replicas)) throw new Error("replicas must be an array.");
 
   const replicas: SynSecGitHubAppCredentialReloadReplica[] = root.replicas.map((raw) => {
@@ -70,7 +73,7 @@ async function readInput(path: string): Promise<SynSecGitHubAppCredentialReloadI
   return {
     kind: root.kind,
     targetGeneration: root.targetGeneration,
-    expectedReplicaCount: root.expectedReplicaCount,
+    expectedReplicaIds: root.expectedReplicaIds,
     replicas,
   };
 }
@@ -82,8 +85,8 @@ Usage:
   synsec-github-app-reload <reload-state.json> [--json]
 
 Exit codes:
-  0  Every expected replica is ready on the exact target configuration generation.
-  2  The deployment reload is incomplete, stale, missing replicas, or has extra observations.
+  0  Every specifically expected replica is ready on the exact target configuration generation.
+  2  The deployment reload is incomplete, stale, missing required replicas, or contains unexpected observations.
   1  Input or CLI usage is invalid.
 
 The input is credential-free deployment metadata. This command does not read credential values,
@@ -114,10 +117,11 @@ async function main(): Promise<void> {
     console.log(`Credential: ${assessment.kind}`);
     console.log(`Target generation: ${assessment.targetGeneration}`);
     console.log(`Reload state: ${assessment.complete ? "complete" : "incomplete"}`);
-    console.log(`Matched replicas: ${assessment.matchedReplicaCount}/${assessment.expectedReplicaCount}`);
-    console.log(`Stale replicas: ${assessment.staleReplicaCount}`);
-    console.log(`Unready replicas: ${assessment.unreadyReplicaCount}`);
-    console.log(`Missing replicas: ${assessment.missingReplicaCount}`);
+    console.log(`Matched expected replicas: ${assessment.matchedReplicaCount}/${assessment.expectedReplicaCount}`);
+    console.log(`Stale expected replicas: ${assessment.staleReplicaCount}`);
+    console.log(`Unready expected replicas: ${assessment.unreadyReplicaCount}`);
+    console.log(`Missing expected replicas: ${assessment.missingReplicaCount}`);
+    console.log(`Unexpected replicas: ${assessment.unexpectedReplicaCount}`);
     console.log(`Interpretation: ${assessment.interpretation}`);
   }
   if (!assessment.complete) process.exitCode = 2;

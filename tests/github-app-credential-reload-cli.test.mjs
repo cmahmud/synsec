@@ -19,14 +19,14 @@ async function runExpectingExit(args, expectedCode) {
   }
 }
 
-test("credential reload CLI reports complete deployment state", async () => {
+test("credential reload CLI reports complete exact deployment membership", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-credential-reload-"));
   try {
     const path = join(root, "reload.json");
     await writeFile(path, JSON.stringify({
       kind: "webhook-secret",
       targetGeneration: "webhook-v3",
-      expectedReplicaCount: 2,
+      expectedReplicaIds: ["synsec-0", "synsec-1"],
       replicas: [
         { replicaId: "synsec-0", loadedGeneration: "webhook-v3", ready: true },
         { replicaId: "synsec-1", loadedGeneration: "webhook-v3", ready: true },
@@ -36,8 +36,34 @@ test("credential reload CLI reports complete deployment state", async () => {
     const { stdout } = await exec(process.execPath, [cli.pathname, path, "--json"]);
     const output = JSON.parse(stdout);
     assert.equal(output.complete, true);
+    assert.equal(output.expectedReplicaCount, 2);
     assert.equal(output.matchedReplicaCount, 2);
     assert.equal(output.missingReplicaCount, 0);
+    assert.equal(output.unexpectedReplicaCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("credential reload CLI exits 2 when equal counts contain the wrong replica", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-credential-reload-membership-"));
+  try {
+    const path = join(root, "reload.json");
+    await writeFile(path, JSON.stringify({
+      kind: "app-private-key",
+      targetGeneration: "key-v4",
+      expectedReplicaIds: ["synsec-0", "synsec-1"],
+      replicas: [
+        { replicaId: "synsec-0", loadedGeneration: "key-v4", ready: true },
+        { replicaId: "synsec-2", loadedGeneration: "key-v4", ready: true },
+      ],
+    }), "utf8");
+
+    const error = await runExpectingExit([path, "--json"], 2);
+    const output = JSON.parse(error.stdout);
+    assert.equal(output.complete, false);
+    assert.equal(output.missingReplicaCount, 1);
+    assert.equal(output.unexpectedReplicaCount, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -50,7 +76,7 @@ test("credential reload CLI exits 2 for stale replica state", async () => {
     await writeFile(path, JSON.stringify({
       kind: "app-private-key",
       targetGeneration: "key-v4",
-      expectedReplicaCount: 2,
+      expectedReplicaIds: ["synsec-0", "synsec-1"],
       replicas: [
         { replicaId: "synsec-0", loadedGeneration: "key-v4", ready: true },
         { replicaId: "synsec-1", loadedGeneration: "key-v3", ready: true },
@@ -66,6 +92,24 @@ test("credential reload CLI exits 2 for stale replica state", async () => {
   }
 });
 
+test("credential reload CLI rejects count-only rollout declarations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-credential-reload-count-only-"));
+  try {
+    const path = join(root, "reload.json");
+    await writeFile(path, JSON.stringify({
+      kind: "webhook-secret",
+      targetGeneration: "webhook-v3",
+      expectedReplicaCount: 1,
+      replicas: [{ replicaId: "synsec-0", loadedGeneration: "webhook-v3", ready: true }],
+    }), "utf8");
+
+    const error = await runExpectingExit([path], 1);
+    assert.match(error.stderr, /unsupported field expectedReplicaCount/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("credential reload CLI rejects credential-bearing fields without echoing values", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-credential-reload-secret-"));
   try {
@@ -73,7 +117,7 @@ test("credential reload CLI rejects credential-bearing fields without echoing va
     await writeFile(path, JSON.stringify({
       kind: "webhook-secret",
       targetGeneration: "webhook-v3",
-      expectedReplicaCount: 1,
+      expectedReplicaIds: ["synsec-0"],
       replicas: [],
       secret: "do-not-echo-reload-secret",
     }), "utf8");
@@ -81,6 +125,24 @@ test("credential reload CLI rejects credential-bearing fields without echoing va
     const error = await runExpectingExit([path], 1);
     assert.match(error.stderr, /unsupported field secret/);
     assert.doesNotMatch(error.stderr, /do-not-echo-reload-secret/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("credential reload CLI rejects duplicate expected identities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-credential-reload-duplicate-"));
+  try {
+    const path = join(root, "reload.json");
+    await writeFile(path, JSON.stringify({
+      kind: "webhook-secret",
+      targetGeneration: "webhook-v3",
+      expectedReplicaIds: ["synsec-0", "synsec-0"],
+      replicas: [],
+    }), "utf8");
+
+    const error = await runExpectingExit([path], 1);
+    assert.match(error.stderr, /expectedReplicaIds must contain unique/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -109,7 +171,7 @@ test("credential reload CLI rejects unsupported options without reflecting their
     await writeFile(path, JSON.stringify({
       kind: "webhook-secret",
       targetGeneration: "webhook-v3",
-      expectedReplicaCount: 1,
+      expectedReplicaIds: ["synsec-0"],
       replicas: [{ replicaId: "synsec-0", loadedGeneration: "webhook-v3", ready: true }],
     }), "utf8");
 

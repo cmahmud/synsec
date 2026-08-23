@@ -4,9 +4,9 @@ SynSec treats webhook-secret and GitHub App private-key rotation as explicit ope
 
 `@synsec/github/credential-rotation` provides `buildSynSecGitHubAppCredentialRotationPlan()` as a secret-free state evaluator. It accepts only boolean operator acknowledgements and returns completed steps, remaining actions, and `readyToRetirePrevious`. It does not accept credential values, contact GitHub, reload services, change webhook settings, revoke keys, or mint installation tokens.
 
-For hosted or multi-replica deployments, `@synsec/github/credential-reload` provides a stricter deployment-observation boundary. `assessSynSecGitHubAppCredentialReload()` requires every expected application replica to report the same bounded target configuration generation and to be ready. Missing, stale, duplicate, extra, or unready replica observations fail closed. The generation is an opaque deployment identifier such as a secret-manager version or rollout revision; it must never contain credential material.
+For hosted or multi-replica deployments, `@synsec/github/credential-reload` provides a stricter deployment-observation boundary. `assessSynSecGitHubAppCredentialReload()` requires an exact set of expected application replica identifiers. Every required replica must report the same bounded target configuration generation and be ready. Missing, stale, duplicate, unexpected, or unready replica observations fail closed. The generation and replica identifiers are deployment metadata only and must never contain credential material.
 
-`buildSynSecGitHubAppCredentialRotationWithReloadAssessment()` is the preferred production composition API. It recomputes the reload assessment from raw replica observations and derives `runtimeReloaded` internally before invoking the existing rotation planner. This prevents a hand-authored `complete: true` object from being used as reload proof.
+`buildSynSecGitHubAppCredentialRotationWithReloadAssessment()` is the preferred production composition API. It recomputes the reload assessment from raw replica observations and derives `runtimeReloaded` internally before invoking the existing rotation planner. This prevents a hand-authored `complete: true` object or a matching replica count from being used as reload proof.
 
 ## CLI workflow
 
@@ -30,7 +30,7 @@ The booleans are acknowledgements, not probes. They must be derived from deploym
 
 ## Deployment-wide reload assessment
 
-A supervisor or orchestration integration can supply secret-free replica observations:
+A supervisor or orchestration integration must supply both the exact intended fleet membership and secret-free observations:
 
 ```ts
 import {
@@ -47,7 +47,7 @@ const result = buildSynSecGitHubAppCredentialRotationWithReloadAssessment({
   reload: {
     kind: "webhook-secret",
     targetGeneration: "webhook-2026-08-23-a",
-    expectedReplicaCount: 2,
+    expectedReplicaIds: ["synsec-0", "synsec-1"],
     replicas: [
       { replicaId: "synsec-0", loadedGeneration: "webhook-2026-08-23-a", ready: true },
       { replicaId: "synsec-1", loadedGeneration: "webhook-2026-08-23-a", ready: true },
@@ -56,9 +56,11 @@ const result = buildSynSecGitHubAppCredentialRotationWithReloadAssessment({
 });
 ```
 
-The assessment is intentionally strict. `observedReplicaCount` must equal `expectedReplicaCount`; every replica ID must be unique; every loaded generation must exactly match the target; and every replica must be ready. This avoids treating a partial rolling deployment, a stale process, or duplicated observations as proof that the fleet has reloaded.
+The assessment is intentionally identity-bound rather than count-bound. The observed replica set must exactly equal `expectedReplicaIds`; every expected ID and observation ID must be unique; every expected replica must report the exact target generation; and every expected replica must be ready. A replacement observation cannot substitute for a missing required replica merely because the total count is unchanged.
 
-SynSec does not discover Kubernetes pods, inspect a service mesh, read a secret manager, or contact a deployment API here. The host integration remains responsible for producing trustworthy observations and for keeping the declared expected replica count aligned with the actual deployment topology.
+The assessment returns aggregate `missingReplicaCount` and `unexpectedReplicaCount` values rather than echoing expected fleet membership. `expectedReplicaCount` is derived from the supplied identity set, eliminating a separate caller-controlled count that could drift from the topology declaration.
+
+SynSec does not discover Kubernetes pods, inspect a service mesh, read a secret manager, or contact a deployment API here. The host integration remains responsible for producing trustworthy identity observations and for deriving `expectedReplicaIds` from the intended deployment topology rather than from whichever replicas happen to respond.
 
 ### Offline reload verifier
 
@@ -68,7 +70,7 @@ The same reload assessment is available to deployment automation through:
 synsec-github-app-reload <reload-state.json> [--json]
 ```
 
-The verifier exits `0` only when every expected replica is ready on the exact target generation, exits `2` for incomplete/stale/missing/extra rollout state, and exits `1` for malformed input or CLI usage. Its input file is capped at 256 KiB, must be a non-symlink regular file, and has a strict credential-free schema. Unknown top-level or per-replica fields are rejected rather than ignored.
+The verifier exits `0` only when the exact expected fleet is ready on the target generation, exits `2` for incomplete/stale/missing/unexpected rollout state, and exits `1` for malformed input or CLI usage. Its input file is capped at 256 KiB, must be a non-symlink regular file, and has a strict credential-free schema. Unknown top-level or per-replica fields are rejected rather than ignored.
 
 Example input:
 
@@ -76,13 +78,15 @@ Example input:
 {
   "kind": "app-private-key",
   "targetGeneration": "key-v7",
-  "expectedReplicaCount": 2,
+  "expectedReplicaIds": ["synsec-0", "synsec-1"],
   "replicas": [
     { "replicaId": "synsec-0", "loadedGeneration": "key-v7", "ready": true },
     { "replicaId": "synsec-1", "loadedGeneration": "key-v7", "ready": true }
   ]
 }
 ```
+
+Count-only declarations using `expectedReplicaCount` are intentionally rejected by the verifier. A rollout gate must identify which replicas are required, not only how many responses were observed.
 
 Use the verifier as a rollout gate before acknowledging `runtimeReloaded` in the base rotation CLI. For programmatic production integrations, prefer `buildSynSecGitHubAppCredentialRotationWithReloadAssessment()` because it derives that acknowledgement internally.
 
@@ -92,7 +96,7 @@ Use a coordinated overlap:
 
 1. Stage the replacement in SynSec's bounded two-secret verification set while retaining the previous secret.
 2. Reload or roll the SynSec runtime.
-3. Confirm every expected replica reports the replacement configuration generation and is ready.
+3. Confirm the exact expected replica set reports the replacement configuration generation and is ready.
 4. Update the webhook secret in GitHub.
 5. Confirm an authenticated webhook delivery after that GitHub-side update.
 6. Only when the composed planner reports `readyToRetirePrevious: true`, remove the previous secret and reload again.
@@ -117,7 +121,7 @@ Private-key rotation uses a different ordering because GitHub can keep more than
 
 1. Activate the replacement private key in GitHub.
 2. Roll SynSec with the replacement key.
-3. Confirm every expected replica reports the replacement configuration generation and is ready.
+3. Confirm the exact expected replica set reports the replacement configuration generation and is ready.
 4. Verify a fresh installation-token exchange after the rollout.
 5. Only when `readyToRetirePrevious` is true, revoke the previous key in GitHub.
 
@@ -127,4 +131,4 @@ The planner intentionally does not model installation tokens as rotatable creden
 
 These APIs and the CLIs are rollout guidance and deployment-state evaluation, not runtime authorization. GitHub-issued installation-token permissions and SynSec's durable repository authorization state remain authoritative. Rotation/reload state must never broaden repository scope, grant permissions, trigger remediation, or authorize network assessment.
 
-The reload assessment also does not certify that a secret value is correct. It proves only that the declared fleet observations agree on a target configuration generation. External webhook authentication or a fresh installation-token exchange is still required before the previous credential can be retired.
+The reload assessment also does not certify that a secret value is correct. It proves only that the exact declared fleet observations agree on a target configuration generation. External webhook authentication or a fresh installation-token exchange is still required before the previous credential can be retired.
