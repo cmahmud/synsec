@@ -6,10 +6,10 @@ import { scannerSupportsNativeChangedFiles } from "../packages/scanners/dist/ind
 const interpretation = "scanner-execution-scope-not-coverage-proof";
 
 test("built-in scanner changed-file execution classification is conservative", () => {
-  for (const scanner of ["opengrep", "betterleaks", "gitleaks", "checkov", "trivy"]) {
+  for (const scanner of ["opengrep", "betterleaks", "gitleaks", "checkov", "trivy", "osv-scanner"]) {
     assert.equal(scannerSupportsNativeChangedFiles(scanner), true, scanner);
   }
-  for (const scanner of ["osv-scanner", "grype", "syft", "scorecard", "unknown-scanner"]) {
+  for (const scanner of ["grype", "syft", "scorecard", "unknown-scanner"]) {
     assert.equal(scannerSupportsNativeChangedFiles(scanner), false, scanner);
   }
 });
