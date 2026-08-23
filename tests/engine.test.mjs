@@ -10,6 +10,7 @@ import {
   discoverChangedFiles,
   reportMeetsFailureThreshold,
   runScanEngine,
+  sanitizeScanDiagnostics,
   scannerFailureMessage,
 } from "../packages/engine/dist/index.js";
 import { buildReport } from "../packages/report/dist/index.js";
@@ -46,6 +47,38 @@ test("scanner failures are redacted before crossing the engine reporting boundar
   assert.doesNotMatch(message, /alice:password/);
   assert.match(message, /\[REDACTED/);
   assert.equal(scannerFailureMessage(new Error("\u0000\u0001")), "Scanner failed without an operational diagnostic.");
+});
+
+test("successful scanner diagnostics are redacted and bounded without changing findings", () => {
+  const githubToken = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  const finding = {
+    id: "fixture",
+    title: "Finding evidence remains scanner-owned",
+    category: "sast",
+    severity: "medium",
+    confidence: 0.9,
+    scanner: { name: "fixture" },
+  };
+  const scan = {
+    scanner: "fixture",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:01.000Z",
+    target: { path: "/repo" },
+    findings: [finding],
+    diagnostics: [
+      `authorization: Bearer ${githubToken}`,
+      "https://alice:password@example.invalid/scanner",
+      ...Array.from({ length: 1_005 }, (_, index) => `diagnostic ${index}`),
+    ],
+  };
+
+  const sanitized = sanitizeScanDiagnostics(scan);
+  assert.equal(sanitized.findings[0], finding);
+  assert.equal(sanitized.diagnostics.length, 1_001);
+  assert.match(sanitized.diagnostics[0], /\[REDACTED\]/);
+  assert.doesNotMatch(sanitized.diagnostics.join("\n"), new RegExp(githubToken));
+  assert.doesNotMatch(sanitized.diagnostics.join("\n"), /alice:password/);
+  assert.match(sanitized.diagnostics.at(-1), /omitted after 1000 entries/);
 });
 
 test("changed-file discovery returns repository-relative files from the requested base", async () => {
