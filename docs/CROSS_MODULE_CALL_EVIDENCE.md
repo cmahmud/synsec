@@ -22,6 +22,14 @@ The initial supported forms are deliberately narrow:
 
 Default imports, star imports, re-export chains, computed member access, nested member chains, dynamic import bindings, ambiguous local aliases, ambiguous target functions, and unresolved/external modules are omitted rather than guessed.
 
+## Composed analysis
+
+`@synsec/repository/route-flow-analysis` is the composition API for callers that need route-flow context. Given an existing repository index and module graph, it builds the bounded lexical call graph, explicit local import-call links, route entrypoints, and route-to-sink contexts using one consistent call-depth/node budget.
+
+Before lexical source analysis, the composition layer independently revalidates the supplied file list against the repository root. It accepts only regular non-symlink files inside the root, uses the actual filesystem size instead of trusting caller-supplied size metadata, and reports aggregate `analyzedFileCount` and `skippedUnsafeFileCount`. This is defense in depth for integrations that do not obtain their file inventory through SynSec's normal repository walker.
+
+The composition API performs no network access and does not execute repository code. A caller is still responsible for passing an index and module graph derived from the same repository revision and inventory.
+
 ## Route-to-sink use
 
 `@synsec/repository/route-sink-flow` may optionally consume the import-call graph. When it does, bounded route traversal can cross one of the explicit local import links and then continue through ordinary same-file lexical calls in the imported module.
@@ -37,7 +45,8 @@ Finding enrichment still requires an exact repository path and sink line match. 
 
 All of this remains static structural evidence. The interpretation strings are intentionally explicit:
 
-- `cross-module-import-call-evidence-only`; and
+- `cross-module-import-call-evidence-only`;
+- `repository-structural-route-flow-evidence-only`; and
 - `structural-route-call-sink-evidence-only`.
 
 A linked import/call does **not** prove that:
