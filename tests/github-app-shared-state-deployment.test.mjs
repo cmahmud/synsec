@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateGitHubAppDeployment } from "@synsec/github/app-deployment";
+import {
+  assessGitHubAppSharedStateCapabilities,
+  REQUIRED_GITHUB_APP_SHARED_STATE_CAPABILITIES,
+  validateGitHubAppDeployment,
+} from "@synsec/github/app-deployment";
 
 const validConfig = {
   appId: 12345,
@@ -52,7 +56,22 @@ test("multi-replica deployments fail closed on filesystem state", () => {
   }
 });
 
-test("multi-replica deployments require every transactional state guarantee", () => {
+test("shared-state capability assessment is deterministic and complete", () => {
+  assert.deepEqual(
+    REQUIRED_GITHUB_APP_SHARED_STATE_CAPABILITIES,
+    Object.keys(completeCapabilities),
+  );
+  assert.deepEqual(assessGitHubAppSharedStateCapabilities(completeCapabilities), {
+    complete: true,
+    missing: [],
+  });
+  assert.deepEqual(assessGitHubAppSharedStateCapabilities(undefined), {
+    complete: false,
+    missing: [...REQUIRED_GITHUB_APP_SHARED_STATE_CAPABILITIES],
+  });
+});
+
+test("multi-replica deployments identify every missing transactional state guarantee", () => {
   for (const missingCapability of Object.keys(completeCapabilities)) {
     const capabilities = { ...completeCapabilities, [missingCapability]: false };
     const result = validateGitHubAppDeployment({
@@ -61,11 +80,34 @@ test("multi-replica deployments require every transactional state guarantee", ()
       stateBackend: { kind: "shared-transactional", capabilities },
     });
     assert.equal(result.ready, false, missingCapability);
-    assert.ok(
-      result.issues.some((issue) => issue.code === "shared-state-capabilities-incomplete"),
-      missingCapability,
-    );
+    const issue = result.issues.find((candidate) => candidate.code === "shared-state-capabilities-incomplete");
+    assert.ok(issue, missingCapability);
+    assert.deepEqual(issue.missingCapabilities, [missingCapability], missingCapability);
+    assert.equal(issue.message.includes(missingCapability), false, "human message should not require identifier parsing");
   }
+});
+
+test("shared-state readiness returns all missing capabilities in stable contract order", () => {
+  const capabilities = {
+    ...completeCapabilities,
+    atomicQueueInsertion: false,
+    compareAndSetLeaseRenewal: false,
+    sharedAuthorizationState: false,
+  };
+  const assessment = assessGitHubAppSharedStateCapabilities(capabilities);
+  assert.deepEqual(assessment, {
+    complete: false,
+    missing: ["atomicQueueInsertion", "compareAndSetLeaseRenewal", "sharedAuthorizationState"],
+  });
+
+  const result = validateGitHubAppDeployment({
+    ...validConfig,
+    replicaCount: 4,
+    stateBackend: { kind: "shared-transactional", capabilities },
+  });
+  const issue = result.issues.find((candidate) => candidate.code === "shared-state-capabilities-incomplete");
+  assert.ok(issue);
+  assert.deepEqual(issue.missingCapabilities, assessment.missing);
 });
 
 test("a complete shared transactional contract permits multiple replicas", () => {
