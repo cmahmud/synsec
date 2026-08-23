@@ -64,11 +64,13 @@ test("OSV-Scanner does not use a changed lockfile symlink as a native scan targe
   const root = await repository();
   const outside = join(await mkdtemp(join(tmpdir(), "synsec-osv-outside-")), "package-lock.json");
   await writeFile(outside, "{}\n");
-  await symlink(outside, join(root, "linked-lock.json"));
+  const linkedDir = join(root, "linked");
+  await mkdir(linkedDir, { recursive: true });
+  await symlink(outside, join(linkedDir, "package-lock.json"));
 
   assert.deepEqual(buildOsvArguments({
     target: { path: root },
-    changedFiles: ["linked-lock.json"],
+    changedFiles: ["linked/package-lock.json"],
   }), ["scan", "--format", "json", "source", "-r", root]);
 });
 

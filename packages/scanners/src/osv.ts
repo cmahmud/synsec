@@ -7,6 +7,7 @@ import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asRecord, asString, commandAvailability, cvssSeverity, identifiersFrom, normalizeSeverity, relativeLike, safeJson, strings } from "./utils.js";
 
 const MAX_CHANGED_FILES = 100;
+const EXECUTION_INTERPRETATION = "scanner-execution-scope-not-coverage-proof" as const;
 const OSV_LOCKFILE_NAMES = new Set([
   "Cargo.lock",
   "Gemfile.lock",
@@ -87,7 +88,12 @@ function safeNativeLockfiles(context: ScannerContext): string[] | undefined {
   if (!changed || changed.length === 0) return undefined;
   if (changed.length > MAX_CHANGED_FILES) return undefined;
 
-  const root = realpathSync(context.target.path);
+  let root: string;
+  try {
+    root = realpathSync(context.target.path);
+  } catch {
+    return undefined;
+  }
   const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
   const result: string[] = [];
   const seen = new Set<string>();
@@ -118,6 +124,25 @@ function safeNativeLockfiles(context: ScannerContext): string[] | undefined {
   return result.length > 0 ? result : undefined;
 }
 
+interface OsvScanPlan {
+  args: string[];
+  nativeChangedFiles: boolean;
+}
+
+function buildOsvScanPlan(context: ScannerContext): OsvScanPlan {
+  const lockfiles = safeNativeLockfiles(context);
+  if (!lockfiles) {
+    return {
+      args: ["scan", "--format", "json", "source", "-r", context.target.path],
+      nativeChangedFiles: false,
+    };
+  }
+  return {
+    args: ["scan", "--format", "json", "source", ...lockfiles.map((path) => `--lockfile=${path}`)],
+    nativeChangedFiles: true,
+  };
+}
+
 /**
  * OSV-Scanner can safely narrow execution only when the entire changed-file scope is made up of
  * recognized dependency lockfiles/SBOMs that are regular files inside the repository. Any source,
@@ -125,15 +150,7 @@ function safeNativeLockfiles(context: ScannerContext): string[] | undefined {
  * repository scanning rather than pretending dependency coverage is complete.
  */
 export function buildOsvArguments(context: ScannerContext): string[] {
-  const lockfiles = safeNativeLockfiles(context);
-  if (!lockfiles) return ["scan", "--format", "json", "source", "-r", context.target.path];
-  return [
-    "scan",
-    "--format",
-    "json",
-    "source",
-    ...lockfiles.map((path) => `--lockfile=${path}`),
-  ];
+  return buildOsvScanPlan(context).args;
 }
 
 export function parseOsvJson(raw: string, root: string): Finding[] {
@@ -199,9 +216,10 @@ export class OsvScannerAdapter implements ScannerAdapter {
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
+    const plan = buildOsvScanPlan(context);
     const output = await runProcess(
       "osv-scanner",
-      buildOsvArguments(context),
+      plan.args,
       { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
     );
     if (output.exitCode !== 0 && output.exitCode !== 1) {
@@ -214,6 +232,11 @@ export class OsvScannerAdapter implements ScannerAdapter {
       target: context.target,
       findings: parseOsvJson(output.stdout, context.target.path),
       diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
+      executionScope: context.changedFiles === undefined ? undefined : {
+        mode: plan.nativeChangedFiles ? "changed-files-native" : "repository-then-filtered",
+        changedFileCount: context.changedFiles.length,
+        interpretation: EXECUTION_INTERPRETATION,
+      },
     };
   }
 }
