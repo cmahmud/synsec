@@ -11,13 +11,19 @@ import {
   type RouteSinkFlowOptions,
 } from "./route-sink-flow.js";
 
+const DEFAULT_MAX_ANALYSIS_FILES = 5_000;
+const MAX_ANALYSIS_FILES = 5_000;
+
 export interface RepositoryRouteFlowAnalysis {
   callGraph: CallGraph;
   importCallLinks: ImportCallLinkGraph;
   entrypoints: RouteEntrypoint[];
   routeFlows: RouteSinkFlowContext[];
+  inputFileCount: number;
   analyzedFileCount: number;
   skippedUnsafeFileCount: number;
+  truncatedFileCount: number;
+  coverage: "complete-input" | "bounded-input";
   /** All relationships are bounded static repository evidence only. */
   interpretation: "repository-structural-route-flow-evidence-only";
 }
@@ -28,6 +34,14 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxCallNodes?: number;
   maxEvidence?: number;
   maxRoutes?: number;
+  /** Maximum number of supplied repository files eligible for lexical analysis. */
+  maxFiles?: number;
+}
+
+interface SafeAnalysisFileResult {
+  files: IndexFileInput[];
+  skippedUnsafeFileCount: number;
+  truncatedFileCount: number;
 }
 
 function insideRoot(root: string, candidate: string): boolean {
@@ -35,18 +49,47 @@ function insideRoot(root: string, candidate: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
-async function safeAnalysisFiles(rootPath: string, files: readonly IndexFileInput[]): Promise<IndexFileInput[]> {
+function boundedMaxFiles(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_ANALYSIS_FILES;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_ANALYSIS_FILES) {
+    throw new Error(`Repository route-flow maxFiles must be an integer between 1 and ${MAX_ANALYSIS_FILES}.`);
+  }
+  return value;
+}
+
+async function safeAnalysisFiles(
+  rootPath: string,
+  files: readonly IndexFileInput[],
+  maxFiles: number,
+): Promise<SafeAnalysisFileResult> {
   const root = resolve(rootPath);
   const output: IndexFileInput[] = [];
-  for (const file of files.slice(0, 5_000)) {
-    if (typeof file.path !== "string" || !file.path || file.path.includes("\0") || isAbsolute(file.path)) continue;
+  let skippedUnsafeFileCount = 0;
+  const eligible = files.slice(0, maxFiles);
+
+  for (const file of eligible) {
+    if (typeof file.path !== "string" || !file.path || file.path.includes("\0") || isAbsolute(file.path)) {
+      skippedUnsafeFileCount += 1;
+      continue;
+    }
     const candidate = resolve(root, file.path);
-    if (!insideRoot(root, candidate)) continue;
+    if (!insideRoot(root, candidate)) {
+      skippedUnsafeFileCount += 1;
+      continue;
+    }
     const info = await lstat(candidate).catch(() => undefined);
-    if (!info?.isFile() || info.isSymbolicLink()) continue;
+    if (!info?.isFile() || info.isSymbolicLink()) {
+      skippedUnsafeFileCount += 1;
+      continue;
+    }
     output.push({ path: file.path, size: info.size });
   }
-  return output;
+
+  return {
+    files: output,
+    skippedUnsafeFileCount,
+    truncatedFileCount: Math.max(0, files.length - eligible.length),
+  };
 }
 
 /**
@@ -55,7 +98,9 @@ async function safeAnalysisFiles(rootPath: string, files: readonly IndexFileInpu
  * The module graph must come from the same repository index/file inventory. The function does
  * not perform network access, execute repository code, or broaden analysis beyond the supplied
  * repository files. It independently rejects path escape, missing/non-regular files, and symlink
- * entries before lexical source analysis. Ambiguous imports and calls remain unresolved.
+ * entries before lexical source analysis. Input above the configured file bound is explicitly
+ * reported as bounded coverage rather than silently treated as analyzed. Ambiguous imports and
+ * calls remain unresolved.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -65,9 +110,10 @@ export async function buildRepositoryRouteFlowAnalysis(
   options: RepositoryRouteFlowAnalysisOptions = {},
 ): Promise<RepositoryRouteFlowAnalysis> {
   const maxCallNodes = Math.max(1, Math.min(1_000, options.maxCallNodes ?? 100));
-  const safeFiles = await safeAnalysisFiles(rootPath, files);
-  const callGraph = await buildCallGraph(rootPath, safeFiles);
-  const importCallLinks = await buildImportCallLinkGraph(rootPath, safeFiles, moduleGraph, callGraph);
+  const maxFiles = boundedMaxFiles(options.maxFiles);
+  const safe = await safeAnalysisFiles(rootPath, files, maxFiles);
+  const callGraph = await buildCallGraph(rootPath, safe.files);
+  const importCallLinks = await buildImportCallLinkGraph(rootPath, safe.files, moduleGraph, callGraph);
   const entrypoints = resolveRouteEntrypoints(index, callGraph, {
     ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
@@ -86,8 +132,11 @@ export async function buildRepositoryRouteFlowAnalysis(
     importCallLinks,
     entrypoints,
     routeFlows,
-    analyzedFileCount: safeFiles.length,
-    skippedUnsafeFileCount: Math.min(files.length, 5_000) - safeFiles.length,
+    inputFileCount: files.length,
+    analyzedFileCount: safe.files.length,
+    skippedUnsafeFileCount: safe.skippedUnsafeFileCount,
+    truncatedFileCount: safe.truncatedFileCount,
+    coverage: safe.truncatedFileCount === 0 ? "complete-input" : "bounded-input",
     interpretation: "repository-structural-route-flow-evidence-only",
   };
 }
