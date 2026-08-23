@@ -12,6 +12,10 @@ import {
   type RouteProtectionOptions,
 } from "./route-protection-context.js";
 import {
+  buildRouteSecurityReviewContexts,
+  type RouteSecurityReviewContext,
+} from "./route-security-review.js";
+import {
   repositoryRouteSinkFlowContexts,
   type RouteSinkFlowContext,
   type RouteSinkFlowOptions,
@@ -26,6 +30,7 @@ export interface RepositoryRouteFlowAnalysis {
   entrypoints: RouteEntrypoint[];
   routeFlows: RouteSinkFlowContext[];
   routeProtectionContexts: RouteProtectionContext[];
+  routeSecurityReviews: RouteSecurityReviewContext[];
   inputFileCount: number;
   analyzedFileCount: number;
   skippedUnsafeFileCount: number;
@@ -107,8 +112,9 @@ async function safeAnalysisFiles(
  * repository files. It independently rejects path escape, missing/non-regular files, and symlink
  * entries before lexical source analysis. Input above the configured file bound is explicitly
  * reported as bounded coverage rather than silently treated as analyzed. Ambiguous imports and
- * calls remain unresolved. Auth-related route protection context is structural review evidence
- * only and never a claim that a route is effectively authenticated or authorized at runtime.
+ * calls remain unresolved. Auth-related route protection and route-security review summaries are
+ * structural review evidence only and never claims that a route is effectively protected or
+ * reachable at runtime.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -152,6 +158,11 @@ export async function buildRepositoryRouteFlowAnalysis(
   };
   const routeFlows = repositoryRouteSinkFlowContexts(index, entrypoints, callGraph, flowOptions);
   const routeProtectionContexts = repositoryRouteProtectionContexts(index, entrypoints, callGraph, protectionOptions);
+  const routeSecurityReviews = buildRouteSecurityReviewContexts(
+    routeFlows,
+    routeProtectionContexts,
+    options.maxRoutes ?? 1_000,
+  );
 
   return {
     callGraph,
@@ -159,6 +170,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     entrypoints,
     routeFlows,
     routeProtectionContexts,
+    routeSecurityReviews,
     inputFileCount: files.length,
     analyzedFileCount: safe.files.length,
     skippedUnsafeFileCount: safe.skippedUnsafeFileCount,
