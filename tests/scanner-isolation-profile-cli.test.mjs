@@ -84,16 +84,18 @@ test("scanner isolation CLI exits 2 with deterministic missing controls", async 
   }
 });
 
-test("scanner isolation CLI rejects credential-shaped unknown fields without echoing values", async () => {
+test("scanner isolation CLI rejects unknown fields without echoing field names or values", async () => {
   const root = await mkdtemp(join(tmpdir(), "synsec-isolation-secret-"));
   try {
     const path = join(root, "profile.json");
+    const secretKey = "ghp_must_not_echo_in_key_1234567890";
+    const secretValue = "ghp_must_not_echo_in_value_1234567890";
     await writeFile(path, JSON.stringify({
       ...completeProfile,
-      registryToken: "ghp_must_not_echo_1234567890",
+      [secretKey]: secretValue,
     }), "utf8");
     const error = await runExpectingExit([path], 1);
-    assert.match(error.stderr, /unsupported field registryToken/);
+    assert.match(error.stderr, /contains an unsupported field/);
     assert.doesNotMatch(error.stderr, /ghp_must_not_echo/);
   } finally {
     await rm(root, { recursive: true, force: true });
