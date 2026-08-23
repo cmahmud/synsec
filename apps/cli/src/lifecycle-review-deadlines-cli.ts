@@ -7,6 +7,10 @@ import {
   assessLifecycleReviewDeadlines,
   type LifecycleReviewDeadlineAssessment,
 } from "@synsec/lifecycle/review-deadlines";
+import {
+  evaluateLifecycleReviewPolicy,
+  type LifecycleReviewPolicyResult,
+} from "@synsec/lifecycle/review-policy";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -27,6 +31,7 @@ function flag(name: string): boolean {
 function validateArguments(): void {
   const supportedFlags = new Set([
     "--json",
+    "--summary-only",
     "--fail-overdue",
     "--fail-unscheduled",
   ]);
@@ -71,11 +76,23 @@ function renderText(path: string, assessment: LifecycleReviewDeadlineAssessment)
   return lines;
 }
 
+function renderSummaryText(result: LifecycleReviewPolicyResult): string[] {
+  return [
+    `Reviewable exceptions: ${result.summary.reviewable}`,
+    `Overdue: ${result.summary.overdue}`,
+    `Due soon: ${result.summary.dueSoon}`,
+    `Scheduled: ${result.summary.scheduled}`,
+    `Unscheduled: ${result.summary.unscheduled}`,
+    `Policy ready: ${result.ready ? "yes" : "no"}`,
+    `Policy violations: ${result.violations.length > 0 ? result.violations.join(", ") : "none"}`,
+  ];
+}
+
 async function main(): Promise<void> {
   validateArguments();
   const input = args[0];
   if (!input || input.startsWith("--")) {
-    throw new Error("Usage: synsec-lifecycle-reviews <lifecycle.json> [--now <timestamp>] [--due-soon-days <0-365>] [--json] [--fail-overdue] [--fail-unscheduled]");
+    throw new Error("Usage: synsec-lifecycle-reviews <lifecycle.json> [--now <timestamp>] [--due-soon-days <0-365>] [--json] [--summary-only] [--fail-overdue] [--fail-unscheduled]");
   }
 
   const path = resolve(input);
@@ -89,12 +106,21 @@ async function main(): Promise<void> {
     now: option("--now"),
     ...(windowMs === undefined ? {} : { dueSoonWindowMs: windowMs }),
   });
+  const policyResult = evaluateLifecycleReviewPolicy(assessment, {
+    failOnOverdue: flag("--fail-overdue"),
+    failOnUnscheduled: flag("--fail-unscheduled"),
+  });
+  const summaryOnly = flag("--summary-only");
 
-  if (flag("--json")) process.stdout.write(`${JSON.stringify(assessment, null, 2)}\n`);
-  else for (const line of renderText(path, assessment)) console.log(line);
+  if (flag("--json")) {
+    process.stdout.write(`${JSON.stringify(summaryOnly ? policyResult : assessment, null, 2)}\n`);
+  } else {
+    const lines = summaryOnly ? renderSummaryText(policyResult) : renderText(path, assessment);
+    for (const line of lines) console.log(line);
+  }
 
-  if (flag("--fail-overdue") && assessment.summary.overdue > 0) process.exitCode = 2;
-  else if (flag("--fail-unscheduled") && assessment.summary.unscheduled > 0) process.exitCode = 3;
+  if (policyResult.violations.includes("overdue")) process.exitCode = 2;
+  else if (policyResult.violations.includes("unscheduled")) process.exitCode = 3;
 }
 
 main().catch((error: unknown) => {
