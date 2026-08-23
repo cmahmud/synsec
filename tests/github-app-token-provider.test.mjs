@@ -98,6 +98,30 @@ test("App token provider rejects malformed or nearly expired token metadata", as
   await assert.rejects(() => expiring(1), /expires too soon/);
 });
 
+test("App token provider redacts credentials from installation-token exchange failures", async () => {
+  const now = Date.UTC(2026, 7, 22, 19, 30, 0);
+  const githubToken = `ghs_${"c".repeat(36)}`;
+  const provider = createGitHubAppInstallationTokenProvider({
+    appId: 1,
+    privateKey: privateKeyPem(),
+    now: () => now,
+    exchange: async () => {
+      throw new Error(`token exchange failed Authorization: Bearer ${githubToken} via https://proxy-user:proxy-password@proxy.internal`);
+    },
+  });
+
+  let failure;
+  try {
+    await provider(1, "acquire");
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /token exchange failed/);
+  assert.equal(failure.message.includes(githubToken), false);
+  assert.equal(failure.message.includes("proxy-password"), false);
+});
+
 test("App token provider bounds private-key, lifetime, and permission configuration before exchange", () => {
   assert.throws(() => createGitHubAppInstallationTokenProvider({
     appId: 1,
