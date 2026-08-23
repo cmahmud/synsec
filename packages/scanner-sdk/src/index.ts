@@ -62,10 +62,6 @@ const SAFE_ENV_KEYS = new Set([
   "TEMP",
   "TMP",
   "TMPDIR",
-  "HOME",
-  "USERPROFILE",
-  "LOCALAPPDATA",
-  "APPDATA",
   "LANG",
   "LC_ALL",
   "TERM",
@@ -74,7 +70,6 @@ const SAFE_ENV_KEYS = new Set([
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
 ]);
 
 /**
@@ -106,7 +101,10 @@ export function sanitizeOperationalText(value: string, maxLength = DEFAULT_MAX_O
 
 /**
  * Build the default environment for untrusted external scanner processes.
- * Credentials, CI tokens, cloud secrets, registry tokens, and proxy URLs are not inherited implicitly.
+ * Credentials, CI tokens, cloud secrets, registry tokens, proxy URLs, and user configuration roots
+ * are not inherited implicitly. In particular, HOME/USERPROFILE/AppData/XDG_CONFIG_HOME are omitted
+ * because scanner-specific config files under those roots can contain credentials even when token
+ * environment variables themselves have been removed.
  */
 export function buildScannerProcessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
