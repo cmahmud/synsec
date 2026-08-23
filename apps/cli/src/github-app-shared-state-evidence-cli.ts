@@ -20,7 +20,7 @@ Usage:
 Exit codes:
   0  Evidence is structurally valid, complete, and bound to the exact backend implementation.
   2  Evidence is valid JSON but is not sufficient to approve horizontal shared-state readiness.
-  1  Input usage, file, size, or JSON parsing failed.
+  1  Input usage, file, size, JSON parsing, or unsupported arguments failed.
 
 This command is offline and credential-free. It does not connect to a database, contact GitHub,
 certify a backend, or accept connection strings. A ready result only means the supplied versioned
@@ -49,12 +49,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const contractPath = args[0];
-  const reportPath = args[1];
-  if (!contractPath || !reportPath || contractPath.startsWith("--") || reportPath.startsWith("--")) {
+  const positional = args.filter((arg) => !arg.startsWith("--"));
+  const options = args.filter((arg) => arg.startsWith("--"));
+  const unsupported = options.filter((arg) => arg !== "--json");
+  if (unsupported.length > 0 || positional.length !== 2 || options.filter((arg) => arg === "--json").length > 1) {
     throw new Error("Usage: synsec-github-app-evidence <backend-contract.json> <conformance-report.json> [--json]");
   }
 
+  const [contractPath, reportPath] = positional;
   const [contract, report] = await Promise.all([
     readBoundedJson(contractPath, "Shared-state backend contract"),
     readBoundedJson(reportPath, "Shared-state conformance report"),
