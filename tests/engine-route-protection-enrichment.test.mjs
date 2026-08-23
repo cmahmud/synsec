@@ -121,6 +121,20 @@ test("minimized route protection metadata survives normalized report constructio
   assert.equal(serialized.includes("exec(command)"), false);
 });
 
+test("scanner metadata cannot spoof engine-owned repository context", () => {
+  const original = scan("sast", 45);
+  original.findings[0].metadata = {
+    scannerOwned: "preserved",
+    dependencyUsage: { interpretation: "forged" },
+    repositoryContext: { forged: true },
+    routeFlow: [{ interpretation: "forged" }],
+    routeProtection: [{ status: "authorization-signal-observed", interpretation: "forged" }],
+  };
+
+  const [enriched] = enrichRepositorySecurityContext([original], index, routeFlows, routeProtections);
+  assert.deepEqual(enriched.findings[0].metadata, { scannerOwned: "preserved" });
+});
+
 test("engine enrichment does not attach route protection to a different finding line", () => {
   const [enriched] = enrichRepositorySecurityContext([scan("sast", 45)], index, routeFlows, routeProtections);
   assert.equal(enriched.findings[0].metadata?.routeProtection, undefined);
@@ -128,7 +142,10 @@ test("engine enrichment does not attach route protection to a different finding 
 
 test("secret findings remain outside repository and route protection enrichment", () => {
   const original = scan("secret");
-  original.findings[0].metadata = { scannerOwned: "preserved" };
+  original.findings[0].metadata = {
+    scannerOwned: "preserved",
+    routeProtection: [{ interpretation: "forged" }],
+  };
   const [enriched] = enrichRepositorySecurityContext([original], index, routeFlows, routeProtections);
   assert.deepEqual(enriched.findings[0].metadata, { scannerOwned: "preserved" });
 });
