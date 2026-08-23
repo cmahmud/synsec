@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { sanitizeOperationalText } from "@synsec/scanner-sdk";
 import type { GitHubWebhookSecret } from "./app.js";
 import {
   handleGitHubAppWebhook,
@@ -47,6 +48,11 @@ function publicResult(result: GitHubAppWebhookHandleResult): Record<string, unkn
   return { status: "ignored", reason: result.reason };
 }
 
+function safeCallbackError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(sanitizeOperationalText(message, 1000) || "GitHub App webhook processing failed.");
+}
+
 async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
   const declared = header(request, "content-length");
   if (declared !== undefined) {
@@ -72,6 +78,8 @@ async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
  * The handler accepts only POST requests to one configured path, bounds the raw body before
  * signature processing, requires GitHub's event/delivery/signature headers, and delegates to the
  * replay-protected durable App handler. Internal error details are never returned to the caller.
+ * Errors forwarded to the optional operator callback are also sanitized and bounded so hosted
+ * logging integrations cannot accidentally persist credentials from backend/process failures.
  * A durable-processing failure returns 500 only after the App handler has attempted to release the
  * exact replay claim, allowing GitHub to retry the delivery instead of losing it.
  */
@@ -136,7 +144,7 @@ export function createGitHubAppWebhookHttpHandler(options: GitHubAppWebhookHttpO
       });
       sendJson(response, resultStatus(result), publicResult(result));
     } catch (error) {
-      options.onError?.(error);
+      options.onError?.(safeCallbackError(error));
       sendJson(response, 500, { status: "error" });
     }
   };
