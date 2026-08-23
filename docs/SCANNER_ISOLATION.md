@@ -16,6 +16,8 @@ Without `requireScannerIsolation`, missing or incomplete isolation is reported a
 
 Production operators should set `requireScannerIsolation: true`. Deployment readiness then fails unless scanner execution uses a container or equivalent sandbox, has both CPU and memory limits, avoids unrestricted host networking, and mounts repository source read-only.
 
+For a stricter production gate, use the versioned profile in [SCANNER_ISOLATION_PROFILE.md](./SCANNER_ISOLATION_PROFILE.md). It additionally makes separate scratch space, credential/state exclusion, privileged mode, host namespace sharing, and host control-socket mounts explicit. `assessGitHubAppScannerProductionReadiness()` composes that profile with the hosted deployment preflight and always forces scanner isolation into strict mode.
+
 ## Network policy
 
 Repository-first scanning does not require autonomous live-target access. A production sandbox should prefer no scanner network access when scanner data can be pre-provisioned. When a scanner genuinely requires advisory/rule/database updates, use explicit egress filtering to known package/security-data endpoints outside the scan process's target-selection logic.
@@ -28,6 +30,6 @@ The checked-out repository should be mounted read-only inside the scanner sandbo
 
 ## What SynSec does not claim
 
-The deployment declaration is a machine-checkable contract between SynSec startup configuration and the external runtime. SynSec does not infer that a host process is isolated, and Node's `spawn()` is not treated as a container, resource controller, firewall, or read-only mount mechanism.
+The deployment declaration and detailed profile are machine-checkable contracts between SynSec startup configuration and the external runtime. SynSec does not infer that a host process is isolated, and Node's `spawn()` is not treated as a container, resource controller, firewall, or read-only mount mechanism.
 
-A deployment that sets `requireScannerIsolation: true` should populate the declaration only from actual infrastructure configuration. Falsely declaring controls does not create them.
+A deployment that sets `requireScannerIsolation: true` or supplies a complete detailed profile should populate those declarations only from actual infrastructure configuration. Falsely declaring controls does not create them.
