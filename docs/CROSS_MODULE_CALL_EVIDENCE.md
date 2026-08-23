@@ -9,8 +9,9 @@ SynSec's lexical call graph deliberately resolves only unambiguous same-file fun
 1. the repository module graph already resolved the import to exactly one local file;
 2. the source line contains an explicit supported import binding;
 3. the call uses that exact local binding;
-4. the imported function name maps to exactly one lexical function node in the resolved target file; and
-5. the operation remains inside the configured file, source-size, binding, and link bounds.
+4. the imported function name maps to exactly one lexical function node in the resolved target file;
+5. the imported local binding has not been conservatively detected as shadowed inside the calling function before the call; and
+6. the operation remains inside the configured file, source-size, binding, and link bounds.
 
 The initial supported forms are deliberately narrow:
 
@@ -20,7 +21,7 @@ The initial supported forms are deliberately narrow:
 - Python `from ... import ...` bindings, including `as` aliases; and
 - Python module imports followed by one direct member call when the module graph has already proven the module is repository-local.
 
-Default imports, star imports, re-export chains, computed member access, nested member chains, dynamic import bindings, ambiguous local aliases, ambiguous target functions, and unresolved/external modules are omitted rather than guessed.
+Default imports, star imports, re-export chains, computed member access, nested member chains, dynamic import bindings, ambiguous local aliases, ambiguous target functions, and unresolved/external modules are omitted rather than guessed. Local declarations, assignments, and function parameters that can shadow a supported import binding also cause that call link to be omitted. The shadowing check intentionally prefers false negatives over manufacturing a repository-local call edge.
 
 ## Composed analysis
 
