@@ -107,7 +107,6 @@ async function runWithTimeout(
         .then(() => "passed" as const, () => "failed" as const),
       new Promise<"timed-out">((resolve) => {
         timer = setTimeout(() => resolve("timed-out"), timeoutMs);
-        timer.unref?.();
       }),
     ]);
   } finally {
