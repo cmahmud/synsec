@@ -19,15 +19,33 @@ To keep this artifact suitable for broader operational reporting, it deliberatel
 
 The due-soon window defaults to seven days and is bounded between zero and 365 days. Invalid assessment clocks or window values fail closed.
 
+## Aggregate policy gate
+
+Hosted or shared CI surfaces often do not need individual finding identifiers. `@synsec/lifecycle/review-policy` therefore converts an assessment into an aggregate policy result containing only counts, deterministic violation names, the assessment generation time, and a `ready` boolean.
+
+```ts
+import { evaluateLifecycleReviewPolicy } from "@synsec/lifecycle/review-policy";
+
+const result = evaluateLifecycleReviewPolicy(assessment, {
+  failOnOverdue: true,
+  failOnUnscheduled: true,
+});
+```
+
+The policy gate validates that the supplied summary is internally consistent before evaluating it. Its output does not copy fingerprints, source paths, owners, notes, report ids, or individual review timestamps. It is suitable for status checks and aggregate dashboards where disclosure of per-finding governance metadata is unnecessary.
+
 ## CLI governance checks
 
-The same minimized assessment is available through the credential-free CLI:
+The same assessment is available through the credential-free CLI:
 
 ```text
 synsec-lifecycle-reviews .synsec/lifecycle.json
 synsec-lifecycle-reviews .synsec/lifecycle.json --json
 synsec-lifecycle-reviews .synsec/lifecycle.json --due-soon-days 14 --fail-overdue --fail-unscheduled
+synsec-lifecycle-reviews .synsec/lifecycle.json --summary-only --json --fail-overdue --fail-unscheduled
 ```
+
+`--summary-only` emits the aggregate policy projection rather than the per-finding assessment. It omits the lifecycle file path, finding fingerprints, triage states, and individual review timestamps, making it the preferred mode for shared CI logs and hosted operational surfaces.
 
 `--fail-overdue` returns exit code `2` when at least one exception is overdue. `--fail-unscheduled` returns exit code `3` when reviewable exceptions exist without a deadline, unless the overdue policy already failed. Invalid input or unsupported options return exit code `1`. These policy codes make the command suitable for repository CI/governance workflows without changing finding state.
 
