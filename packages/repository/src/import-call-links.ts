@@ -260,17 +260,20 @@ export async function buildImportCallLinkGraph(
       return importedName ? [{ binding, importedName }] : [];
     });
     if (matches.length !== 1) continue;
-    const { binding, importedName } = matches[0];
-    const targets = functionsByPathAndName.get(`${normalizedPath(binding.targetPath)}\u0000${importedName}`) ?? [];
+    const match = matches[0];
+    if (!match) continue;
+    const targets = functionsByPathAndName.get(`${normalizedPath(match.binding.targetPath)}\u0000${match.importedName}`) ?? [];
     if (targets.length !== 1) continue;
+    const target = targets[0];
+    if (!target) continue;
     links.push({
       from: edge.from,
       line: edge.line,
       callee: edge.callee,
-      target: targets[0],
-      targetPath: normalizedPath(binding.targetPath),
-      importedName,
-      bindingKind: binding.kind,
+      target,
+      targetPath: normalizedPath(match.binding.targetPath),
+      importedName: match.importedName,
+      bindingKind: match.binding.kind,
       evidence: "explicit-import-binding-to-unique-local-function",
     });
   }
