@@ -12,6 +12,7 @@
     "./import-call-links": "./dist/import-call-links.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./route-auth-context": "./dist/route-auth-context.js",
+    "./route-protection-context": "./dist/route-protection-context.js",
     "./route-sink-context": "./dist/route-sink-context.js",
     "./route-sink-flow": "./dist/route-sink-flow.js",
     "./route-flow-analysis": "./dist/route-flow-analysis.js",
