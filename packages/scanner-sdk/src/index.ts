@@ -150,11 +150,19 @@ export function buildScannerProcessEnv(source: NodeJS.ProcessEnv = process.env, 
   return result;
 }
 
+function assertSafeScannerCommand(command: string): void {
+  if (!command.trim()) throw new Error("Scanner command must be non-empty.");
+  if (/[\\/]/.test(command) && !isAbsolute(command)) {
+    throw new Error("Relative scanner executable paths are not allowed; use a bare command name or an absolute path.");
+  }
+}
+
 export async function runProcess(
   command: string,
   args: string[],
   options: ProcessOptions = {},
 ): Promise<ProcessOutput> {
+  assertSafeScannerCommand(command);
   if (options.signal?.aborted) throw new Error(`Process aborted before start: ${command}`);
   if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
     throw new Error("timeoutMs must be a positive finite number when provided.");
