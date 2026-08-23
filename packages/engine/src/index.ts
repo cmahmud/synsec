@@ -18,6 +18,10 @@ import {
 } from "@synsec/repository/incremental-plan";
 import { buildRepositoryRouteFlowAnalysis } from "@synsec/repository/route-flow-analysis";
 import {
+  findingRouteProtectionEvidence,
+  type RouteProtectionContext,
+} from "@synsec/repository/route-protection-context";
+import {
   findingRouteSinkFlowEvidence,
   type RouteSinkFlowContext,
 } from "@synsec/repository/route-sink-flow";
@@ -238,10 +242,16 @@ function enrichDependencyUsage(
   }));
 }
 
-function enrichRepositorySecurityContext(
+/**
+ * Attach minimized repository intelligence only when it can be correlated to the finding's exact
+ * normalized location. Secret findings remain outside this enrichment boundary. Route-protection
+ * context is structural auth evidence only; it never upgrades or suppresses scanner evidence.
+ */
+export function enrichRepositorySecurityContext(
   scans: readonly ScanResult[],
   index: RepositoryIndex,
   routeFlows: readonly RouteSinkFlowContext[],
+  routeProtections: readonly RouteProtectionContext[] = [],
 ): ScanResult[] {
   return scans.map((scan) => ({
     ...scan,
@@ -254,17 +264,24 @@ function enrichRepositorySecurityContext(
         finding.location.path,
         finding.location.startLine,
       );
+      const routeProtection = findingRouteProtectionEvidence(
+        routeProtections,
+        routeFlows,
+        finding.location.path,
+        finding.location.startLine,
+      );
       const hasContext =
         context.nearbyRoutes.length > 0 ||
         context.nearbyAuthSignals.length > 0 ||
         context.nearbySinks.length > 0;
-      if (!hasContext && routeFlow.length === 0) return finding;
+      if (!hasContext && routeFlow.length === 0 && routeProtection.length === 0) return finding;
       return {
         ...finding,
         metadata: {
           ...(finding.metadata ?? {}),
           ...(hasContext ? { repositoryContext: context } : {}),
           ...(routeFlow.length > 0 ? { routeFlow } : {}),
+          ...(routeProtection.length > 0 ? { routeProtection } : {}),
         },
       };
     }),
@@ -390,6 +407,7 @@ export async function runScanEngine(input: {
   const repositoryIndex = await buildRepositoryIndex(root, inventory.files);
   const moduleGraph = buildModuleGraph(repositoryIndex, inventory.files);
   let routeFlows: RouteSinkFlowContext[] = [];
+  let routeProtections: RouteProtectionContext[] = [];
   if (repositoryIndex.routes.length > 0 && repositoryIndex.sinks.length > 0) {
     const routeAnalysis = await buildRepositoryRouteFlowAnalysis(
       root,
@@ -398,6 +416,7 @@ export async function runScanEngine(input: {
       moduleGraph,
     );
     routeFlows = routeAnalysis.routeFlows;
+    routeProtections = routeAnalysis.routeProtectionContexts;
   }
 
   let requestedScope: { base: string; files: string[] } | undefined;
@@ -421,7 +440,12 @@ export async function runScanEngine(input: {
 
   const result = await runSelectedScanners(target, input.config, statuses, changedScope?.files);
   const dependencyEnriched = enrichDependencyUsage(result.scans, repositoryIndex, moduleGraph);
-  const enrichedScans = enrichRepositorySecurityContext(dependencyEnriched, repositoryIndex, routeFlows);
+  const enrichedScans = enrichRepositorySecurityContext(
+    dependencyEnriched,
+    repositoryIndex,
+    routeFlows,
+    routeProtections,
+  );
   const scans = changedScope ? scopeScansToChangedFiles(enrichedScans, root, changedScope.files) : enrichedScans;
   const failures = result.failures;
   if (scans.length === 0) {
