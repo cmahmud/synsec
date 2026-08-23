@@ -31,6 +31,8 @@ export interface LocalGitHubAppRuntimeOptions extends GitHubPublisherOptions {
   appId: string | number;
   privateKey: string;
   config: SynSecConfig;
+  /** Explicit deployment cardinality. The local filesystem runtime supports exactly one replica. */
+  replicaCount?: number;
   webhookPath?: string;
   replayRetentionMs?: number;
   queueLeaseMs?: number;
@@ -87,6 +89,13 @@ function pathsOverlap(a: string, b: string): boolean {
   return isSameOrDescendant(a, b) || isSameOrDescendant(b, a);
 }
 
+function assertSingleLocalReplica(replicaCount: number | undefined): void {
+  const replicas = replicaCount ?? 1;
+  if (!Number.isSafeInteger(replicas) || replicas !== 1) {
+    throw new Error("Local GitHub App filesystem runtime supports exactly one application replica; use a shared transactional backend for horizontal scaling.");
+  }
+}
+
 /**
  * Compose SynSec's single-host GitHub App primitives without opening a network listener.
  *
@@ -98,10 +107,13 @@ function pathsOverlap(a: string, b: string): boolean {
  * fails closed when GitHub reports that the installation lacks the permissions required for
  * repository acquisition, publication, or an explicitly invoked approved remediation write.
  * Workspace maintenance observes only marker-proven SynSec acquisition directories by default;
- * deletion requires an explicit bounded runtime option. The caller still owns TLS, listener binding,
- * process/container isolation, network policy, and secret injection/reload.
+ * deletion requires an explicit bounded runtime option. This factory is deliberately single-replica:
+ * the filesystem queue and installation synchronization do not provide transactional multi-host
+ * coordination. The caller still owns TLS, listener binding, process/container isolation, network
+ * policy, and secret injection/reload.
  */
 export async function createLocalGitHubAppRuntime(options: LocalGitHubAppRuntimeOptions): Promise<LocalGitHubAppRuntime> {
+  assertSingleLocalReplica(options.replicaCount);
   const stateDirectory = requiredDirectory(options.stateDirectory, "GitHub App state directory");
   const workspaceRoot = requiredDirectory(options.workspaceRoot, "GitHub App workspace root");
   if (pathsOverlap(stateDirectory, workspaceRoot)) {
