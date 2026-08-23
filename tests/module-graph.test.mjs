@@ -29,9 +29,9 @@ test("module graph resolves local JavaScript and TypeScript imports without conf
     assert.deepEqual(graph.nodes, ["src/app.ts", "src/auth.ts", "src/db/index.ts"]);
     assert.equal(graph.resolvedEdgeCount, 3);
     assert.equal(graph.unresolvedEdgeCount, 1);
-    assert.ok(graph.edges.some((edge) => edge.specifier === "./auth.js" && edge.target === "src/auth.ts"));
+    assert.ok(graph.edges.some((edge) => edge.specifier === "./auth.js" && edge.target === "src/auth.ts" && edge.resolutionEvidence === "relative-import"));
     assert.ok(graph.edges.some((edge) => edge.specifier === "./db/index.js" && edge.target === "src/db/index.ts"));
-    assert.ok(graph.edges.some((edge) => edge.specifier === "express" && edge.resolution === "external-or-unresolved" && edge.target === undefined));
+    assert.ok(graph.edges.some((edge) => edge.specifier === "express" && edge.resolution === "external-or-unresolved" && edge.target === undefined && edge.resolutionEvidence === undefined));
 
     const neighborhood = findModuleNeighborhood(graph, "./src/app.ts", 3);
     assert.equal(neighborhood.interpretation, "module-import-reachability-only");
@@ -70,7 +70,58 @@ test("module graph resolves explicit relative Python package imports and bounds 
   };
 
   const graph = buildModuleGraph(index, files);
-  assert.ok(graph.edges.some((edge) => edge.specifier === ".auth" && edge.target === "service/auth.py"));
+  assert.ok(graph.edges.some((edge) => edge.specifier === ".auth" && edge.target === "service/auth.py" && edge.resolutionEvidence === "relative-import"));
   assert.ok(graph.edges.some((edge) => edge.specifier === "." && edge.target === "service/__init__.py"));
   assert.deepEqual(findModuleNeighborhood(graph, "service/api.py", 0).dependencies, []);
+});
+
+test("module graph resolves absolute imports only through explicit top-level Python packages", () => {
+  const files = [
+    { path: "service/__init__.py", size: 1 },
+    { path: "service/api.py", size: 1 },
+    { path: "service/db.py", size: 1 },
+    { path: "requests.py", size: 1 },
+  ];
+  const index = {
+    schemaVersion: 1,
+    generatedAt: new Date(0).toISOString(),
+    indexedFileCount: files.length,
+    moduleEdges: [
+      { from: "service/api.py", specifier: "service.db", kind: "python-import", line: 1 },
+      { from: "service/api.py", specifier: "requests", kind: "python-import", line: 2 },
+    ],
+    routes: [],
+    authSignals: [],
+    sinks: [],
+  };
+
+  const graph = buildModuleGraph(index, files);
+  assert.ok(graph.edges.some((edge) => edge.specifier === "service.db" && edge.target === "service/db.py" && edge.resolutionEvidence === "repository-root-python-package"));
+  assert.ok(graph.edges.some((edge) => edge.specifier === "requests" && edge.target === undefined && edge.resolution === "external-or-unresolved"));
+});
+
+test("module graph leaves ambiguous Python module/package shapes unresolved", () => {
+  const files = [
+    { path: "service/__init__.py", size: 1 },
+    { path: "service/api.py", size: 1 },
+    { path: "service/auth.py", size: 1 },
+    { path: "service/auth/__init__.py", size: 1 },
+  ];
+  const index = {
+    schemaVersion: 1,
+    generatedAt: new Date(0).toISOString(),
+    indexedFileCount: files.length,
+    moduleEdges: [
+      { from: "service/api.py", specifier: ".auth", kind: "python-import", line: 1 },
+      { from: "service/api.py", specifier: "service.auth", kind: "python-import", line: 2 },
+    ],
+    routes: [],
+    authSignals: [],
+    sinks: [],
+  };
+
+  const graph = buildModuleGraph(index, files);
+  assert.equal(graph.resolvedEdgeCount, 0);
+  assert.equal(graph.unresolvedEdgeCount, 2);
+  assert.ok(graph.edges.every((edge) => edge.resolution === "external-or-unresolved" && edge.target === undefined));
 });
