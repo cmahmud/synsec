@@ -21,7 +21,12 @@ import {
   findingRouteSinkFlowEvidence,
   type RouteSinkFlowContext,
 } from "@synsec/repository/route-sink-flow";
-import { runProcess, type ScannerAdapter, type ScannerAvailability } from "@synsec/scanner-sdk";
+import {
+  runProcess,
+  sanitizeOperationalText,
+  type ScannerAdapter,
+  type ScannerAvailability,
+} from "@synsec/scanner-sdk";
 import { builtInScanners, scannerSupportsNativeChangedFiles } from "@synsec/scanners";
 
 export interface ScannerStatus {
@@ -68,6 +73,16 @@ function sanitizeRemoteUrl(value: string): string {
   } catch {
     return value.replace(/:\/\/[^/@]+@/, "://");
   }
+}
+
+/**
+ * Scanner adapters are an external-process/plugin boundary. Their thrown errors are operational
+ * diagnostics, never evidence, so redact and bound them before they can enter reports, logs, or
+ * aggregate engine exceptions.
+ */
+export function scannerFailureMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return sanitizeOperationalText(raw) || "Scanner failed without an operational diagnostic.";
 }
 
 async function gitValue(root: string, args: string[]): Promise<string | undefined> {
@@ -306,7 +321,7 @@ async function runSelectedScanners(
         } catch (error) {
           failures.push({
             scanner: scanner.id,
-            message: error instanceof Error ? error.message : String(error),
+            message: scannerFailureMessage(error),
           });
         }
       }
@@ -328,7 +343,7 @@ function unavailableSummary(statuses: readonly ScannerStatus[]): string {
   const selected = statuses.filter((status) => status.selected);
   if (selected.length === 0) return "No scanner engines are selected in the SynSec configuration.";
   const detail = selected
-    .map((status) => `${status.displayName}: ${status.availability.reason ?? "unavailable"}`)
+    .map((status) => `${status.displayName}: ${sanitizeOperationalText(status.availability.reason ?? "unavailable", 2_048) || "unavailable"}`)
     .join("; ");
   return `No selected scanner engines are available. ${detail}`;
 }
