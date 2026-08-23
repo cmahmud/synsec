@@ -9,6 +9,7 @@ import { writeHistoryHtml } from "@synsec/report/history-html";
 import { buildSbomView, writeSbomHtml } from "@synsec/report/sbom-html";
 import type { RepositoryPostureSummary } from "@synsec/repository/posture";
 import { writeRepositoryPostureHtml } from "@synsec/repository/posture-html";
+import type { RouteSecurityReviewContext } from "@synsec/repository/route-security-review";
 
 export interface ProjectDashboardInput {
   report: SynSecReport;
@@ -16,6 +17,7 @@ export interface ProjectDashboardInput {
   posture: RepositoryPostureSummary;
   history?: ReportHistory;
   reviewDeadlines?: LifecycleReviewDeadlineAssessment;
+  routeSecurityReviews?: readonly RouteSecurityReviewContext[];
 }
 
 export interface ProjectDashboardPaths {
@@ -45,6 +47,16 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
   const reviewCard = input.reviewDeadlines
     ? `<div class=card aria-label="${input.reviewDeadlines.summary.overdue} overdue lifecycle reviews, ${input.reviewDeadlines.summary.unscheduled} unscheduled lifecycle reviews"><div class=value>${input.reviewDeadlines.summary.overdue}</div><div>overdue exception reviews</div><small>${input.reviewDeadlines.summary.dueSoon} due soon · ${input.reviewDeadlines.summary.unscheduled} unscheduled</small></div>`
     : "";
+  const routeReviewSummary = input.routeSecurityReviews
+    ? {
+      authReview: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-without-auth-signal" || item.signal === "sensitive-sink-auth-context-unavailable").length,
+      authorization: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-with-authorization-signal").length,
+      authentication: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-with-authentication-signal").length,
+    }
+    : undefined;
+  const routeReviewCard = routeReviewSummary
+    ? `<div class=card aria-label="${routeReviewSummary.authReview} sensitive-sink routes needing auth-context review"><div class=value>${routeReviewSummary.authReview}</div><div>sensitive-sink auth reviews</div><small>${routeReviewSummary.authorization} authorization signal · ${routeReviewSummary.authentication} authentication signal</small></div>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -64,13 +76,14 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
   <a class=card href="dependencies.html"><div class=value>${sbom.uniquePackageCount}</div><div>unique SBOM packages</div><small>${sbom.licenses.length} observed licenses</small></a>
   <a class=card href="posture.html"><div class=value>${input.posture.routeCount}</div><div>bounded route signals</div><small>${input.posture.routesWithSinkSignals} with nearby sink signals</small></a>
   ${reviewCard}
+  ${routeReviewCard}
   ${historyCard}
   <div class=card><div class=value>${input.report.securityScore}</div><div>security score</div><small>${input.report.findingCount} correlated findings</small></div>
 </div>
 <div class=severity>
   <span>${summary.critical} critical</span><span>${summary.high} high</span><span>${summary.medium} medium</span><span>${summary.low} low</span><span>${summary.info} info</span><span>${summary.unknown} unknown</span>
 </div>
-<p class=muted>This index links only to locally generated sanitized views. Repository source excerpts, scanner diagnostics, lifecycle notes/owners, tokens, and arbitrary outbound URLs are not embedded by this dashboard composition. Exception-review counts are governance metadata, not scanner evidence.</p>
+<p class=muted>This index links only to locally generated sanitized views. Repository source excerpts, scanner diagnostics, lifecycle notes/owners, tokens, route names/handlers, and arbitrary outbound URLs are not embedded by this dashboard composition. Exception-review counts are governance metadata, not scanner evidence. Route-security counts are structural review context, not protection or exploitability verdicts.</p>
 </body>
 </html>\n`;
 }
@@ -81,8 +94,8 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
  * The bundle has no server, authentication, remote assets, JavaScript, source excerpts, or scanner
  * credentials. It is a developer-facing local composition primitive, not the future multi-user web
  * application. Optional history is accepted only through the existing trend-safe history model;
- * optional exception-review health is accepted only through the minimized review-deadline assessment.
- * All generated files are written with restrictive permissions where supported.
+ * optional exception-review health and route-security review context are rendered only as minimized
+ * aggregate counts. All generated files are written with restrictive permissions where supported.
  */
 export async function writeProjectDashboard(
   directory: string,
