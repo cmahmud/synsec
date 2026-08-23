@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -41,6 +41,8 @@ test("composed route analysis reaches an exact sink through one explicit local i
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
 
     assert.equal(analysis.interpretation, "repository-structural-route-flow-evidence-only");
+    assert.equal(analysis.analyzedFileCount, 2);
+    assert.equal(analysis.skippedUnsafeFileCount, 0);
     assert.equal(analysis.importCallLinks.linkedCallCount, 1);
     assert.equal(analysis.routeFlows.length, 1);
     const flow = analysis.routeFlows[0];
@@ -76,10 +78,39 @@ test("composed route analysis remains same-file when the import is external or u
     const index = await buildRepositoryIndex(repo.root, repo.files);
     const moduleGraph = buildModuleGraph(index, repo.files);
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
+    assert.equal(analysis.analyzedFileCount, 1);
+    assert.equal(analysis.skippedUnsafeFileCount, 0);
     assert.equal(analysis.importCallLinks.linkedCallCount, 0);
     assert.equal(analysis.routeFlows[0]?.callScope, "same-file");
     assert.deepEqual(analysis.routeFlows[0]?.evidence, []);
   } finally {
     await repo.cleanup();
+  }
+});
+
+test("composed route analysis refuses symlink source entries even when caller metadata includes them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-route-flow-symlink-"));
+  try {
+    const target = [
+      "export function linkedHandler() {",
+      "  db.query(secretSql);",
+      "}",
+      'router.get("/linked", linkedHandler);',
+    ].join("\n");
+    await writeFile(join(root, "target.ts"), target, "utf8");
+    await symlink("target.ts", join(root, "linked.ts"));
+
+    const files = [{ path: "linked.ts", size: Buffer.byteLength(target) }];
+    const index = await buildRepositoryIndex(root, files);
+    const moduleGraph = buildModuleGraph(index, files);
+    const analysis = await buildRepositoryRouteFlowAnalysis(root, files, index, moduleGraph);
+
+    assert.equal(analysis.analyzedFileCount, 0);
+    assert.equal(analysis.skippedUnsafeFileCount, 1);
+    assert.equal(analysis.callGraph.nodes.length, 0);
+    assert.equal(analysis.importCallLinks.linkedCallCount, 0);
+    assert.deepEqual(analysis.routeFlows, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
