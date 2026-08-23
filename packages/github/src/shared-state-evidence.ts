@@ -55,6 +55,12 @@ function validIdentifier(value: unknown): value is string {
     && IDENTIFIER_PATTERN.test(value);
 }
 
+function sameStringArray(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((entry, index) => typeof entry === "string" && entry === expected[index]);
+}
+
 function parseConformanceReport(value: unknown): ParsedConformanceReport | undefined {
   if (!isRecord(value) || !exactKeys(value, [
     "schemaVersion",
@@ -91,10 +97,16 @@ function parseConformanceReport(value: unknown): ParsedConformanceReport | undef
 
   const coverage = assessGitHubAppSharedStateConformanceCoverage(passedScenarioIds);
   if (value.complete !== coverage.complete) return undefined;
-
-  // The nested coverage object is derived data. Require the runner shape, but recompute truth from
-  // the canonical results rather than trusting caller-supplied coverage claims.
-  if (!isRecord(value.coverage)) return undefined;
+  if (!isRecord(value.coverage) || !exactKeys(value.coverage, [
+    "complete",
+    "coveredScenarioIds",
+    "missingScenarioIds",
+    "missingCapabilities",
+  ])) return undefined;
+  if (value.coverage.complete !== coverage.complete) return undefined;
+  if (!sameStringArray(value.coverage.coveredScenarioIds, coverage.coveredScenarioIds)) return undefined;
+  if (!sameStringArray(value.coverage.missingScenarioIds, coverage.missingScenarioIds)) return undefined;
+  if (!sameStringArray(value.coverage.missingCapabilities, coverage.missingCapabilities)) return undefined;
 
   return {
     backendId: value.backendId,
