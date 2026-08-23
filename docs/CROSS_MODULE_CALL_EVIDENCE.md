@@ -33,9 +33,15 @@ File coverage is also explicit:
 - `complete-input` means every supplied inventory entry was considered within the configured file-count bound, although unsafe entries may still have been rejected and are separately counted;
 - `bounded-input` means one or more supplied inventory entries were outside the configured analysis bound and were not lexically analyzed.
 
-The default and absolute `maxFiles` ceiling is 5,000. Callers may choose a lower positive bound, but invalid or excessive bounds fail closed instead of being silently clamped. A `bounded-input` result must not be presented as proof that the entire repository was analyzed. This is especially important for future engine or hosted integrations that use route-flow evidence for finding prioritization.
+The default and absolute `maxFiles` ceiling is 5,000. Callers may choose a lower positive bound, but invalid or excessive bounds fail closed instead of being silently clamped. A `bounded-input` result must not be presented as proof that the entire repository was analyzed. This is especially important when route-flow evidence is used for finding prioritization.
 
 This preflight is defense in depth for integrations that do not obtain their file inventory through SynSec's normal repository walker. The composition API performs no network access and does not execute repository code. A caller is still responsible for passing an index and module graph derived from the same repository revision and inventory.
+
+## Scan-engine integration
+
+The normal `runScanEngine()` enrichment path now uses the composed route-flow analyzer whenever the repository index contains both routes and sinks. That means exact sink findings can receive bounded evidence through supported explicit repository-local imports instead of being limited to same-file lexical calls.
+
+The engine still treats this as additive context only. It does not lower scanner findings because a route link is absent, and it does not convert structural evidence into a claim of exploitability or runtime reachability. Secret findings remain excluded from repository-context enrichment entirely.
 
 ## Route-to-sink use
 
