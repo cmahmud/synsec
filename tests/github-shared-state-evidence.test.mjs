@@ -81,6 +81,16 @@ test("shared-state evidence gate recomputes scenario truth instead of trusting c
   assert.equal(assessment.passedScenarioIds.includes(failedId), false);
 });
 
+test("shared-state evidence gate rejects tampered derived coverage", async () => {
+  const report = await createReport();
+  report.coverage.coveredScenarioIds = [];
+  report.coverage.missingScenarioIds = ["replay.concurrent-duplicate-claim"];
+
+  const assessment = assessGitHubAppSharedStateConformanceEvidence(createContract(), report);
+  assert.equal(assessment.ready, false);
+  assert.deepEqual(assessment.issues.map((issue) => issue.code), ["invalid-conformance-report"]);
+});
+
 test("shared-state evidence gate rejects incomplete but structurally honest report", async () => {
   const failedId = GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS[3].id;
   const report = await createReport({
