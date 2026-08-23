@@ -10,6 +10,7 @@ import {
   discoverChangedFiles,
   reportMeetsFailureThreshold,
   runScanEngine,
+  scannerFailureMessage,
 } from "../packages/engine/dist/index.js";
 import { buildReport } from "../packages/report/dist/index.js";
 
@@ -32,6 +33,19 @@ test("scan engine refuses to produce a clean report when no selected scanner exi
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("scanner failures are redacted before crossing the engine reporting boundary", () => {
+  const githubToken = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  const message = scannerFailureMessage(
+    new Error(`scanner transport failed authorization: Bearer ${githubToken} via https://alice:password@example.invalid/api`),
+  );
+
+  assert.match(message, /scanner transport failed/);
+  assert.doesNotMatch(message, new RegExp(githubToken));
+  assert.doesNotMatch(message, /alice:password/);
+  assert.match(message, /\[REDACTED/);
+  assert.equal(scannerFailureMessage(new Error("\u0000\u0001")), "Scanner failed without an operational diagnostic.");
 });
 
 test("changed-file discovery returns repository-relative files from the requested base", async () => {
