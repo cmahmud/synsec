@@ -2,10 +2,13 @@ import { posix } from "node:path";
 import type { IndexFileInput, ModuleEdge, RepositoryIndex } from "./analysis.js";
 
 export type ModuleResolution = "repository-file" | "external-or-unresolved";
+export type ModuleResolutionEvidence = "relative-import" | "repository-root-python-package";
 
 export interface ResolvedModuleEdge extends ModuleEdge {
   target?: string;
   resolution: ModuleResolution;
+  /** Why SynSec considered this edge repository-local. Omitted for unresolved/external edges. */
+  resolutionEvidence?: ModuleResolutionEvidence;
 }
 
 export interface ModuleGraph {
@@ -77,25 +80,54 @@ function resolveJavascriptEdge(edge: ModuleEdge, lookup: Map<string, string>): s
   return undefined;
 }
 
-function resolvePythonEdge(edge: ModuleEdge, lookup: Map<string, string>): string | undefined {
-  if (!edge.specifier.startsWith(".")) return undefined;
-  const leadingDots = edge.specifier.match(/^\.+/)?.[0].length ?? 0;
-  let directory = posix.dirname(normalizeRepositoryPath(edge.from));
-  for (let level = 1; level < leadingDots; level += 1) directory = posix.dirname(directory);
-  const remainder = edge.specifier.slice(leadingDots).replaceAll(".", "/");
-  const base = normalizeRepositoryPath(remainder ? posix.join(directory, remainder) : directory);
-  if (!base || base.startsWith("../")) return undefined;
-  for (const candidate of [`${base}.py`, posix.join(base, "__init__.py")]) {
-    const found = lookup.get(candidate.toLowerCase());
-    if (found) return found;
-  }
-  return undefined;
+function uniquePythonTarget(base: string, lookup: Map<string, string>): string | undefined {
+  const matches = [`${base}.py`, posix.join(base, "__init__.py")]
+    .map((candidate) => lookup.get(candidate.toLowerCase()))
+    .filter((candidate): candidate is string => candidate !== undefined);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
-function resolveEdge(edge: ModuleEdge, lookup: Map<string, string>): string | undefined {
+function hasTopLevelPythonPackage(specifier: string, lookup: Map<string, string>): boolean {
+  const firstSegment = specifier.split(".", 1)[0];
+  if (!firstSegment || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(firstSegment)) return false;
+  return lookup.has(`${firstSegment.toLowerCase()}/__init__.py`);
+}
+
+function resolvePythonEdge(
+  edge: ModuleEdge,
+  lookup: Map<string, string>,
+): { target: string; evidence: ModuleResolutionEvidence } | undefined {
+  if (edge.specifier.startsWith(".")) {
+    const leadingDots = edge.specifier.match(/^\.+/)?.[0].length ?? 0;
+    let directory = posix.dirname(normalizeRepositoryPath(edge.from));
+    for (let level = 1; level < leadingDots; level += 1) directory = posix.dirname(directory);
+    const remainder = edge.specifier.slice(leadingDots).replaceAll(".", "/");
+    const base = normalizeRepositoryPath(remainder ? posix.join(directory, remainder) : directory);
+    if (!base || base.startsWith("../")) return undefined;
+    const target = uniquePythonTarget(base, lookup);
+    return target ? { target, evidence: "relative-import" } : undefined;
+  }
+
+  // Absolute Python imports are only treated as repository-local when their first
+  // segment is an explicit top-level Python package in the indexed repository.
+  // This avoids guessing that an import such as `requests` refers to a same-named
+  // repository file rather than an installed dependency.
+  if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(edge.specifier) || !hasTopLevelPythonPackage(edge.specifier, lookup)) {
+    return undefined;
+  }
+  const base = normalizeRepositoryPath(edge.specifier.replaceAll(".", "/"));
+  const target = uniquePythonTarget(base, lookup);
+  return target ? { target, evidence: "repository-root-python-package" } : undefined;
+}
+
+function resolveEdge(
+  edge: ModuleEdge,
+  lookup: Map<string, string>,
+): { target: string; evidence: ModuleResolutionEvidence } | undefined {
   if (edge.kind === "python-import") return resolvePythonEdge(edge, lookup);
   if (edge.kind === "import" || edge.kind === "require" || edge.kind === "dynamic-import") {
-    return resolveJavascriptEdge(edge, lookup);
+    const target = resolveJavascriptEdge(edge, lookup);
+    return target ? { target, evidence: "relative-import" } : undefined;
   }
   return undefined;
 }
@@ -105,10 +137,15 @@ export function buildModuleGraph(index: RepositoryIndex, files: readonly IndexFi
   const nodes = [...lookup.values()].sort();
   let resolvedEdgeCount = 0;
   const edges = index.moduleEdges.map((edge): ResolvedModuleEdge => {
-    const target = resolveEdge(edge, lookup);
-    if (target) {
+    const resolved = resolveEdge(edge, lookup);
+    if (resolved) {
       resolvedEdgeCount += 1;
-      return { ...edge, target, resolution: "repository-file" };
+      return {
+        ...edge,
+        target: resolved.target,
+        resolution: "repository-file",
+        resolutionEvidence: resolved.evidence,
+      };
     }
     return { ...edge, resolution: "external-or-unresolved" };
   });
