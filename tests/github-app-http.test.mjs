@@ -130,10 +130,12 @@ test("HTTP webhook endpoint rejects wrong methods, media types, missing headers,
   assert.equal(claims, 0);
 });
 
-test("HTTP webhook endpoint hides durable failure details and leaves the delivery retryable", async () => {
+test("HTTP webhook endpoint hides durable failure details, redacts operator callbacks, and leaves the delivery retryable", async () => {
   const replayStore = new ReplayStore();
   const errors = [];
   let attempts = 0;
+  const githubToken = `ghp_${"a".repeat(36)}`;
+  const credentialUrl = "postgres://db-user:queue-password@db.internal/synsec";
   const handler = createGitHubAppWebhookHttpHandler({
     webhookSecret: secret,
     replayStore,
@@ -141,7 +143,7 @@ test("HTTP webhook endpoint hides durable failure details and leaves the deliver
     queue: {
       async enqueue(input) {
         attempts += 1;
-        if (attempts === 1) throw new Error("database password=super-secret queue unavailable");
+        if (attempts === 1) throw new Error(`queue unavailable token=${githubToken} backend=${credentialUrl}`);
         return { version: 1, jobId: "d".repeat(32), ...input, createdAt: new Date().toISOString(), attempts: 0, status: "pending" };
       },
     },
@@ -154,9 +156,14 @@ test("HTTP webhook endpoint hides durable failure details and leaves the deliver
   await handler(req, first);
   assert.equal(first.statusCode, 500);
   assert.deepEqual(JSON.parse(first.body), { status: "error" });
-  assert.equal(first.body.includes("super-secret"), false);
+  assert.equal(first.body.includes(githubToken), false);
+  assert.equal(first.body.includes("queue-password"), false);
   assert.equal(replayStore.claims.has("delivery-http-retry"), false);
   assert.equal(errors.length, 1);
+  const callbackMessage = errors[0] instanceof Error ? errors[0].message : String(errors[0]);
+  assert.equal(callbackMessage.includes(githubToken), false);
+  assert.equal(callbackMessage.includes("queue-password"), false);
+  assert.match(callbackMessage, /queue unavailable/);
 
   const second = response();
   await handler(request(body, { headers: { "x-github-delivery": "delivery-http-retry" } }), second);
