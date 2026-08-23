@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { IndexFileInput, RepositoryIndex } from "./analysis.js";
 import { buildCallGraph, type CallGraph } from "./call-graph.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
+import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
 import { resolveRouteEntrypoints, type RouteEntrypoint } from "./route-entrypoints.js";
 import {
@@ -114,11 +115,22 @@ export async function buildRepositoryRouteFlowAnalysis(
   const safe = await safeAnalysisFiles(rootPath, files, maxFiles);
   const callGraph = await buildCallGraph(rootPath, safe.files);
   const importCallLinks = await buildImportCallLinkGraph(rootPath, safe.files, moduleGraph, callGraph);
-  const entrypoints = resolveRouteEntrypoints(index, callGraph, {
+  let entrypoints = resolveRouteEntrypoints(index, callGraph, {
     ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
     maxCallNodes,
   });
+  entrypoints = await resolveImportedNodeRouteEntrypoints(
+    rootPath,
+    safe.files,
+    moduleGraph,
+    callGraph,
+    entrypoints,
+    {
+      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+      maxCallNodes,
+    },
+  );
   const flowOptions: RouteSinkFlowOptions = {
     importCallLinks,
     maxCallNodes,
