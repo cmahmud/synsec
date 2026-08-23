@@ -56,7 +56,12 @@ async function main(): Promise<void> {
     throw new Error("Usage: synsec-github-app-evidence <backend-contract.json> <conformance-report.json> [--json]");
   }
 
-  const [contractPath, reportPath] = positional;
+  const contractPath = positional[0];
+  const reportPath = positional[1];
+  if (!contractPath || !reportPath) {
+    throw new Error("Usage: synsec-github-app-evidence <backend-contract.json> <conformance-report.json> [--json]");
+  }
+
   const [contract, report] = await Promise.all([
     readBoundedJson(contractPath, "Shared-state backend contract"),
     readBoundedJson(reportPath, "Shared-state conformance report"),
