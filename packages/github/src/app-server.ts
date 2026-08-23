@@ -28,7 +28,14 @@ export interface GitHubAppServerOptions {
   webhookHandler(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse): Promise<void>;
   tls?: GitHubAppServerTlsOptions;
   healthPath?: string;
+  /** Minimal routing-readiness probe path. Defaults to /readyz and must differ from healthPath. */
+  readinessPath?: string;
   getStatus?: () => Promise<GitHubAppRuntimeStatus>;
+  /**
+   * Optional fail-closed readiness policy evaluated only after aggregate runtime status loads.
+   * The predicate result is never serialized into the response; callers receive only ready/not_ready.
+   */
+  isReady?: (status: GitHubAppRuntimeStatus) => boolean | Promise<boolean>;
   requestTimeoutMs?: number;
   headersTimeoutMs?: number;
   keepAliveTimeoutMs?: number;
@@ -80,10 +87,10 @@ function normalizedPort(value: number): number {
   return value;
 }
 
-function normalizedHealthPath(value: string | undefined): string {
-  const path = value?.trim() || "/healthz";
-  if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
-    throw new Error("GitHub App health path must be an absolute path without query or fragment components.");
+function normalizedProbePath(value: string | undefined, fallback: string, label: string): string {
+  const path = value?.trim() || fallback;
+  if (!path.startsWith("/") || path.includes("?") || path.includes("#") || /[\r\n]/.test(path)) {
+    throw new Error(`${label} must be an absolute path without query, fragment, or control components.`);
   }
   return path;
 }
@@ -125,15 +132,24 @@ function safeStatus(status: GitHubAppRuntimeStatus): Record<string, unknown> {
  * termination. Local TLS requires an in-memory key/certificate pair. Request/header/keep-alive
  * timeouts, per-socket request counts, and in-process concurrent webhook handlers are bounded.
  * Excess webhook concurrency fails fast with a retryable aggregate-only 503 response while the
- * health endpoint remains available. Shutdown forcibly closes remaining sockets after a bounded
- * grace period. The built-in health surface contains aggregate runtime counts only; repository
- * identities, delivery ids, commit SHAs, source paths, and credentials are never accepted as
- * health payload fields.
+ * health and readiness probes remain available. The health surface contains aggregate runtime
+ * counts only. The readiness surface is intentionally smaller: it confirms durable status can be
+ * loaded and, when configured, that a local readiness predicate accepts that status, but returns
+ * only `ready` or `not_ready`. Repository identities, delivery ids, commit SHAs, source paths,
+ * credentials, predicate diagnostics, and arbitrary durable-record fields are never serialized.
  */
 export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAppServer {
   const host = normalizedHost(options.host);
   const port = normalizedPort(options.port);
-  const healthPath = normalizedHealthPath(options.healthPath);
+  const healthPath = normalizedProbePath(options.healthPath, "/healthz", "GitHub App health path");
+  const readinessPath = normalizedProbePath(options.readinessPath, "/readyz", "GitHub App readiness path");
+  if (healthPath === readinessPath) {
+    throw new Error("GitHub App health and readiness paths must be distinct.");
+  }
+  if (options.isReady && !options.getStatus) {
+    throw new Error("GitHub App readiness policy requires aggregate runtime status collection.");
+  }
+
   const requestTimeoutMs = boundedTimeout(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, "GitHub App request timeout");
   const headersTimeoutMs = boundedTimeout(options.headersTimeoutMs, DEFAULT_HEADERS_TIMEOUT_MS, "GitHub App headers timeout");
   const keepAliveTimeoutMs = boundedTimeout(options.keepAliveTimeoutMs, DEFAULT_KEEP_ALIVE_TIMEOUT_MS, "GitHub App keep-alive timeout");
@@ -168,6 +184,26 @@ export function createGitHubAppServer(options: GitHubAppServerOptions): GitHubAp
         sendJson(response, 200, status);
       } catch {
         sendJson(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+
+    if (requestPath === readinessPath) {
+      if (request.method !== "GET") {
+        response.setHeader("allow", "GET");
+        sendJson(response, 405, { status: "method_not_allowed" });
+        return;
+      }
+      try {
+        if (!options.getStatus) {
+          sendJson(response, 200, { status: "ready" });
+          return;
+        }
+        const status = await options.getStatus();
+        const ready = options.isReady ? await options.isReady(status) : true;
+        sendJson(response, ready ? 200 : 503, { status: ready ? "ready" : "not_ready" });
+      } catch {
+        sendJson(response, 503, { status: "not_ready" });
       }
       return;
     }
