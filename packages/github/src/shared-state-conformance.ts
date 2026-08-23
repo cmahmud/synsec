@@ -72,7 +72,9 @@ export interface GitHubAppSharedStateConformanceCoverageAssessment {
   missingCapabilities: GitHubAppSharedStateCapability[];
 }
 
-const REQUIRED_SCENARIO_IDS = new Set(GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS.map((scenario) => scenario.id));
+const REQUIRED_SCENARIO_IDS = new Set<string>(
+  GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS.map((scenario) => scenario.id),
+);
 
 /**
  * Assess scenario coverage from bounded scenario identifiers produced by an adapter's real-backend
@@ -84,7 +86,7 @@ export function assessGitHubAppSharedStateConformanceCoverage(
 ): GitHubAppSharedStateConformanceCoverageAssessment {
   const covered = new Set<string>();
   for (const id of completedScenarioIds) {
-    if (typeof id === "string" && REQUIRED_SCENARIO_IDS.has(id)) covered.add(id);
+    if (REQUIRED_SCENARIO_IDS.has(id)) covered.add(id);
   }
 
   const coveredScenarioIds = GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS
