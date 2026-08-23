@@ -12,12 +12,6 @@ import {
   type GitHubAppSharedStateBackendContract,
 } from "./shared-state-contract.js";
 
-export interface GitHubAppSharedRuntimeStore
-  extends GitHubWebhookReplayManager,
-    GitHubAppInstallationStore,
-    GitHubScanJobEnqueuer,
-    GitHubAppWorkerQueue {}
-
 export interface GitHubAppSharedRuntimeOptions {
   /** Concrete adapter/version declaration. Validating this is necessary but not backend certification. */
   backendContract: GitHubAppSharedStateBackendContract;
