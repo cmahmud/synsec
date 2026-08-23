@@ -1,3 +1,4 @@
+import { sanitizeOperationalText } from "@synsec/scanner-sdk";
 import {
   parseVerifiedGitHubAppWebhook,
   shouldScanGitHubAppWebhook,
@@ -16,6 +17,11 @@ export interface GitHubAppWebhookIntakeResult {
   replayReceivedAt: string;
 }
 
+function safeReplayError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return sanitizeOperationalText(message, 1000) || "Webhook replay claim failed.";
+}
+
 /**
  * Verify, normalize, deduplicate, and classify one GitHub App webhook delivery.
  *
@@ -23,7 +29,9 @@ export interface GitHubAppWebhookIntakeResult {
  * unauthenticated traffic cannot fill the replay store. A duplicate authenticated
  * delivery is returned for idempotent HTTP handling but is never scan-eligible.
  * The accepted claim timestamp is retained so a higher-level handler can release
- * exactly that claim if downstream durable processing fails.
+ * exactly that claim if downstream durable processing fails. Replay-backend failures
+ * are sanitized before crossing the intake boundary so connection credentials cannot
+ * be forwarded into hosted logging/error hooks.
  */
 export async function intakeGitHubAppWebhook(input: {
   body: string | Uint8Array;
@@ -44,7 +52,12 @@ export async function intakeGitHubAppWebhook(input: {
     deliveryId,
   });
 
-  const claim = await input.replayStore.claim(deliveryId);
+  let claim: Awaited<ReturnType<GitHubWebhookReplayClaimer["claim"]>>;
+  try {
+    claim = await input.replayStore.claim(deliveryId);
+  } catch (error) {
+    throw new Error(safeReplayError(error));
+  }
   if (claim.deliveryId !== deliveryId) {
     throw new Error("Webhook replay store returned a mismatched delivery id.");
   }
