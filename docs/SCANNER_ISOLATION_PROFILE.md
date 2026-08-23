@@ -47,6 +47,14 @@ The CLI reads at most 64 KiB, rejects symlink input files, rejects unknown field
 
 Programmatic callers can use `assessSynSecScannerIsolationProfile()` from `@synsec/github/scanner-isolation-profile`. The assessment returns only a boolean, deterministic missing-control identifiers, and the interpretation marker `declared-infrastructure-controls-not-runtime-certification`.
 
+## Hosted production readiness
+
+`assessGitHubAppScannerProductionReadiness()` from `@synsec/github/scanner-production-readiness` composes the existing hosted deployment validation with the detailed profile. It always forces the legacy deployment isolation contract into strict mode even if the caller omitted `requireScannerIsolation`, then requires the versioned profile to be complete as a second independent gate.
+
+`assertGitHubAppScannerProductionReady()` provides the same policy as a startup assertion. Failure diagnostics contain only deployment issue codes and scanner-isolation control identifiers; they do not include webhook secrets, private-key material, filesystem contents, or scanner output.
+
+This composition is intended to prevent a production host from accidentally treating the development/advisory isolation mode as sufficient. It still validates declarations rather than inspecting the running container or orchestrator.
+
 ## What the profile proves
 
 A complete profile proves only that an operator or deployment generator supplied a declaration matching SynSec's minimum isolation contract. It does not inspect Docker, Kubernetes, systemd, a container runtime, a seccomp profile, cgroups, network policy objects, or mount tables, and it is not runtime certification.
