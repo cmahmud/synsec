@@ -2,7 +2,7 @@
 
 `createGitHubAppSharedRuntime()` is the integration boundary for future transactional GitHub App state adapters. It composes externally implemented replay, installation-authorization, and scan-queue stores into the same repository-first webhook and worker pipeline used by SynSec's hosted runtime.
 
-This API does **not** ship a database adapter and does not certify supplied stores. Before composition it requires a complete versioned `GitHubAppSharedStateBackendContract`, including one bounded implementation-evidence record for every required coordination capability. The backend itself must still satisfy those guarantees under real concurrent database execution.
+This API does **not** ship a database adapter or independently certify supplied stores. Before composition it now requires both a complete versioned `GitHubAppSharedStateBackendContract` and a portable conformance report that passes SynSec's evidence gate for the exact same backend id and implementation version. Capability declarations alone are not enough to activate a shared runtime.
 
 ## Why this seam exists
 
@@ -13,6 +13,7 @@ A real horizontally scalable deployment needs different persistence implementati
 ```ts
 const runtime = createGitHubAppSharedRuntime({
   backendContract,
+  conformanceReport,
   webhookSecret,
   replayStore,
   installationStore,
@@ -29,13 +30,13 @@ The supplied stores must implement the existing narrow interfaces used by webhoo
 
 ## Credential boundary
 
-The shared runtime does not accept a database URL, password, TLS key, or arbitrary backend options. Database clients and credentials remain inside the adapter implementation. The backend contract accepts only bounded adapter/version identifiers and bounded non-secret evidence references.
+The shared runtime does not accept a database URL, password, TLS key, or arbitrary backend options. Database clients and credentials remain inside the adapter implementation. The backend contract accepts only bounded adapter/version identifiers and bounded non-secret evidence references. The conformance report contains canonical scenario ids, statuses, durations, derived coverage, and the adapter identity; backend/database exception text is excluded by the conformance runner.
 
 GitHub App credentials remain transport-only as elsewhere in SynSec. Scanner processes must never receive installation tokens, App private keys, webhook secrets, or database credentials.
 
 ## Required conformance work before production scaling
 
-`@synsec/github/shared-state-conformance` exports `GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS`, a stable minimum adversarial scenario for each required shared-state capability. `assessGitHubAppSharedStateConformanceCoverage()` maps completed scenario IDs back to the exact missing scenarios and capabilities. Unknown or duplicate IDs cannot manufacture coverage.
+`@synsec/github/shared-state-conformance` exports `GITHUB_APP_SHARED_STATE_CONFORMANCE_SCENARIOS`, a stable minimum adversarial scenario for each required shared-state capability. The executable runner produces the portable report consumed by the shared runtime and by `synsec-github-app-evidence`. The evidence gate independently recomputes coverage and rejects stale, detached, duplicate, invented, or structurally invalid results.
 
 The current required scenarios cover:
 
@@ -47,8 +48,8 @@ The current required scenarios cover:
 - transactional installation/repository-selection mutation;
 - cross-replica authorization revocation visibility.
 
-Adapters should record these stable scenario IDs only after the corresponding test has passed against the real backend. The coverage assessor does not execute a database or validate the truth of a claimed test result; it prevents drift in what SynSec considers the minimum concurrency test matrix.
+The report must come from a harness that exercised the real backend. Requiring the artifact at composition prevents accidental declaration-only activation, but it cannot prove that a dishonest or defective adapter harness actually used independent database connections/processes. Backend review and integration tests remain necessary.
 
 Additional adapter tests should cover transaction rollback, reconnect/restart behavior, and durable visibility across independent application processes. Those operational tests remain backend-specific and should not be replaced by mocks.
 
-The versioned contract, composition seam, and conformance registry make tests attributable to a concrete adapter build. They are not a substitute for the tests themselves, and none of these APIs makes the built-in filesystem stores horizontally safe.
+The versioned contract, mandatory evidence gate, composition seam, and conformance registry make tests attributable to a concrete adapter build. None of these APIs makes the built-in filesystem stores horizontally safe.
