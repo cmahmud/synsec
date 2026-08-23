@@ -45,6 +45,40 @@ validateGitHubAppDeployment({
 
 The declaration is an integration contract. It does **not** implement those guarantees, certify an arbitrary database, or convert the built-in filesystem stores into a shared backend. Production operators must map each capability to a real database transaction, unique constraint, compare-and-set statement, or equivalent strongly consistent primitive in the selected backend.
 
+## Versioned backend evidence contract
+
+Capability booleans are useful for deployment preflight, but they are intentionally not enough to identify or review a concrete backend implementation. `@synsec/github/shared-state-contract` therefore exports a separate versioned, secret-free backend contract:
+
+```ts
+{
+  contractVersion: 1,
+  backendId: "postgres-v1",
+  implementationVersion: "0.2.0",
+  capabilities: {
+    atomicReplayClaim: true,
+    atomicQueueInsertion: true,
+    atomicQueueClaimWithFence: true,
+    compareAndSetLeaseRenewal: true,
+    fencedQueueTransitions: true,
+    transactionalInstallationState: true,
+    sharedAuthorizationState: true
+  },
+  evidence: [
+    {
+      capability: "atomicReplayClaim",
+      mechanism: "database-constraint",
+      reference: "conformance-atomicReplayClaim"
+    }
+  ]
+}
+```
+
+A valid contract must include exactly one bounded evidence record for every required capability. Evidence mechanisms are restricted to known coordination primitives such as database constraints, serializable transactions, compare-and-set operations, fencing tokens, and shared durable stores. References are bounded non-secret identifiers; arbitrary URLs, connection strings, credentials, control characters, and unknown fields are rejected.
+
+Use `assessGitHubAppSharedStateBackendContract()` to obtain deterministic readiness diagnostics, or `assertGitHubAppSharedStateBackendContract()` at an adapter integration boundary. `GITHUB_APP_SHARED_STATE_CONTRACT_VERSION` is currently `1`.
+
+This contract is still **not certification**. It binds a concrete adapter/version to reviewable implementation evidence so that future database adapters and their concurrency tests have a stable interface. SynSec does not infer that a backend is safe merely because it can produce this document.
+
 ## Actionable readiness diagnostics
 
 Provisioning and deployment tooling can evaluate a capability declaration directly without parsing human-readable error messages:
@@ -95,6 +129,6 @@ A single replica retains the current filesystem behavior. This keeps local and s
 
 A real shared backend should expose operations matching SynSec's existing security invariants rather than generic key/value reads and writes. In particular, queue completion and publication ownership must remain fence-bound, webhook replay claims must remain unique and retry-safe, and installation authorization must be checked from shared durable state at execution time.
 
-Before a shared backend is accepted for horizontal production use, its integration test suite should exercise concurrent duplicate replay claims, duplicate queue inserts, competing claimers, stale-fence renew/release/complete attempts, installation authorization changes racing worker execution, and restart/reconnect behavior. Passing the declaration preflight alone is not certification.
+Before a shared backend is accepted for horizontal production use, its integration test suite should exercise concurrent duplicate replay claims, duplicate queue inserts, competing claimers, stale-fence renew/release/complete attempts, installation authorization changes racing worker execution, and restart/reconnect behavior. Passing the declaration preflight or versioned evidence contract alone is not certification.
 
 Do not weaken those invariants to fit a storage product. If a backend cannot provide the required atomicity, keep SynSec at one application replica.
