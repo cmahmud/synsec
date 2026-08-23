@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { readLifecycleStore } from "@synsec/lifecycle";
 import {
@@ -96,8 +96,8 @@ async function main(): Promise<void> {
   }
 
   const path = resolve(input);
-  const info = await stat(path);
-  if (!info.isFile()) throw new Error("Lifecycle review input must be a regular file.");
+  const info = await lstat(path);
+  if (!info.isFile()) throw new Error("Lifecycle review input must be a non-symlink regular file.");
   if (info.size > MAX_INPUT_BYTES) throw new Error(`Lifecycle review input exceeds ${MAX_INPUT_BYTES} bytes.`);
 
   const store = await readLifecycleStore(path);
