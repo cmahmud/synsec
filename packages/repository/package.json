@@ -9,6 +9,7 @@
     "./module-graph": "./dist/module-graph.js",
     "./dependency-usage": "./dist/dependency-usage.js",
     "./call-graph": "./dist/call-graph.js",
+    "./import-call-links": "./dist/import-call-links.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-sink-context": "./dist/route-sink-context.js",
