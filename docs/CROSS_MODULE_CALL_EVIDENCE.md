@@ -23,6 +23,21 @@ The initial supported forms are deliberately narrow:
 
 Default imports, star imports, re-export chains, computed member access, nested member chains, dynamic import bindings, ambiguous local aliases, ambiguous target functions, and unresolved/external modules are omitted rather than guessed. Local declarations, assignments, and function parameters that can shadow a supported import binding also cause that call link to be omitted. The shadowing check intentionally prefers false negatives over manufacturing a repository-local call edge.
 
+## Imported Node route handlers
+
+The composed route-flow analyzer can also resolve a simple named Node HTTP route handler when the handler is imported from another repository-local file. This applies only after ordinary same-file route-handler resolution has failed.
+
+The imported route-handler path is narrower than general JavaScript module semantics. It currently accepts only:
+
+- ES named imports, including a single `as` alias; and
+- destructured CommonJS `require()` bindings, including a simple property alias.
+
+The module graph must already resolve the import to exactly one repository file, the imported name must map to exactly one lexical function node in that file, and SynSec must not observe a declaration, assignment, or function parameter that could shadow the imported local name before the route registration. Multiple viable targets remain unresolved.
+
+Default imports, namespace-member route handlers, re-exports, dynamic expressions, external packages, unresolved module targets, and ambiguous target functions are intentionally not inferred. Resolved imported handlers are labeled `imported-named-function`; that label denotes static repository evidence only.
+
+This lets a pattern such as an Express router importing `listUsers` from a handlers module participate in route-to-sink analysis without pretending that arbitrary framework wiring or dependency injection has been resolved.
+
 ## Composed analysis
 
 `@synsec/repository/route-flow-analysis` is the composition API for callers that need route-flow context. Given an existing repository index and module graph, it builds the bounded lexical call graph, explicit local import-call links, route entrypoints, and route-to-sink contexts using one consistent call-depth/node budget.
@@ -63,7 +78,7 @@ All of this remains static structural evidence. The interpretation strings are i
 - `repository-structural-route-flow-evidence-only`; and
 - `structural-route-call-sink-evidence-only`.
 
-A linked import/call does **not** prove that:
+A linked import/call or imported route handler does **not** prove that:
 
 - the route is deployed or internet-accessible;
 - a request can reach the call at runtime;
