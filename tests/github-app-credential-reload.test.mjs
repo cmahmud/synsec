@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assessSynSecGitHubAppCredentialReload,
-  credentialReloadAcknowledgement,
+  buildSynSecGitHubAppCredentialRotationWithReloadAssessment,
 } from "@synsec/github/credential-reload";
 
 test("credential reload completes only when every expected replica is ready on the target generation", () => {
@@ -21,7 +21,6 @@ test("credential reload completes only when every expected replica is ready on t
   assert.equal(assessment.staleReplicaCount, 0);
   assert.equal(assessment.unreadyReplicaCount, 0);
   assert.equal(assessment.missingReplicaCount, 0);
-  assert.equal(credentialReloadAcknowledgement(assessment), true);
 });
 
 test("credential reload fails closed for missing, stale, or unready replicas", () => {
@@ -40,7 +39,63 @@ test("credential reload fails closed for missing, stale, or unready replicas", (
   assert.equal(missing.staleReplicaCount, 1);
   assert.equal(missing.unreadyReplicaCount, 1);
   assert.equal(missing.missingReplicaCount, 1);
-  assert.equal(credentialReloadAcknowledgement(missing), false);
+});
+
+test("rotation composition derives runtime reload acknowledgement from raw replica observations", () => {
+  const incomplete = buildSynSecGitHubAppCredentialRotationWithReloadAssessment({
+    rotation: {
+      kind: "webhook-secret",
+      replacementActivated: true,
+      externalConfigurationUpdated: true,
+      verificationSucceeded: true,
+    },
+    reload: {
+      kind: "webhook-secret",
+      targetGeneration: "webhook-v2",
+      expectedReplicaCount: 2,
+      replicas: [
+        { replicaId: "synsec-0", loadedGeneration: "webhook-v2", ready: true },
+        { replicaId: "synsec-1", loadedGeneration: "webhook-v1", ready: true },
+      ],
+    },
+  });
+
+  assert.equal(incomplete.reload.complete, false);
+  assert.equal(incomplete.rotation.readyToRetirePrevious, false);
+  assert.match(incomplete.rotation.requiredActions.join("\n"), /Reload or roll the SynSec runtime/);
+
+  const complete = buildSynSecGitHubAppCredentialRotationWithReloadAssessment({
+    rotation: {
+      kind: "webhook-secret",
+      replacementActivated: true,
+      externalConfigurationUpdated: true,
+      verificationSucceeded: true,
+    },
+    reload: {
+      kind: "webhook-secret",
+      targetGeneration: "webhook-v2",
+      expectedReplicaCount: 2,
+      replicas: [
+        { replicaId: "synsec-0", loadedGeneration: "webhook-v2", ready: true },
+        { replicaId: "synsec-1", loadedGeneration: "webhook-v2", ready: true },
+      ],
+    },
+  });
+
+  assert.equal(complete.reload.complete, true);
+  assert.equal(complete.rotation.readyToRetirePrevious, true);
+});
+
+test("rotation composition rejects mismatched credential kinds", () => {
+  assert.throws(() => buildSynSecGitHubAppCredentialRotationWithReloadAssessment({
+    rotation: { kind: "webhook-secret" },
+    reload: {
+      kind: "app-private-key",
+      targetGeneration: "key-v2",
+      expectedReplicaCount: 1,
+      replicas: [{ replicaId: "synsec-0", loadedGeneration: "key-v2", ready: true }],
+    },
+  }), /kinds must match/);
 });
 
 test("credential reload rejects duplicate replica observations", () => {
