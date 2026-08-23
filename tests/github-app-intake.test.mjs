@@ -110,3 +110,31 @@ test("app intake fails closed if replay storage returns a different delivery ide
     replayStore,
   }), /mismatched delivery id/);
 });
+
+test("app intake redacts credentials from replay backend failures", async () => {
+  const body = pullRequestBody();
+  const githubToken = `ghp_${"b".repeat(36)}`;
+  const replayStore = {
+    async claim() {
+      throw new Error(`replay database failed token=${githubToken} url=postgres://sync:db-password@db.internal/synsec`);
+    },
+  };
+
+  let failure;
+  try {
+    await intakeGitHubAppWebhook({
+      body,
+      signatureHeader: signature(body),
+      webhookSecret,
+      eventName: "pull_request",
+      deliveryId: "delivery-redaction",
+      replayStore,
+    });
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /replay database failed/);
+  assert.equal(failure.message.includes(githubToken), false);
+  assert.equal(failure.message.includes("db-password"), false);
+});
