@@ -1,3 +1,4 @@
+import { sanitizeOperationalText } from "@synsec/scanner-sdk";
 import {
   createGitHubAppJwt,
   createGitHubInstallationToken,
@@ -105,6 +106,11 @@ function validateTokenPermissions(
   }
 }
 
+function safeExchangeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return sanitizeOperationalText(message, 1000) || "GitHub installation-token exchange failed.";
+}
+
 /**
  * Build a memory-only installation-token provider for hosted App workers.
  *
@@ -112,7 +118,9 @@ function validateTokenPermissions(
  * fixed GitHub installation-token endpoint. Installation tokens are returned to the caller only;
  * this provider deliberately has no token cache, disk persistence, scanner integration, or logging.
  * Optional purpose-specific permission requirements are checked against GitHub's token metadata
- * before the credential is returned to acquisition/publication code.
+ * before the credential is returned to acquisition/publication code. Transport/exchange failures
+ * are sanitized before propagation so authorization headers, tokens, or credential-bearing proxy
+ * URLs cannot leak into caller logging.
  */
 export function createGitHubAppInstallationTokenProvider(
   options: GitHubAppInstallationTokenProviderOptions,
@@ -129,11 +137,16 @@ export function createGitHubAppInstallationTokenProvider(
       throw new Error("GitHub App token-provider clock must be a positive timestamp.");
     }
     const appJwt = createGitHubAppJwt(options.appId, privateKey, currentTime);
-    const token = await exchange(installationId, appJwt, {
-      apiVersion: options.apiVersion,
-      userAgent: options.userAgent,
-      fetch: options.fetch,
-    });
+    let token: GitHubInstallationToken;
+    try {
+      token = await exchange(installationId, appJwt, {
+        apiVersion: options.apiVersion,
+        userAgent: options.userAgent,
+        fetch: options.fetch,
+      });
+    } catch (error) {
+      throw new Error(safeExchangeError(error));
+    }
     validateTokenLifetime(token, currentTime, minimum);
     validateTokenPermissions(token, purpose ? requirements[purpose] : undefined, purpose);
     return token.token;
