@@ -4,6 +4,26 @@ SynSec treats webhook-secret and GitHub App private-key rotation as explicit ope
 
 `@synsec/github/credential-rotation` provides `buildSynSecGitHubAppCredentialRotationPlan()` as a secret-free state evaluator. It accepts only boolean operator acknowledgements and returns completed steps, remaining actions, and `readyToRetirePrevious`. It does not accept credential values, contact GitHub, reload services, change webhook settings, revoke keys, or mint installation tokens.
 
+## CLI workflow
+
+Operators can evaluate the same state machine with `synsec-github-app rotation <rotation-state.json> [--json]`. The input file accepts only `kind` plus the boolean acknowledgement fields `replacementActivated`, `runtimeReloaded`, `externalConfigurationUpdated`, and `verificationSucceeded`. Unknown fields are rejected so credential material cannot be silently accepted by the diagnostic path.
+
+An incomplete rollout exits `2` and explicitly keeps the previous credential active. A complete rollout exits `0` and reports `readyToRetirePrevious: true`.
+
+Example webhook rotation state:
+
+```json
+{
+  "kind": "webhook-secret",
+  "replacementActivated": true,
+  "runtimeReloaded": true,
+  "externalConfigurationUpdated": true,
+  "verificationSucceeded": true
+}
+```
+
+The booleans are acknowledgements, not probes. They must be derived from deployment and GitHub observations rather than inferred merely because a configuration file was written.
+
 ## Webhook secret
 
 Use a coordinated overlap:
@@ -14,7 +34,7 @@ Use a coordinated overlap:
 4. Confirm an authenticated webhook delivery after that GitHub-side update.
 5. Only when the planner reports `readyToRetirePrevious: true`, remove the previous secret and reload again.
 
-Example:
+Programmatic example:
 
 ```ts
 import { buildSynSecGitHubAppCredentialRotationPlan } from "@synsec/github/credential-rotation";
@@ -27,8 +47,6 @@ const plan = buildSynSecGitHubAppCredentialRotationPlan({
   verificationSucceeded: true,
 });
 ```
-
-The acknowledgements must come from deployment/GitHub observations. Do not infer them merely because a config file was written.
 
 ## GitHub App private key
 
@@ -43,4 +61,4 @@ The planner intentionally does not model installation tokens as rotatable creden
 
 ## Security boundary
 
-This API is rollout guidance, not runtime authorization. GitHub-issued installation-token permissions and SynSec's durable repository authorization state remain authoritative. Rotation state must never broaden repository scope, grant permissions, trigger remediation, or authorize network assessment.
+This API and CLI are rollout guidance, not runtime authorization. GitHub-issued installation-token permissions and SynSec's durable repository authorization state remain authoritative. Rotation state must never broaden repository scope, grant permissions, trigger remediation, or authorize network assessment.
