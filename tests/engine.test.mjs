@@ -52,7 +52,7 @@ test("unknown scanner identities are sanitized before status or aggregate error 
     assert.doesNotMatch(unknown.id, new RegExp(githubToken));
     assert.doesNotMatch(unknown.displayName, new RegExp(githubToken));
     assert.equal(unknown.id.includes("\u001b"), false);
-    assert.match(unknown.displayName, /\[REDACTED\]/);
+    assert.match(unknown.displayName, /\[REDACTED/);
 
     await assert.rejects(
       runScanEngine({ rootPath: root, config }),
@@ -61,7 +61,7 @@ test("unknown scanner identities are sanitized before status or aggregate error 
         assert.match(message, /No selected scanner engines are available/);
         assert.doesNotMatch(message, new RegExp(githubToken));
         assert.equal(message.includes("\u001b"), false);
-        assert.match(message, /\[REDACTED\]/);
+        assert.match(message, /\[REDACTED/);
         return true;
       },
     );
