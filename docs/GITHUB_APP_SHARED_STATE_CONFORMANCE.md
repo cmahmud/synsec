@@ -2,7 +2,7 @@
 
 SynSec's shared-state capability declaration and versioned backend contract describe what a horizontally scaled backend must guarantee. They do not prove that a database adapter actually preserves those guarantees under concurrency.
 
-`@synsec/github/shared-state-conformance-runner` provides the executable boundary for that proof. Adapter authors supply one callback for every canonical adversarial scenario and a `reset()` hook that isolates scenario state. SynSec executes the matrix in stable order, bounds each scenario by a timeout, and produces a schema-versioned result containing only scenario ids, status, duration, and capability coverage.
+`@synsec/github/shared-state-conformance-runner` provides the executable boundary for that proof. Adapter authors supply one callback for every canonical adversarial scenario, a `reset()` hook that isolates scenario state, and the same bounded `backendId` plus `implementationVersion` used by the versioned backend contract. SynSec executes the matrix in stable order, bounds each scenario by a timeout, and produces a schema-versioned result containing only adapter identity, scenario ids, status, duration, and capability coverage.
 
 ## Adapter shape
 
@@ -12,6 +12,8 @@ import {
 } from "@synsec/github/shared-state-conformance-runner";
 
 const report = await runGitHubAppSharedStateConformance({
+  backendId: "postgres-v1",
+  implementationVersion: "0.2.0-build.42",
   async reset() {
     await testDatabase.resetFixtures();
   },
@@ -43,7 +45,7 @@ const report = await runGitHubAppSharedStateConformance({
 if (!report.complete) process.exitCode = 1;
 ```
 
-The runner requires exactly the canonical scenario ids. Missing callbacks and invented extra ids are rejected before execution, preventing a test harness from manufacturing coverage by renaming or omitting required cases.
+The runner requires exactly the canonical scenario ids. Missing callbacks and invented extra ids are rejected before execution, preventing a test harness from manufacturing coverage by renaming or omitting required cases. Adapter identity fields use the same bounded, non-secret identifier shape as the backend evidence contract, so connection strings and arbitrary free-form metadata cannot enter the portable report.
 
 ## Fail-closed execution
 
@@ -57,8 +59,8 @@ The report deliberately excludes thrown error text. Database exceptions frequent
 
 A complete report means every canonical callback completed successfully within its bound. It does **not** certify a storage product by itself. Production evidence should bind all of the following to the same tested revision:
 
-- exact adapter implementation version;
-- exact backend/database version and relevant isolation configuration;
+- exact `backendId` and `implementationVersion` in both the conformance report and versioned backend contract;
+- exact backend/database version and relevant isolation configuration in CI provenance;
 - the versioned `shared-state-contract` evidence document;
 - the schema-versioned conformance report;
 - CI provenance showing the scenarios ran against a real database, preferably with independent connections/processes where the invariant requires cross-replica behavior.
