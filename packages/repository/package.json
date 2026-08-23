@@ -7,6 +7,7 @@
     ".": "./dist/index.js",
     "./analysis": "./dist/analysis.js",
     "./module-graph": "./dist/module-graph.js",
+    "./dependency-usage": "./dist/dependency-usage.js",
     "./call-graph": "./dist/call-graph.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./route-auth-context": "./dist/route-auth-context.js",
