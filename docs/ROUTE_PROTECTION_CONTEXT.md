@@ -15,6 +15,14 @@ For an already-resolved route entrypoint, SynSec can consider:
 
 The output omits source text. Evidence records contain only repository path, line, signal kind, structural source, and—when applicable—the owning function name and call depth. Finding-level correlation is even smaller: it reports only the route identity, handler, aggregate status, observed signal kinds, and call scope.
 
+## Scan-engine enrichment
+
+The normal scan engine consumes the composed route-protection contexts alongside route-to-sink flows. For a non-secret finding, `metadata.routeProtection` is attached only when the finding's normalized repository path and exact start line already match sink evidence in a resolved structural route flow.
+
+The report-level metadata is deliberately minimized. It does not include source lines, auth-signal paths, auth function names, scanner diagnostics, or scanner evidence. Secret findings remain outside repository-context, route-flow, and route-protection enrichment entirely.
+
+Route-protection metadata is contextual review evidence only. The engine does not use it to change severity, confidence, baseline state, failure thresholds, lifecycle state, remediation approval, or publication eligibility. In particular, `authorization-signal-observed` must never suppress a scanner finding, and `no-auth-signal-observed` must never be promoted into an exploitability claim.
+
 ## Fail-closed behavior
 
 SynSec does not manufacture route protection when resolution is ambiguous. Unresolved route handlers, ambiguous function ownership, unsupported dynamic calls, unlinked imports, and auth-looking signals outside the bounded route/call neighborhood are omitted.
