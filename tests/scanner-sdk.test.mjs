@@ -2,10 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildScannerProcessEnv, runProcess } from "../packages/scanner-sdk/dist/index.js";
 
-test("buildScannerProcessEnv preserves execution variables but drops credentials and proxy URLs", () => {
+test("buildScannerProcessEnv preserves execution variables but drops credentials, proxy URLs, and config roots", () => {
   const env = buildScannerProcessEnv({
     PATH: "/usr/bin",
     HOME: "/tmp/home",
+    USERPROFILE: "C:\\Users\\scanner",
+    APPDATA: "C:\\Users\\scanner\\AppData\\Roaming",
+    LOCALAPPDATA: "C:\\Users\\scanner\\AppData\\Local",
+    XDG_CONFIG_HOME: "/tmp/config",
+    XDG_CACHE_HOME: "/tmp/cache",
     LANG: "en_US.UTF-8",
     LC_CTYPE: "en_US.UTF-8",
     GITHUB_TOKEN: "secret-github-token",
@@ -15,9 +20,14 @@ test("buildScannerProcessEnv preserves execution variables but drops credentials
   });
 
   assert.equal(env.PATH, "/usr/bin");
-  assert.equal(env.HOME, "/tmp/home");
   assert.equal(env.LANG, "en_US.UTF-8");
   assert.equal(env.LC_CTYPE, "en_US.UTF-8");
+  assert.equal(env.XDG_CACHE_HOME, "/tmp/cache");
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.USERPROFILE, undefined);
+  assert.equal(env.APPDATA, undefined);
+  assert.equal(env.LOCALAPPDATA, undefined);
+  assert.equal(env.XDG_CONFIG_HOME, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
   assert.equal(env.NPM_TOKEN, undefined);
   assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
@@ -37,6 +47,25 @@ test("runProcess does not implicitly pass parent credentials to scanners", async
   } finally {
     if (previous === undefined) delete process.env.SYNSEC_TEST_SECRET;
     else process.env.SYNSEC_TEST_SECRET = previous;
+  }
+});
+
+test("runProcess does not implicitly expose parent user configuration roots", async () => {
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.XDG_CONFIG_HOME;
+  process.env.HOME = "/tmp/synsec-sensitive-home";
+  process.env.XDG_CONFIG_HOME = "/tmp/synsec-sensitive-config";
+  try {
+    const result = await runProcess(process.execPath, [
+      "-e",
+      "process.stdout.write(JSON.stringify({home:process.env.HOME,config:process.env.XDG_CONFIG_HOME}));",
+    ]);
+    assert.deepEqual(JSON.parse(result.stdout), {});
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousConfig;
   }
 });
 
