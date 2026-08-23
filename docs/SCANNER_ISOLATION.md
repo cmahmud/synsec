@@ -1,6 +1,16 @@
 # Scanner isolation contract
 
-SynSec treats external scanner binaries as untrusted subprocesses. The scanner SDK already minimizes inherited environment variables, bounds stdout/stderr retention, supports timeouts and aborts, and escalates termination when a scanner does not exit. Those controls reduce credential exposure and runaway process risk, but they do not provide a production sandbox by themselves.
+SynSec treats external scanner binaries as untrusted subprocesses. The scanner SDK minimizes inherited environment variables, bounds stdout/stderr retention, supports timeouts and aborts, and escalates termination when a scanner does not exit. Those controls reduce credential exposure and runaway process risk, but they do not provide a production sandbox by themselves.
+
+## Scanner process environment
+
+The default scanner subprocess environment is intentionally smaller than the hosting process environment. SynSec preserves only execution/locale, temporary-directory, certificate, terminal, and cache variables needed by normal command-line tools. It does **not** implicitly pass CI/cloud/registry credentials, proxy URLs, or user configuration roots.
+
+In particular, the default environment omits `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, and `XDG_CONFIG_HOME`. This matters because scanner-specific files under those roots can contain credentials or authenticated service configuration even when variables such as `GITHUB_TOKEN`, `NPM_TOKEN`, or cloud keys have already been removed. `XDG_CACHE_HOME` may still be inherited because it is a cache location rather than a configuration/credential root.
+
+Adapters can supply an explicit `env` to `runProcess()` when a scanner genuinely needs additional variables. Doing so is an explicit trust decision by the adapter and bypasses the SDK's default environment allowlist for that invocation. Production adapters should add only the exact non-secret variables required and must not pass GitHub App credentials or other hosting secrets to scanner processes.
+
+This environment boundary is defense in depth, not filesystem isolation: a process running as the same host user could still discover user files through other operating-system mechanisms. Production hosting therefore still requires the external sandbox/filesystem controls described below.
 
 ## Hosted deployment declaration
 
