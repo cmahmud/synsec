@@ -29,10 +29,14 @@ const scannerIsolationProfile = {
   memoryLimit: true,
   networkPolicy: "none",
   repositoryReadOnly: true,
+  rootFilesystemReadOnly: true,
   scratchSeparated: true,
   credentialsExcluded: true,
   durableStateExcluded: true,
   privileged: false,
+  allowPrivilegeEscalation: false,
+  runAsNonRoot: true,
+  capabilitiesDropped: true,
   hostNetwork: false,
   hostPid: false,
   hostIpc: false,
@@ -62,16 +66,33 @@ test("scanner production readiness forces strict deployment isolation even when 
 test("scanner production readiness fails when the detailed profile exposes a container escape surface", () => {
   const result = assessGitHubAppScannerProductionReadiness({
     deployment,
-    scannerIsolationProfile: { ...scannerIsolationProfile, privileged: true, hostSocketMounts: true },
+    scannerIsolationProfile: {
+      ...scannerIsolationProfile,
+      privileged: true,
+      allowPrivilegeEscalation: true,
+      capabilitiesDropped: false,
+      hostSocketMounts: true,
+    },
   });
   assert.equal(result.ready, false);
-  assert.deepEqual(result.scannerIsolation.missing, ["not-privileged", "no-host-socket-mounts"]);
+  assert.deepEqual(result.scannerIsolation.missing, [
+    "not-privileged",
+    "no-privilege-escalation",
+    "capabilities-dropped",
+    "no-host-socket-mounts",
+  ]);
   assert.throws(
     () => assertGitHubAppScannerProductionReady({
       deployment,
-      scannerIsolationProfile: { ...scannerIsolationProfile, privileged: true, hostSocketMounts: true },
+      scannerIsolationProfile: {
+        ...scannerIsolationProfile,
+        privileged: true,
+        allowPrivilegeEscalation: true,
+        capabilitiesDropped: false,
+        hostSocketMounts: true,
+      },
     }),
-    /scanner-isolation:not-privileged, scanner-isolation:no-host-socket-mounts/,
+    /scanner-isolation:not-privileged, scanner-isolation:no-privilege-escalation, scanner-isolation:capabilities-dropped, scanner-isolation:no-host-socket-mounts/,
   );
 });
 
