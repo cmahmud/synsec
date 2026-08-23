@@ -58,6 +58,26 @@ if (!assessment.complete) {
 
 `assessment.missing` is emitted in stable contract order and contains only capability identifiers. When deployment validation emits `shared-state-capabilities-incomplete`, the corresponding issue also carries the same identifiers in `missingCapabilities`. This output is safe for startup diagnostics because it contains no database connection strings, credentials, filesystem contents, or backend-provided free-form text.
 
+Operators can run the same check offline from the setup CLI. The input file contains capability booleans only; connection strings, credentials, and unknown fields are rejected.
+
+```json
+{
+  "atomicReplayClaim": true,
+  "atomicQueueInsertion": true,
+  "atomicQueueClaimWithFence": true,
+  "compareAndSetLeaseRenewal": true,
+  "fencedQueueTransitions": true,
+  "transactionalInstallationState": true,
+  "sharedAuthorizationState": true
+}
+```
+
+```sh
+synsec-github-app shared-state capabilities.json --json
+```
+
+The command exits `0` only when every required guarantee is declared `true`. Missing or false guarantees exit `2` and are returned by name. Invalid schema or unsupported fields exit `1` without echoing supplied values.
+
 Treat these diagnostics as requirements to satisfy, not as proof that a backend really implements the declared guarantees. A production adapter still needs tests against its actual database concurrency semantics.
 
 ## Fail-closed behavior
