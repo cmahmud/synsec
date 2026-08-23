@@ -17,9 +17,11 @@ Scanner errors and diagnostic strings are for operators, not an evidence channel
 - bounds each diagnostic through the shared `sanitizeOperationalText()` policy;
 - retains at most 1,000 diagnostic entries from a successful scanner result and adds an aggregate omission notice when that limit is exceeded;
 - sanitizes a thrown scanner error before storing it in `ScanEngineOutcome.failures` or including it in the aggregate "all scanners failed" exception;
-- re-sanitizes unavailable-scanner reasons before composing the aggregate unavailable-scanner error.
+- converts a thrown scanner availability probe into a sanitized unavailable status instead of allowing the raw exception to escape;
+- sanitizes and bounds unknown configured scanner identifiers before they enter status or aggregate error surfaces; and
+- re-sanitizes unavailable-scanner identities and reasons before composing the aggregate unavailable-scanner error.
 
-This is defense in depth. Built-in adapters already sanitize subprocess stderr and availability/version output, but the engine must not depend on every adapter preserving that invariant forever.
+This is defense in depth. Built-in adapters already sanitize subprocess stderr and availability/version output, but the engine must not depend on every adapter preserving that invariant forever. Configuration values can also reach operational surfaces, so an invalid scanner id is treated as untrusted text rather than a safe log label.
 
 ## What this does not do
 
