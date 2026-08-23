@@ -33,6 +33,23 @@ export interface GitHubAppSharedStateCapabilities {
   sharedAuthorizationState: boolean;
 }
 
+export type GitHubAppSharedStateCapability = keyof GitHubAppSharedStateCapabilities;
+
+export interface GitHubAppSharedStateCapabilityAssessment {
+  complete: boolean;
+  missing: GitHubAppSharedStateCapability[];
+}
+
+export const REQUIRED_GITHUB_APP_SHARED_STATE_CAPABILITIES = [
+  "atomicReplayClaim",
+  "atomicQueueInsertion",
+  "atomicQueueClaimWithFence",
+  "compareAndSetLeaseRenewal",
+  "fencedQueueTransitions",
+  "transactionalInstallationState",
+  "sharedAuthorizationState",
+] as const satisfies readonly GitHubAppSharedStateCapability[];
+
 export interface GitHubAppStateBackendConfig {
   kind: GitHubAppStateBackendKind;
   capabilities?: GitHubAppSharedStateCapabilities;
@@ -76,6 +93,8 @@ export interface GitHubAppDeploymentIssue {
     | "shared-state-required"
     | "shared-state-capabilities-incomplete";
   message: string;
+  /** Present only for shared-state capability failures; contains names, never backend secrets. */
+  missingCapabilities?: GitHubAppSharedStateCapability[];
 }
 
 export interface GitHubAppDeploymentReadiness {
@@ -182,16 +201,19 @@ function validateScannerIsolation(config: GitHubAppDeploymentConfig, issues: Git
   }
 }
 
-function hasCompleteSharedStateCapabilities(capabilities: GitHubAppSharedStateCapabilities | undefined): boolean {
-  return Boolean(
-    capabilities?.atomicReplayClaim &&
-    capabilities.atomicQueueInsertion &&
-    capabilities.atomicQueueClaimWithFence &&
-    capabilities.compareAndSetLeaseRenewal &&
-    capabilities.fencedQueueTransitions &&
-    capabilities.transactionalInstallationState &&
-    capabilities.sharedAuthorizationState,
+/**
+ * Return the exact missing guarantees from a declared shared-state capability set.
+ *
+ * This is intentionally deterministic and secret-free so deployment tooling can render actionable
+ * readiness diagnostics without parsing human messages or receiving backend credentials.
+ */
+export function assessGitHubAppSharedStateCapabilities(
+  capabilities: GitHubAppSharedStateCapabilities | undefined,
+): GitHubAppSharedStateCapabilityAssessment {
+  const missing = REQUIRED_GITHUB_APP_SHARED_STATE_CAPABILITIES.filter(
+    (capability) => capabilities?.[capability] !== true,
   );
+  return { complete: missing.length === 0, missing: [...missing] };
 }
 
 function validateStateBackend(config: GitHubAppDeploymentConfig, issues: GitHubAppDeploymentIssue[]): void {
@@ -216,11 +238,13 @@ function validateStateBackend(config: GitHubAppDeploymentConfig, issues: GitHubA
     return;
   }
 
-  if (!hasCompleteSharedStateCapabilities(config.stateBackend.capabilities)) {
+  const assessment = assessGitHubAppSharedStateCapabilities(config.stateBackend.capabilities);
+  if (!assessment.complete) {
     issues.push({
       level: "error",
       code: "shared-state-capabilities-incomplete",
-      message: "The shared state backend must provide atomic replay and queue insertion, fenced claims/transitions, compare-and-set lease renewal, and transactional shared authorization state.",
+      message: `The shared state backend is missing ${assessment.missing.length} required transactional coordination guarantee(s).`,
+      missingCapabilities: assessment.missing,
     });
   }
 }
