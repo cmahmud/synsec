@@ -1,6 +1,6 @@
 import type { FindingIdentifiers, Severity } from "@synsec/core";
 import { runProcess, sanitizeOperationalText } from "@synsec/scanner-sdk";
-import type { ScannerAvailability } from "@synsec/scanner-sdk";
+import type { ScannerAvailability, ScannerProcessRunner } from "@synsec/scanner-sdk";
 
 export type UnknownRecord = Record<string, unknown>;
 
@@ -88,9 +88,14 @@ export function safeJson(raw: string): unknown {
   return trimmed ? (JSON.parse(trimmed) as unknown) : undefined;
 }
 
-export async function commandAvailability(command: string, args: string[], displayName: string): Promise<ScannerAvailability> {
+export async function commandAvailability(
+  command: string,
+  args: string[],
+  displayName: string,
+  runner: ScannerProcessRunner = runProcess,
+): Promise<ScannerAvailability> {
   try {
-    const output = await runProcess(command, args, { timeoutMs: 10_000 });
+    const output = await runner(command, args, { timeoutMs: 10_000 });
     if (output.exitCode !== 0) {
       return {
         available: false,
