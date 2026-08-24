@@ -17,6 +17,18 @@ export interface GitHubInstallationStateStore {
   remove(installationId: number): Promise<boolean>;
 }
 
+/**
+ * Optional shared-backend extension that binds one installation synchronization operation to a
+ * single durable transaction. The callback receives a transaction-scoped store; callers must not
+ * retain that scoped object after the callback resolves.
+ */
+export interface GitHubTransactionalInstallationStateStore extends GitHubInstallationStateStore {
+  withInstallationTransaction<T>(
+    installationId: number,
+    operation: (store: GitHubInstallationStateStore) => Promise<T>,
+  ): Promise<T>;
+}
+
 export interface GitHubInstallationStateEvent {
   event: "installation" | "installation_repositories";
   action: string;
@@ -61,6 +73,11 @@ async function withInstallationSyncLock<T>(
       if (locks.size === 0) installationSyncLocks.delete(store);
     }
   }
+}
+
+function transactionalStore(value: GitHubInstallationStateStore): value is GitHubTransactionalInstallationStateStore {
+  return "withInstallationTransaction" in value
+    && typeof (value as Partial<GitHubTransactionalInstallationStateStore>).withInstallationTransaction === "function";
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
@@ -272,9 +289,10 @@ async function synchronizeGitHubInstallationStateUnlocked(
 
 /**
  * Apply one already verified GitHub installation-management event to durable authorization state.
- * Calls targeting the same installation are serialized within one runtime so read-modify-write
- * repository deltas cannot overwrite one another. Different installations remain concurrent.
- * This is an in-process guarantee only; a shared multi-host backend still requires transactions.
+ *
+ * Transaction-aware shared stores execute the entire read-modify-write sequence under one backend
+ * transaction for the installation. Other stores retain the existing per-runtime lock, which is
+ * intentionally only a single-process guarantee.
  */
 export async function synchronizeGitHubInstallationState(
   event: GitHubInstallationStateEvent,
@@ -282,6 +300,12 @@ export async function synchronizeGitHubInstallationState(
   now = Date.now(),
 ): Promise<GitHubInstallationSyncResult> {
   if (!Number.isFinite(now) || now <= 0) throw new Error("GitHub installation synchronization clock must be a positive timestamp.");
+  if (transactionalStore(store)) {
+    return store.withInstallationTransaction(
+      event.installationId,
+      (transactionStore) => synchronizeGitHubInstallationStateUnlocked(event, transactionStore, now),
+    );
+  }
   return withInstallationSyncLock(
     store,
     event.installationId,
