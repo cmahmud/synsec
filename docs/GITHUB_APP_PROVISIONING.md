@@ -37,7 +37,22 @@ GitHub's App Manifest flow requires the manifest JSON to be submitted as the `ma
 
 Use `validateSynSecGitHubAppManifestCallback()` at that boundary. It requires both `code` and `state`, compares the state in constant time when lengths match, and returns the bounded one-time code only after validation. The result is labeled `validated-callback-not-conversion-success` because callback validation does not mean the manifest conversion has completed.
 
-The manifest conversion endpoint returns the GitHub App id and newly generated credentials. That response is credential-bearing. Exchange and storage therefore belong to hosting code connected directly to the deployment's secret manager/service manager. SynSec's provisioning helpers intentionally do not persist, log, place in scanner environments, or include these credentials in readiness/status artifacts.
+GitHub requires the temporary manifest code to be exchanged through `POST /app-manifests/{code}/conversions` within the manifest-flow window. The conversion response is credential-bearing and may include a private key, webhook secret, client secret, and additional registration metadata.
+
+## Secret-manager handoff
+
+`provisionSynSecGitHubAppManifestConversion()` implements the next boundary without embedding a GitHub HTTP client or secret-store vendor into the core package. Hosting code supplies two callbacks:
+
+1. `exchange(code)` performs the fixed-host GitHub manifest conversion request and returns the decoded response.
+2. `activate(credentials)` writes the validated App id/private key/webhook secret into the deployment's secret-manager or service-manager boundary and returns a non-secret generation identifier.
+
+SynSec validates the App id, PEM shape/size, and webhook-secret bounds before activation. It forwards only the three fields required by the existing runtime. Unrelated conversion metadata such as a generated client secret is not forwarded by this interface.
+
+Transport and activation failures are replaced with bounded generic errors. Raw backend errors are treated as untrusted because they can contain URLs, provider metadata, credential material, or customer-controlled strings. Hosting code may perform protected diagnostic logging at its own boundary, but normal SynSec status/CLI/HTTP surfaces must not echo the original error.
+
+The successful result contains only the App id and caller-supplied generation identifier and is labeled `secret-manager-handoff-complete-not-runtime-readiness`. It does not contain the private key or webhook secret, and it does not prove that every runtime replica has reloaded the generation. After activation, use the existing credential-reload orchestration/readiness flow to load and verify the new generation before retiring prior credentials or declaring rollout complete.
+
+The conversion helper deliberately does not persist credentials, log them, place them in scanner environments, or include them in readiness/status artifacts.
 
 ## URLs and transport
 
@@ -62,4 +77,4 @@ These commands remain diagnostics/guidance only. Permission changes in GitHub ca
 
 ## Security interpretation
 
-The manifest builder enforces input bounds, HTTPS endpoints, least-privilege defaults, and CSRF callback validation. It does not prove GitHub accepted the manifest, that an installation exists, that a user controls an installation, that a credential reached every replica, or that a scanner is authorized to access a repository. Those properties require their existing runtime, shared-state, credential-reload, and installation-authorization checks.
+The manifest builder enforces input bounds, HTTPS endpoints, least-privilege defaults, CSRF callback validation, bounded conversion-response validation, and secret-free activation status. It does not prove GitHub accepted the manifest, that an installation exists, that a user controls an installation, that a credential reached every replica, or that a scanner is authorized to access a repository. Those properties require their existing runtime, shared-state, credential-reload, and installation-authorization checks.
