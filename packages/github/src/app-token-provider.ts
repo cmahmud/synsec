@@ -18,7 +18,8 @@ export type GitHubPermissionRequirementsByPurpose = Record<
 
 export interface GitHubAppInstallationTokenProviderOptions extends GitHubAppTokenOptions {
   appId: string | number;
-  privateKey: string;
+  /** Static key or memory-only supplier resolved immediately before each JWT signature. */
+  privateKey: string | (() => string);
   minRemainingMs?: number;
   now?: () => number;
   exchange?: typeof createGitHubInstallationToken;
@@ -31,6 +32,15 @@ function boundedPrivateKey(value: string): string {
     throw new Error(`GitHub App private key exceeds ${MAX_PRIVATE_KEY_BYTES} bytes.`);
   }
   return value;
+}
+
+function privateKeySupplier(value: string | (() => string)): () => string {
+  if (typeof value === "string") {
+    const fixed = boundedPrivateKey(value);
+    return () => fixed;
+  }
+  if (typeof value !== "function") throw new Error("GitHub App private key or supplier is required.");
+  return () => boundedPrivateKey(value());
 }
 
 function minRemainingMs(value: number | undefined): number {
@@ -115,17 +125,20 @@ function safeExchangeError(error: unknown): string {
  * Build a memory-only installation-token provider for hosted App workers.
  *
  * A fresh short-lived App JWT is signed for every operation and immediately exchanged through the
- * fixed GitHub installation-token endpoint. Installation tokens are returned to the caller only;
- * this provider deliberately has no token cache, disk persistence, scanner integration, or logging.
- * Optional purpose-specific permission requirements are checked against GitHub's token metadata
- * before the credential is returned to acquisition/publication code. Transport/exchange failures
- * are sanitized before propagation so authorization headers, tokens, or credential-bearing proxy
- * URLs cannot leak into caller logging.
+ * fixed GitHub installation-token endpoint. The private key may be supplied dynamically; when a
+ * supplier is used it is resolved and bounded immediately before each signature so a validated
+ * in-memory credential controller can atomically rotate keys without rebuilding the worker. A
+ * supplier failure aborts the operation rather than falling back to an old or empty key.
+ * Installation tokens are returned to the caller only; this provider deliberately has no token
+ * cache, disk persistence, scanner integration, or logging. Optional purpose-specific permission
+ * requirements are checked against GitHub's token metadata before the credential is returned to
+ * acquisition/publication code. Transport/exchange failures are sanitized before propagation so
+ * authorization headers, tokens, or credential-bearing proxy URLs cannot leak into caller logging.
  */
 export function createGitHubAppInstallationTokenProvider(
   options: GitHubAppInstallationTokenProviderOptions,
 ): (installationId: number, purpose?: string) => Promise<string> {
-  const privateKey = boundedPrivateKey(options.privateKey);
+  const getPrivateKey = privateKeySupplier(options.privateKey);
   const minimum = minRemainingMs(options.minRemainingMs);
   const requirements = validateRequirements(options.requiredPermissionsByPurpose);
   const now = options.now ?? Date.now;
@@ -136,7 +149,7 @@ export function createGitHubAppInstallationTokenProvider(
     if (!Number.isFinite(currentTime) || currentTime <= 0) {
       throw new Error("GitHub App token-provider clock must be a positive timestamp.");
     }
-    const appJwt = createGitHubAppJwt(options.appId, privateKey, currentTime);
+    const appJwt = createGitHubAppJwt(options.appId, getPrivateKey(), currentTime);
     let token: GitHubInstallationToken;
     try {
       token = await exchange(installationId, appJwt, {
