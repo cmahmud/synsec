@@ -1,18 +1,20 @@
 import type { GitHubAppSharedStateBackendContract } from "./shared-state-contract.js";
 import {
-  migrateSynSecGitHubPostgresState,
   PostgresGitHubScanQueue,
   PostgresGitHubWebhookReplayStore,
+  SYNSEC_GITHUB_POSTGRES_MIGRATIONS,
+  SYNSEC_GITHUB_POSTGRES_SCHEMA_VERSION,
   type PostgresGitHubSharedStateOptions,
   type PostgresPoolLike,
 } from "./postgres-shared-state.js";
 import {
-  migrateSynSecGitHubPostgresInstallationState,
   PostgresGitHubInstallationStore,
+  SYNSEC_GITHUB_POSTGRES_INSTALLATION_MIGRATIONS,
 } from "./postgres-installation-store.js";
 
 export const SYNSEC_GITHUB_POSTGRES_BACKEND_ID = "postgres-v1" as const;
 export const SYNSEC_GITHUB_POSTGRES_IMPLEMENTATION_VERSION = "0.2.0-postgres-v1" as const;
+const POSTGRES_MIGRATION_LOCK = "synsec-github-postgres-shared-state-v1";
 
 /**
  * Secret-free declaration for the concrete built-in PostgreSQL adapter implementation.
@@ -75,20 +77,53 @@ export function buildSynSecGitHubPostgresBackendContract(): GitHubAppSharedState
 }
 
 /**
- * Apply all PostgreSQL shared-state schema changes required by the built-in adapter.
+ * Apply the complete PostgreSQL shared-state schema under one transaction-scoped advisory lock.
+ * Concurrent replicas invoking this helper therefore cannot race PostgreSQL DDL creation.
  *
  * The timestamp ALTER is intentionally idempotent and repairs databases created by an earlier
  * pre-release adapter build whose replay claim column retained sub-millisecond precision. Keeping
  * this repair explicit preserves exact claim-token compare-and-set semantics across upgrades.
  */
 export async function migrateSynSecGitHubPostgresBackend(pool: PostgresPoolLike): Promise<void> {
-  await migrateSynSecGitHubPostgresState(pool);
-  await pool.query(
-    `ALTER TABLE synsec_github_replay
-     ALTER COLUMN received_at TYPE timestamptz(3)
-     USING date_trunc('milliseconds', received_at)`,
-  );
-  await migrateSynSecGitHubPostgresInstallationState(pool);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [POSTGRES_MIGRATION_LOCK]);
+    for (const statement of SYNSEC_GITHUB_POSTGRES_MIGRATIONS) await client.query(statement);
+    await client.query(
+      `ALTER TABLE synsec_github_replay
+       ALTER COLUMN received_at TYPE timestamptz(3)
+       USING date_trunc('milliseconds', received_at)`,
+    );
+    for (const statement of SYNSEC_GITHUB_POSTGRES_INSTALLATION_MIGRATIONS) await client.query(statement);
+
+    const current = await client.query(
+      "SELECT version FROM synsec_github_schema WHERE component = $1 FOR UPDATE",
+      ["shared-state"],
+    );
+    if (current.rows.length > 1) throw new Error("SynSec PostgreSQL schema metadata is inconsistent.");
+    if (current.rows.length === 1) {
+      const version = Number(current.rows[0]?.version);
+      if (version !== SYNSEC_GITHUB_POSTGRES_SCHEMA_VERSION) {
+        throw new Error("SynSec PostgreSQL shared-state schema version is unsupported.");
+      }
+    } else {
+      await client.query(
+        "INSERT INTO synsec_github_schema(component, version) VALUES ($1, $2)",
+        ["shared-state", SYNSEC_GITHUB_POSTGRES_SCHEMA_VERSION],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Preserve the migration failure; rollback diagnostics may contain backend connection details.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export interface SynSecGitHubPostgresSharedStores {
