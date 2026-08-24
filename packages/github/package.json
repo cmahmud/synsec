@@ -15,6 +15,7 @@
     "./app-token-provider": "./dist/app-token-provider.js",
     "./app-permissions": "./dist/app-permissions.js",
     "./app-setup": "./dist/app-setup.js",
+    "./app-provisioning": "./dist/app-provisioning.js",
     "./credential-rotation": "./dist/credential-rotation.js",
     "./credential-reload": "./dist/credential-reload.js",
     "./credential-reload-freshness": "./dist/credential-reload-freshness.js",
