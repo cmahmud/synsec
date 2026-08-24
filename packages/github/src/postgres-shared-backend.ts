@@ -1,5 +1,10 @@
 import type { GitHubAppSharedStateBackendContract } from "./shared-state-contract.js";
 import {
+  createGitHubAppSharedRuntime,
+  type GitHubAppSharedRuntime,
+  type GitHubAppSharedRuntimeOptions,
+} from "./shared-runtime.js";
+import {
   PostgresGitHubScanQueue,
   PostgresGitHubWebhookReplayStore,
   SYNSEC_GITHUB_POSTGRES_MIGRATIONS,
@@ -146,4 +151,29 @@ export function createSynSecGitHubPostgresSharedStores(
     installationStore: new PostgresGitHubInstallationStore(pool),
     queue: new PostgresGitHubScanQueue(pool, options),
   };
+}
+
+export type GitHubAppPostgresSharedRuntimeOptions = Omit<
+  GitHubAppSharedRuntimeOptions,
+  "backendContract" | "replayStore" | "installationStore" | "queue"
+> & {
+  pool: PostgresPoolLike;
+  sharedStateOptions?: PostgresGitHubSharedStateOptions;
+};
+
+/**
+ * Compose the built-in PostgreSQL stores into the hosted runtime only through SynSec's existing
+ * conformance-evidence gate. The caller must migrate first and provide the portable report produced
+ * for this exact backend id/version; capability declarations alone cannot activate multi-host use.
+ */
+export function createGitHubAppPostgresSharedRuntime(
+  options: GitHubAppPostgresSharedRuntimeOptions,
+): GitHubAppSharedRuntime {
+  const { pool, sharedStateOptions, ...runtime } = options;
+  const stores = createSynSecGitHubPostgresSharedStores(pool, sharedStateOptions);
+  return createGitHubAppSharedRuntime({
+    ...runtime,
+    backendContract: buildSynSecGitHubPostgresBackendContract(),
+    ...stores,
+  });
 }
