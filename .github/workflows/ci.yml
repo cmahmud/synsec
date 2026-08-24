@@ -36,3 +36,40 @@ jobs:
 
       - name: Test
         run: npm test
+
+  postgres-shared-state:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: synsec
+          POSTGRES_USER: synsec
+          POSTGRES_PASSWORD: synsec-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U synsec -d synsec"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      SYNSEC_TEST_POSTGRES_URL: postgresql://synsec:synsec-ci-only@127.0.0.1:5432/synsec
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: PostgreSQL shared-state integration
+        run: node --test tests/postgres-shared-state.test.mjs
