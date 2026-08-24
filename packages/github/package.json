@@ -27,6 +27,7 @@
     "./shared-state-conformance-runner": "./dist/shared-state-conformance-runner.js",
     "./shared-state-evidence": "./dist/shared-state-evidence.js",
     "./shared-runtime": "./dist/shared-runtime.js",
+    "./postgres-shared-state": "./dist/postgres-shared-state.js",
     "./app-status": "./dist/app-status.js",
     "./app-readiness-policy": "./dist/app-readiness-policy.js",
     "./app-server": "./dist/app-server.js",
