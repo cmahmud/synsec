@@ -7,6 +7,9 @@ const MAX_DESCRIPTION_LENGTH = 255;
 const MAX_ORGANIZATION_LENGTH = 39;
 const MAX_STATE_LENGTH = 256;
 const MAX_CODE_LENGTH = 512;
+const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
+const MAX_WEBHOOK_SECRET_BYTES = 4096;
+const MAX_GENERATION_LENGTH = 128;
 
 export interface SynSecGitHubAppManifestOptions extends SynSecGitHubAppSetupOptions {
   homepageUrl: string;
@@ -50,6 +53,23 @@ export interface SynSecGitHubAppManifestCallback {
   version: 1;
   code: string;
   interpretation: "validated-callback-not-conversion-success";
+}
+
+export interface SynSecGitHubAppProvisioningCredentials {
+  appId: number;
+  privateKey: string;
+  webhookSecret: string;
+}
+
+export interface SynSecGitHubAppProvisioningActivation {
+  generation: string;
+}
+
+export interface SynSecGitHubAppProvisioningResult {
+  version: 1;
+  appId: number;
+  generation: string;
+  interpretation: "secret-manager-handoff-complete-not-runtime-readiness";
 }
 
 function boundedSingleLine(value: string, label: string, maximum: number): string {
@@ -104,6 +124,42 @@ function equalState(actual: string, expected: string): boolean {
   const expectedBytes = Buffer.from(expected, "utf8");
   if (actualBytes.length !== expectedBytes.length) return false;
   return timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function positiveAppId(value: unknown): number {
+  const normalized = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) throw new Error("GitHub App manifest conversion returned an invalid App id.");
+  return normalized;
+}
+
+function provisioningPrivateKey(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error("GitHub App manifest conversion did not return a private key.");
+  if (Buffer.byteLength(value, "utf8") > MAX_PRIVATE_KEY_BYTES) throw new Error("GitHub App manifest conversion private key exceeds the supported bound.");
+  const normalized = value.trim();
+  const pkcs1 = normalized.startsWith("-----BEGIN RSA PRIVATE KEY-----")
+    && normalized.endsWith("-----END RSA PRIVATE KEY-----");
+  const pkcs8 = normalized.startsWith("-----BEGIN PRIVATE KEY-----")
+    && normalized.endsWith("-----END PRIVATE KEY-----");
+  if (!pkcs1 && !pkcs8) throw new Error("GitHub App manifest conversion private key must be PEM encoded.");
+  return value;
+}
+
+function provisioningWebhookSecret(value: unknown): string {
+  if (typeof value !== "string") throw new Error("GitHub App manifest conversion did not return a webhook secret.");
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (bytes < 32 || bytes > MAX_WEBHOOK_SECRET_BYTES) {
+    throw new Error("GitHub App manifest conversion webhook secret is outside the supported size bound.");
+  }
+  return value;
+}
+
+function provisioningGeneration(value: unknown): string {
+  if (typeof value !== "string") throw new Error("GitHub App provisioning activation must return a generation identifier.");
+  const normalized = value.trim();
+  if (!normalized || normalized.length > MAX_GENERATION_LENGTH || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(normalized)) {
+    throw new Error("GitHub App provisioning generation must be a bounded non-secret identifier.");
+  }
+  return normalized;
 }
 
 /**
@@ -190,5 +246,59 @@ export function validateSynSecGitHubAppManifestCallback(input: {
     version: 1,
     code: callbackCode(input.code),
     interpretation: "validated-callback-not-conversion-success",
+  };
+}
+
+/**
+ * Exchange a validated one-time manifest code through caller-owned transport and hand the generated
+ * credentials directly to a caller-owned secret-manager/service-manager activation boundary.
+ *
+ * SynSec validates only the fields it needs (App id, private key, webhook secret), ignores unrelated
+ * conversion response metadata, never returns the credentials, and replaces transport/activation
+ * failures with bounded generic errors so an untrusted backend error cannot disclose secrets through
+ * normal CLI/HTTP status paths. The returned generation is operator metadata, not proof that every
+ * runtime replica has reloaded the new credentials or that GitHub has accepted a subsequent use.
+ */
+export async function provisionSynSecGitHubAppManifestConversion(input: {
+  callback: SynSecGitHubAppManifestCallback;
+  exchange: (code: string) => Promise<unknown>;
+  activate: (credentials: SynSecGitHubAppProvisioningCredentials) => Promise<SynSecGitHubAppProvisioningActivation>;
+}): Promise<SynSecGitHubAppProvisioningResult> {
+  if (!input.callback || input.callback.interpretation !== "validated-callback-not-conversion-success") {
+    throw new Error("A validated GitHub App manifest callback is required before conversion.");
+  }
+  if (typeof input.exchange !== "function" || typeof input.activate !== "function") {
+    throw new Error("GitHub App manifest conversion requires exchange and activation boundaries.");
+  }
+  const code = callbackCode(input.callback.code);
+
+  let response: unknown;
+  try {
+    response = await input.exchange(code);
+  } catch {
+    throw new Error("GitHub App manifest conversion transport failed.");
+  }
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error("GitHub App manifest conversion returned an invalid response.");
+  }
+  const raw = response as Record<string, unknown>;
+  const credentials: SynSecGitHubAppProvisioningCredentials = {
+    appId: positiveAppId(raw.id),
+    privateKey: provisioningPrivateKey(raw.pem),
+    webhookSecret: provisioningWebhookSecret(raw.webhook_secret),
+  };
+
+  let activation: SynSecGitHubAppProvisioningActivation;
+  try {
+    activation = await input.activate(credentials);
+  } catch {
+    throw new Error("GitHub App credential activation failed.");
+  }
+  const generation = provisioningGeneration(activation?.generation);
+  return {
+    version: 1,
+    appId: credentials.appId,
+    generation,
+    interpretation: "secret-manager-handoff-complete-not-runtime-readiness",
   };
 }
