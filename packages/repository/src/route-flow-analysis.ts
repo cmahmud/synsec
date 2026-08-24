@@ -6,6 +6,10 @@ import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-cal
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
 import {
+  repositoryRouteRequestInputForwardingContexts,
+  type RouteRequestInputForwardingContext,
+} from "./request-input-forwarding.js";
+import {
   collectRequestInputSignals,
   repositoryRouteRequestInputFlowContexts,
   type RequestInputSignal,
@@ -37,6 +41,7 @@ export interface RepositoryRouteFlowAnalysis {
   entrypoints: RouteEntrypoint[];
   routeFlows: RouteSinkFlowContext[];
   requestInputFlows: RouteRequestInputFlowContext[];
+  requestInputForwardingFlows: RouteRequestInputForwardingContext[];
   routeProtectionContexts: RouteProtectionContext[];
   routeSecurityReviews: RouteSecurityReviewContext[];
   inputFileCount: number;
@@ -55,6 +60,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxEvidence?: number;
   maxRoutes?: number;
   maxRequestInputSignals?: number;
+  maxRequestInputForwardLines?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -122,9 +128,12 @@ async function safeAnalysisFiles(
  * entries before lexical source analysis. Input above the configured file bound is explicitly
  * reported as bounded coverage rather than silently treated as analyzed. Ambiguous imports and
  * calls remain unresolved. Request-source flow requires an explicit framework request access,
- * unique lexical source/sink ownership, and a bounded directed call path; it is structural evidence,
- * not variable-level taint or proof of attacker control. Auth-related route protection and route-
- * security review summaries likewise never claim runtime protection or reachability.
+ * unique lexical source/sink ownership, and a bounded directed call path. A separate forwarding
+ * layer recognizes only simple immutable JS/TS request bindings passed unchanged once into one
+ * resolved call; transformations, sanitization, aliasing, mutation, multiple use, and ambiguity
+ * fail closed. Both layers are structural evidence, not general taint or proof of attacker control.
+ * Auth-related route protection and route-security review summaries likewise never claim runtime
+ * protection or reachability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -182,6 +191,22 @@ export async function buildRepositoryRouteFlowAnalysis(
       ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
     },
   );
+  const requestInputForwardingFlows = await repositoryRouteRequestInputForwardingContexts(
+    rootPath,
+    safe.files,
+    requestInputs,
+    routeFlows,
+    callGraph,
+    importCallLinks,
+    {
+      maxCallNodes,
+      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+      ...(options.maxRequestInputForwardLines !== undefined
+        ? { maxForwardLines: options.maxRequestInputForwardLines }
+        : {}),
+    },
+  );
   const routeProtectionContexts = repositoryRouteProtectionContexts(index, entrypoints, callGraph, protectionOptions);
   const routeSecurityReviews = buildRouteSecurityReviewContexts(
     routeFlows,
@@ -196,6 +221,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     entrypoints,
     routeFlows,
     requestInputFlows,
+    requestInputForwardingFlows,
     routeProtectionContexts,
     routeSecurityReviews,
     inputFileCount: files.length,
