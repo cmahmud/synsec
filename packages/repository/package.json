@@ -11,6 +11,7 @@
     "./call-graph": "./dist/call-graph.js",
     "./import-call-links": "./dist/import-call-links.js",
     "./request-input-flow": "./dist/request-input-flow.js",
+    "./request-input-forwarding": "./dist/request-input-forwarding.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-protection-context": "./dist/route-protection-context.js",
