@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Finding, ScanResult } from "@synsec/core";
-import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
+import type {
+  ScannerAdapter,
+  ScannerAvailability,
+  ScannerContext,
+  ScannerProcessRunner,
+} from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asRecord, asString, commandAvailability, identifiersFrom, normalizeSeverity, relativeLike, safeJson } from "./utils.js";
 
@@ -56,13 +61,15 @@ export class GrypeAdapter implements ScannerAdapter {
   readonly displayName = "Grype";
   readonly capabilities = ["dependency", "container"] as const;
 
+  constructor(private readonly processRunner: ScannerProcessRunner = runProcess) {}
+
   checkAvailability(): Promise<ScannerAvailability> {
-    return commandAvailability("grype", ["version"], this.displayName);
+    return commandAvailability("grype", ["version"], this.displayName, this.processRunner);
   }
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
-    const output = await runProcess(
+    const output = await this.processRunner(
       "grype",
       [`dir:${context.target.path}`, "-o", "json", "--quiet"],
       { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
