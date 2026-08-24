@@ -89,7 +89,7 @@ integration("PostgreSQL replay claims are atomic across independent store instan
   }
 });
 
-integration("PostgreSQL queue enforces unique insertion and competing fenced claims", async () => {
+integration("PostgreSQL queue insertion is idempotent for exact work and rejects delivery provenance conflicts", async () => {
   const pool = new pg.Pool({ connectionString, max: 12 });
   try {
     await migrateSynSecGitHubPostgresState(pool);
@@ -98,10 +98,27 @@ integration("PostgreSQL queue enforces unique insertion and competing fenced cla
     const queueB = new PostgresGitHubScanQueue(pool, { leaseMs: 10_000 });
 
     const duplicate = job("queue-duplicate-1", "a", "2026-08-24T00:00:00.000Z");
-    const inserts = await Promise.allSettled([queueA.enqueue(duplicate), queueB.enqueue(duplicate)]);
-    assert.equal(inserts.filter((result) => result.status === "fulfilled").length, 1);
-    assert.equal(inserts.filter((result) => result.status === "rejected").length, 1);
+    const [insertedA, insertedB] = await Promise.all([queueA.enqueue(duplicate), queueB.enqueue(duplicate)]);
+    assert.equal(insertedA.jobId, insertedB.jobId);
+    assert.equal((await queueA.list()).length, 1);
+
+    await assert.rejects(
+      queueB.enqueue(job("queue-duplicate-1", "f", "2026-08-24T00:00:09.000Z")),
+      /different scan provenance/,
+    );
+    assert.equal((await queueA.list()).length, 1);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration("PostgreSQL queue uses competing fenced claims", async () => {
+  const pool = new pg.Pool({ connectionString, max: 12 });
+  try {
+    await migrateSynSecGitHubPostgresState(pool);
     await pool.query("DELETE FROM synsec_github_scan_jobs");
+    const queueA = new PostgresGitHubScanQueue(pool, { leaseMs: 10_000 });
+    const queueB = new PostgresGitHubScanQueue(pool, { leaseMs: 10_000 });
 
     await queueA.enqueue(job("queue-claim-1", "b", "2026-08-24T00:00:01.000Z"));
     await queueA.enqueue(job("queue-claim-2", "c", "2026-08-24T00:00:02.000Z"));
