@@ -79,7 +79,7 @@ test("request input flow crosses an explicit import only from a source-bearing o
       method: "POST",
       route: "/users",
       frameworkHint: "Node HTTP router",
-      resolution: "named-handler",
+      resolution: "named-function",
       handler: "createUser",
       sourceKind: "body",
       sourceFunction: "createUser",
