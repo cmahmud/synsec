@@ -35,7 +35,7 @@ export interface RequestInputFlowEvidence {
     functionName: string;
     routeDepth: number;
   };
-  /** Directed lexical/import-call distance from the source-owning function to the sink-owning function. */
+  /** Directed lexical/import-call distance from the source-bearing call to the sink-owning function. */
   callDistance: number;
 }
 
@@ -54,8 +54,9 @@ export interface RouteRequestInputFlowContext {
   sinkKinds: SinkSignal["kind"][];
   callScope: "same-file" | "same-file-and-explicit-imports";
   /**
-   * This proves only a bounded structural request-access -> directed call path -> sink relationship.
-   * It is not variable-level taint, runtime reachability, attacker control, or exploitability evidence.
+   * This proves only a bounded structural request-access -> same-line outbound call -> directed call
+   * path -> sink relationship (or request access and sink on the exact same line). It is not variable-
+   * level taint, runtime reachability, attacker control, or exploitability evidence.
    */
   interpretation: "structural-request-source-call-sink-evidence-only";
 }
@@ -132,14 +133,14 @@ function nodeRequestAccesses(line: string): Array<{ kind: RequestInputKind; acce
   for (let match = direct.exec(line); match; match = direct.exec(line)) {
     const member = match[1];
     const kind = member ? requestKind(member) : undefined;
-    if (kind) output.push({ kind, access: `request.${member?.toLowerCase()}` });
+    if (kind && member) output.push({ kind, access: `request.${member.toLowerCase()}` });
   }
 
   const koa = /\bctx\.(?:request\.)?(body|query|params|headers|cookies)\b/gi;
   for (let match = koa.exec(line); match; match = koa.exec(line)) {
     const member = match[1];
     const kind = member ? requestKind(member) : undefined;
-    if (kind) output.push({ kind, access: `ctx.request.${member?.toLowerCase()}` });
+    if (kind && member) output.push({ kind, access: `ctx.request.${member.toLowerCase()}` });
   }
 
   const hono = /\b[A-Za-z_$][\w$]*\.req\.(json|query|param|header|cookie)\s*\(/gi;
@@ -147,7 +148,7 @@ function nodeRequestAccesses(line: string): Array<{ kind: RequestInputKind; acce
     const member = match[1]?.toLowerCase();
     const normalizedMember = member === "param" ? "params" : member;
     const kind = normalizedMember ? requestKind(normalizedMember) : undefined;
-    if (kind) output.push({ kind, access: `context.req.${member}` });
+    if (kind && member) output.push({ kind, access: `context.req.${member}` });
   }
   return output;
 }
@@ -158,10 +159,9 @@ function pythonRequestAccesses(line: string): Array<{ kind: RequestInputKind; ac
   for (let match = flask.exec(line); match; match = flask.exec(line)) {
     const member = match[1];
     const kind = member ? requestKind(member) : undefined;
-    if (kind) output.push({ kind, access: `request.${member}` });
+    if (kind && member) output.push({ kind, access: `request.${member}` });
   }
-  const getJson = /\brequest\.get_json\s*\(/g;
-  if (getJson.test(line)) output.push({ kind: "body", access: "request.get_json" });
+  if (/\brequest\.get_json\s*\(/.test(line)) output.push({ kind: "body", access: "request.get_json" });
 
   const django = /\brequest\.(GET|POST|body|headers|COOKIES|FILES)\b/g;
   for (let match = django.exec(line); match; match = django.exec(line)) {
@@ -170,7 +170,7 @@ function pythonRequestAccesses(line: string): Array<{ kind: RequestInputKind; ac
     if (member === "GET") kind = "query";
     else if (member === "POST" || member === "body") kind = "body";
     else kind = member ? requestKind(member) : undefined;
-    if (kind) output.push({ kind, access: `request.${member}` });
+    if (kind && member) output.push({ kind, access: `request.${member}` });
   }
   return output;
 }
@@ -246,6 +246,25 @@ function adjacency(
   };
 }
 
+function sourceCallTargets(
+  graph: CallGraph,
+  importCallLinks: ImportCallLinkGraph | undefined,
+  sourceFunctionId: string,
+  sourceLine: number,
+): { targets: string[]; importedTargets: Set<string> } {
+  const targets = new Set<string>();
+  const importedTargets = new Set<string>();
+  for (const edge of graph.edges) {
+    if (edge.from === sourceFunctionId && edge.line === sourceLine && edge.target) targets.add(edge.target);
+  }
+  for (const link of importCallLinks?.links ?? []) {
+    if (link.from !== sourceFunctionId || link.line !== sourceLine) continue;
+    targets.add(link.target);
+    importedTargets.add(link.target);
+  }
+  return { targets: [...targets].sort(), importedTargets };
+}
+
 function reachableFrom(
   start: string,
   targets: ReadonlyMap<string, readonly string[]>,
@@ -295,11 +314,54 @@ function usedImportOnShortestPath(
   return false;
 }
 
+function sourceToSinkPath(
+  source: { signal: RequestInputSignal; node: CallGraphNode },
+  sink: { signal: SinkSignal; node: CallGraphNode },
+  graph: CallGraph,
+  importCallLinks: ImportCallLinkGraph | undefined,
+  graphEdges: ReturnType<typeof adjacency>,
+  routeNodes: ReadonlySet<string>,
+  maxDepth: number,
+  maxNodes: number,
+): { callDistance: number; usedImport: boolean } | undefined {
+  if (source.node.id === sink.node.id) {
+    return source.signal.line === sink.signal.line ? { callDistance: 0, usedImport: false } : undefined;
+  }
+  if (maxDepth < 1) return undefined;
+
+  const firstHops = sourceCallTargets(graph, importCallLinks, source.node.id, source.signal.line);
+  let best: { callDistance: number; usedImport: boolean } | undefined;
+  for (const first of firstHops.targets) {
+    if (!routeNodes.has(first)) continue;
+    let distance: number;
+    let imported = firstHops.importedTargets.has(first);
+    if (first === sink.node.id) {
+      distance = 1;
+    } else {
+      const downstream = reachableFrom(first, graphEdges.targets, maxDepth - 1, maxNodes, routeNodes);
+      const remainder = downstream.get(sink.node.id);
+      if (remainder === undefined) continue;
+      distance = 1 + remainder;
+      imported = imported || usedImportOnShortestPath(
+        first,
+        sink.node.id,
+        graphEdges.targets,
+        graphEdges.importedEdges,
+        maxDepth - 1,
+        routeNodes,
+      );
+    }
+    if (!best || distance < best.callDistance) best = { callDistance: distance, usedImport: imported };
+  }
+  return best;
+}
+
 /**
  * Build bounded directional request-source -> call graph -> sink evidence for one resolved route.
- * A source/sink must each belong to exactly one lexical function. The sink-owning function must be
- * reachable from the source-owning function through resolved same-file calls or explicit unique
- * import-call links, and all nodes must remain within the route's bounded call neighborhood.
+ * A source/sink must each belong to exactly one lexical function. Cross-function propagation starts
+ * only when the explicit request access occurs on the same line as a resolved outbound call; this
+ * intentionally refuses to infer local variable taint. Subsequent hops may cross only resolved same-
+ * file calls or explicit unique repository-local import bindings inside the route call neighborhood.
  */
 export function routeRequestInputFlowContext(
   index: RepositoryIndex,
@@ -334,18 +396,19 @@ export function routeRequestInputFlowContext(
   const evidence: RequestInputFlowEvidence[] = [];
   let usedImport = false;
   for (const source of sources) {
-    const downstream = reachableFrom(source.node.id, graphEdges.targets, maxDepth, maxNodes, routeNodes);
     for (const sink of sinks) {
-      const callDistance = downstream.get(sink.node.id);
-      if (callDistance === undefined) continue;
-      usedImport = usedImport || usedImportOnShortestPath(
-        source.node.id,
-        sink.node.id,
-        graphEdges.targets,
-        graphEdges.importedEdges,
-        maxDepth,
+      const path = sourceToSinkPath(
+        source,
+        sink,
+        graph,
+        options.importCallLinks,
+        graphEdges,
         routeNodes,
+        maxDepth,
+        maxNodes,
       );
+      if (!path) continue;
+      usedImport = usedImport || path.usedImport;
       evidence.push({
         source: {
           path: source.signal.path,
@@ -365,7 +428,7 @@ export function routeRequestInputFlowContext(
           functionName: sink.node.name,
           routeDepth: sink.routeDepth,
         },
-        callDistance,
+        callDistance: path.callDistance,
       });
       if (evidence.length >= maxEvidence) break;
     }
