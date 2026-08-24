@@ -102,6 +102,7 @@ test("observed authentication and absence of auth signals remain explicitly stru
 
 test("routes without linked sink evidence are omitted and route bounds are validated", () => {
   assert.deepEqual(buildRouteSecurityReviewContexts([flow({ evidence: [], kinds: [] })], [protection()]), []);
-  assert.throws(() => buildRouteSecurityReviewContexts([flow()], [protection()], 0), /between 1 and 5000/);
-  assert.throws(() => buildRouteSecurityReviewContexts([flow()], [protection()], 5_001), /between 1 and 5000/);
+  assert.deepEqual(buildRouteSecurityReviewContexts([flow()], [protection()], 0), []);
+  assert.throws(() => buildRouteSecurityReviewContexts([flow()], [protection()], -1), /between 0 and 5000/);
+  assert.throws(() => buildRouteSecurityReviewContexts([flow()], [protection()], 5_001), /between 0 and 5000/);
 });
