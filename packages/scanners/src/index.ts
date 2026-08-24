@@ -19,6 +19,10 @@ export { parseSarifJson } from "./sarif.js";
 export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
 export { SyftAdapter, parseSyftJson } from "./syft.js";
 export { TrivyAdapter, normalizeTrivyChangedFiles, parseTrivyJson } from "./trivy.js";
+export {
+  createOciIsolatedDependencyScanners,
+  type OciIsolatedDependencyScannerOptions,
+} from "./oci-isolated.js";
 
 const NATIVE_CHANGED_FILE_SCANNERS = new Set([
   "opengrep",
