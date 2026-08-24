@@ -86,11 +86,12 @@ integration("PostgreSQL passes the canonical seven-scenario shared-state conform
         async "queue.concurrent-idempotent-insert"() {
           const first = queueA();
           const second = queueB();
-          const results = await Promise.allSettled([
+          const [insertedA, insertedB] = await Promise.all([
             first.enqueue(pushJob("conformance-insert-1")),
             second.enqueue(pushJob("conformance-insert-1")),
           ]);
-          assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+          assert.equal(insertedA.jobId, insertedB.jobId);
+          assert.equal(insertedA.deliveryId, insertedB.deliveryId);
           assert.equal((await first.list()).length, 1);
         },
 
