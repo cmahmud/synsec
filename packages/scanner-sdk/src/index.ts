@@ -51,6 +51,13 @@ export interface ProcessOptions {
   killGraceMs?: number;
 }
 
+/** Injectable execution boundary used by scanner adapters. */
+export type ScannerProcessRunner = (
+  command: string,
+  args: string[],
+  options?: ProcessOptions,
+) => Promise<ProcessOutput>;
+
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const DEFAULT_MAX_OPERATIONAL_TEXT = 8 * 1024;
