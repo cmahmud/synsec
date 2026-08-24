@@ -66,6 +66,7 @@ const severityRank: Record<Severity, number> = {
 };
 const EXECUTION_INTERPRETATION = "scanner-execution-scope-not-coverage-proof" as const;
 const MAX_SCANNER_DIAGNOSTICS = 1_000;
+const MAX_CHANGED_BASE_LENGTH = 256;
 const ENGINE_OWNED_METADATA_KEYS = new Set<string>([
   "dependencyUsage",
   "repositoryContext",
@@ -191,35 +192,72 @@ function normalizeProvidedChangedFiles(files: readonly string[], root: string): 
   return [...new Map(normalized.map((path) => [path.toLowerCase(), path])).values()].sort();
 }
 
+function normalizeChangedBase(value: string): string {
+  const base = value.trim();
+  if (!base
+    || base.length > MAX_CHANGED_BASE_LENGTH
+    || base.startsWith("-")
+    || /[\u0000-\u001f\u007f]/.test(base)) {
+    throw new Error("Changed-file base revision is invalid.");
+  }
+  return base;
+}
+
+async function resolveChangedBaseCommit(root: string, base: string): Promise<string | undefined> {
+  try {
+    const output = await runProcess(
+      "git",
+      ["-C", root, "rev-parse", "--verify", "--end-of-options", `${base}^{commit}`],
+      { timeoutMs: 5_000 },
+    );
+    if (output.exitCode !== 0) return undefined;
+    const commit = output.stdout.trim();
+    return /^[0-9a-f]{40,64}$/i.test(commit) ? commit : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function discoverChangedFiles(rootPath: string, requestedBase?: string): Promise<{ base: string; files: string[] }> {
   const root = resolve(rootPath);
-  const githubBase = process.env.GITHUB_BASE_REF?.trim();
-  const base = requestedBase ?? (githubBase ? `origin/${githubBase}` : "HEAD~1");
-  let output = await runProcess(
-    "git",
-    ["-C", root, "diff", "--name-only", "--diff-filter=ACMRTUXB", `${base}...HEAD`],
-    { timeoutMs: 10_000 },
-  );
+  const githubBaseRaw = process.env.GITHUB_BASE_REF?.trim();
+  const candidates: string[] = [];
 
-  if (output.exitCode !== 0 && !requestedBase && githubBase) {
-    output = await runProcess(
+  if (requestedBase !== undefined) {
+    candidates.push(normalizeChangedBase(requestedBase));
+  } else if (githubBaseRaw) {
+    const githubBase = normalizeChangedBase(githubBaseRaw);
+    candidates.push(`origin/${githubBase}`, githubBase);
+  } else {
+    candidates.push("HEAD~1");
+  }
+
+  let lastDiagnostic = "";
+  for (const base of candidates) {
+    const commit = await resolveChangedBaseCommit(root, base);
+    if (!commit) continue;
+    const output = await runProcess(
       "git",
-      ["-C", root, "diff", "--name-only", "--diff-filter=ACMRTUXB", `${githubBase}...HEAD`],
+      ["-C", root, "diff", "--name-only", "--diff-filter=ACMRTUXB", `${commit}...HEAD`],
       { timeoutMs: 10_000 },
     );
+    if (output.exitCode !== 0) {
+      lastDiagnostic = sanitizeOperationalText(output.stderr.trim(), 2_048);
+      continue;
+    }
+
+    const files = [...new Set(
+      output.stdout
+        .split(/\r?\n/)
+        .map((value) => normalizeRepositoryPath(value.trim(), root))
+        .filter(Boolean),
+    )].sort();
+    return { base, files };
   }
 
-  if (output.exitCode !== 0) {
-    throw new Error(`Unable to determine changed files from ${base}: ${output.stderr.trim() || "git diff failed"}`);
-  }
-
-  const files = [...new Set(
-    output.stdout
-      .split(/\r?\n/)
-      .map((value) => normalizeRepositoryPath(value.trim(), root))
-      .filter(Boolean),
-  )].sort();
-  return { base, files };
+  throw new Error(
+    `Unable to determine changed files from a verified base revision.${lastDiagnostic ? ` ${lastDiagnostic}` : ""}`,
+  );
 }
 
 function findingMatchesChangedFiles(finding: Finding, changed: Set<string>, root: string): boolean {

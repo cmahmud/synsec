@@ -138,6 +138,33 @@ test("changed-file discovery returns repository-relative files from the requeste
   }
 });
 
+test("changed-file discovery rejects unsafe base revisions without reflecting attacker-controlled text", async () => {
+  const root = await mkdtemp(join(tmpdir(), "synsec-changed-base-test-"));
+  const githubToken = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  try {
+    await git(root, "init");
+    await git(root, "config", "user.name", "SynSec Test");
+    await git(root, "config", "user.email", "synsec-test@example.invalid");
+    await writeFile(join(root, "a.txt"), "fixture\n");
+    await git(root, "add", "a.txt");
+    await git(root, "commit", "-m", "fixture");
+
+    for (const base of [`--output=${githubToken}`, `HEAD~1\n${githubToken}`]) {
+      await assert.rejects(
+        discoverChangedFiles(root, base),
+        (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(message, /base revision is invalid/);
+          assert.doesNotMatch(message, new RegExp(githubToken));
+          return true;
+        },
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("failure threshold treats configured severity as inclusive", () => {
   const scan = {
     scanner: "fixture",
