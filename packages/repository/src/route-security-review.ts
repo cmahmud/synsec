@@ -151,9 +151,11 @@ export function summarizeRouteSecurityReviews(
     if (context.frameworkHint !== undefined && !validBoundedLabel(context.frameworkHint)) {
       throw new Error("Route security review summary received invalid framework metadata.");
     }
-    if (!PROTECTION_STATUSES.has(context.protectionStatus)
-      || !REVIEW_SIGNALS.has(context.signal)
-      || signalFor(context.protectionStatus) !== context.signal) {
+    const protectionStatus = context.protectionStatus as RouteProtectionStatus | "not-assessed";
+    const signal = context.signal as RouteSecurityReviewSignal;
+    if (!PROTECTION_STATUSES.has(protectionStatus)
+      || !REVIEW_SIGNALS.has(signal)
+      || signalFor(protectionStatus) !== signal) {
       throw new Error("Route security review summary received inconsistent protection metadata.");
     }
     if (context.callScope !== "same-file" && context.callScope !== "same-file-and-explicit-imports") {
@@ -165,12 +167,13 @@ export function summarizeRouteSecurityReviews(
     if (!Array.isArray(context.sinkKinds) || context.sinkKinds.length < 1 || context.sinkKinds.length > SINK_KINDS.size) {
       throw new Error("Route security review summary received invalid sink metadata.");
     }
-    const uniqueKinds = new Set(context.sinkKinds);
-    if (uniqueKinds.size !== context.sinkKinds.length || [...uniqueKinds].some((kind) => !SINK_KINDS.has(kind))) {
+    const sinkKindValues = context.sinkKinds as RouteSinkFlowContext["kinds"][number][];
+    const uniqueKinds = new Set<RouteSinkFlowContext["kinds"][number]>(sinkKindValues);
+    if (uniqueKinds.size !== sinkKindValues.length || [...uniqueKinds].some((kind) => !SINK_KINDS.has(kind))) {
       throw new Error("Route security review summary received invalid sink metadata.");
     }
 
-    signals[context.signal] += 1;
+    signals[signal] += 1;
     for (const kind of uniqueKinds) sinkKinds[kind] += 1;
   }
 
