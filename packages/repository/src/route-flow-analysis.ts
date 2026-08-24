@@ -5,6 +5,12 @@ import { buildCallGraph, type CallGraph } from "./call-graph.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
+import {
+  collectRequestInputSignals,
+  repositoryRouteRequestInputFlowContexts,
+  type RequestInputSignal,
+  type RouteRequestInputFlowContext,
+} from "./request-input-flow.js";
 import { resolveRouteEntrypoints, type RouteEntrypoint } from "./route-entrypoints.js";
 import {
   repositoryRouteProtectionContexts,
@@ -27,8 +33,10 @@ const MAX_ANALYSIS_FILES = 5_000;
 export interface RepositoryRouteFlowAnalysis {
   callGraph: CallGraph;
   importCallLinks: ImportCallLinkGraph;
+  requestInputs: RequestInputSignal[];
   entrypoints: RouteEntrypoint[];
   routeFlows: RouteSinkFlowContext[];
+  requestInputFlows: RouteRequestInputFlowContext[];
   routeProtectionContexts: RouteProtectionContext[];
   routeSecurityReviews: RouteSecurityReviewContext[];
   inputFileCount: number;
@@ -46,6 +54,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxCallNodes?: number;
   maxEvidence?: number;
   maxRoutes?: number;
+  maxRequestInputSignals?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -112,9 +121,10 @@ async function safeAnalysisFiles(
  * repository files. It independently rejects path escape, missing/non-regular files, and symlink
  * entries before lexical source analysis. Input above the configured file bound is explicitly
  * reported as bounded coverage rather than silently treated as analyzed. Ambiguous imports and
- * calls remain unresolved. Auth-related route protection and route-security review summaries are
- * structural review evidence only and never claims that a route is effectively protected or
- * reachable at runtime.
+ * calls remain unresolved. Request-source flow requires an explicit framework request access,
+ * unique lexical source/sink ownership, and a bounded directed call path; it is structural evidence,
+ * not variable-level taint or proof of attacker control. Auth-related route protection and route-
+ * security review summaries likewise never claim runtime protection or reachability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -128,6 +138,9 @@ export async function buildRepositoryRouteFlowAnalysis(
   const safe = await safeAnalysisFiles(rootPath, files, maxFiles);
   const callGraph = await buildCallGraph(rootPath, safe.files);
   const importCallLinks = await buildImportCallLinkGraph(rootPath, safe.files, moduleGraph, callGraph);
+  const requestInputs = await collectRequestInputSignals(rootPath, safe.files, {
+    ...(options.maxRequestInputSignals !== undefined ? { maxSignals: options.maxRequestInputSignals } : {}),
+  });
   let entrypoints = resolveRouteEntrypoints(index, callGraph, {
     ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
@@ -157,6 +170,18 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
   };
   const routeFlows = repositoryRouteSinkFlowContexts(index, entrypoints, callGraph, flowOptions);
+  const requestInputFlows = repositoryRouteRequestInputFlowContexts(
+    index,
+    requestInputs,
+    entrypoints,
+    callGraph,
+    {
+      importCallLinks,
+      maxCallNodes,
+      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    },
+  );
   const routeProtectionContexts = repositoryRouteProtectionContexts(index, entrypoints, callGraph, protectionOptions);
   const routeSecurityReviews = buildRouteSecurityReviewContexts(
     routeFlows,
@@ -167,8 +192,10 @@ export async function buildRepositoryRouteFlowAnalysis(
   return {
     callGraph,
     importCallLinks,
+    requestInputs,
     entrypoints,
     routeFlows,
+    requestInputFlows,
     routeProtectionContexts,
     routeSecurityReviews,
     inputFileCount: files.length,
