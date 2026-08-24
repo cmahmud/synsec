@@ -51,24 +51,26 @@ function repositoryDelta(repository) {
   });
 }
 
-integration("PostgreSQL passes the canonical seven-scenario shared-state conformance matrix", async () => {
-  const pool = new pg.Pool({ connectionString, max: 16 });
+integration("PostgreSQL passes the canonical seven-scenario shared-state conformance matrix across independent replica pools", async () => {
+  const adminPool = new pg.Pool({ connectionString, max: 4 });
+  const poolA = new pg.Pool({ connectionString, max: 8, application_name: "synsec-conformance-replica-a" });
+  const poolB = new pg.Pool({ connectionString, max: 8, application_name: "synsec-conformance-replica-b" });
   try {
-    await migrateSynSecGitHubPostgresState(pool);
-    await migrateSynSecGitHubPostgresInstallationState(pool);
+    await migrateSynSecGitHubPostgresState(adminPool);
+    await migrateSynSecGitHubPostgresInstallationState(adminPool);
 
-    const queueA = () => new PostgresGitHubScanQueue(pool, { leaseMs: 10_000 });
-    const queueB = () => new PostgresGitHubScanQueue(pool, { leaseMs: 10_000 });
-    const replayA = () => new PostgresGitHubWebhookReplayStore(pool);
-    const replayB = () => new PostgresGitHubWebhookReplayStore(pool);
-    const installationA = () => new PostgresGitHubInstallationStore(pool);
-    const installationB = () => new PostgresGitHubInstallationStore(pool);
+    const queueA = () => new PostgresGitHubScanQueue(poolA, { leaseMs: 10_000 });
+    const queueB = () => new PostgresGitHubScanQueue(poolB, { leaseMs: 10_000 });
+    const replayA = () => new PostgresGitHubWebhookReplayStore(poolA);
+    const replayB = () => new PostgresGitHubWebhookReplayStore(poolB);
+    const installationA = () => new PostgresGitHubInstallationStore(poolA);
+    const installationB = () => new PostgresGitHubInstallationStore(poolB);
 
     const adapter = {
       backendId: "postgres-v1",
       implementationVersion: "0.2.0-postgres-v1",
       async reset() {
-        await pool.query("TRUNCATE synsec_github_scan_jobs, synsec_github_replay, synsec_github_installations");
+        await adminPool.query("TRUNCATE synsec_github_scan_jobs, synsec_github_replay, synsec_github_installations");
       },
       scenarios: {
         async "replay.concurrent-duplicate-claim"() {
@@ -109,7 +111,7 @@ integration("PostgreSQL passes the canonical seven-scenario shared-state conform
           await first.enqueue(pushJob("conformance-renew-1"));
           const oldLease = await first.claimNext();
           assert.ok(oldLease?.leaseId);
-          await pool.query(
+          await adminPool.query(
             "UPDATE synsec_github_scan_jobs SET lease_until = clock_timestamp() - interval '1 second' WHERE job_id = $1",
             [oldLease.jobId],
           );
@@ -126,7 +128,7 @@ integration("PostgreSQL passes the canonical seven-scenario shared-state conform
           await first.enqueue(pushJob("conformance-terminal-1"));
           const oldLease = await first.claimNext();
           assert.ok(oldLease?.leaseId);
-          await pool.query(
+          await adminPool.query(
             "UPDATE synsec_github_scan_jobs SET lease_until = clock_timestamp() - interval '1 second' WHERE job_id = $1",
             [oldLease.jobId],
           );
@@ -203,6 +205,6 @@ integration("PostgreSQL passes the canonical seven-scenario shared-state conform
       ["authorization.cross-replica-revocation", "passed"],
     ]);
   } finally {
-    await pool.end();
+    await Promise.allSettled([adminPool.end(), poolA.end(), poolB.end()]);
   }
 });
