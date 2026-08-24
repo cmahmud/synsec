@@ -20,13 +20,12 @@ async function makeRepository(filesByPath) {
   return { root, files, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
 
-test("request input flow crosses an explicit import only along a directed source-to-sink call path", async () => {
+test("request input flow crosses an explicit import only from a source-bearing outbound call", async () => {
   const repo = await makeRepository({
     "server.ts": [
       'import { saveUser } from "./service.js";',
       "export function createUser(req) {",
-      "  const name = req.body.name;",
-      "  saveUser(name);",
+      "  saveUser(req.body.name);",
       "}",
       'router.post("/users", createUser);',
     ].join("\n"),
@@ -90,14 +89,14 @@ test("request input flow crosses an explicit import only along a directed source
       callScope: "same-file-and-explicit-imports",
       interpretation: "structural-request-source-call-sink-evidence-only",
     }]);
-    assert.equal(JSON.stringify(flow).includes("name ="), false);
+    assert.equal(JSON.stringify(flow).includes("req.body.name"), false);
     assert.equal(JSON.stringify(flow).includes("sql"), false);
   } finally {
     await repo.cleanup();
   }
 });
 
-test("request source evidence does not jump to a sibling sink without a directed call path", async () => {
+test("request source evidence does not jump to a sibling sink without a source-bearing call", async () => {
   const repo = await makeRepository({
     "server.ts": [
       "export function handler(req) {",
@@ -175,6 +174,7 @@ test("python request access categories are explicit and sanitized", async () => 
       frameworkFamily: "python-request",
       access: "request.args",
     }]);
+    assert.deepEqual(analysis.requestInputFlows, []);
     assert.equal(JSON.stringify(analysis.requestInputs).includes("'q'"), false);
   } finally {
     await repo.cleanup();
