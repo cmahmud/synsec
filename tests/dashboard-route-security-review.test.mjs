@@ -57,12 +57,21 @@ function inputWithRouteReviews() {
   };
 }
 
-test("dashboard renders only aggregate route-security review counts", () => {
+test("dashboard renders only validated aggregate route-security review counts", () => {
   const html = renderProjectDashboardIndex(inputWithRouteReviews());
   assert.match(html, /2<\/div><div>sensitive-sink auth reviews/);
   assert.match(html, /1 authorization signal · 1 authentication signal/);
-  assert.match(html, /structural review context, not protection or exploitability verdicts/);
+  assert.match(html, /validated structural review context, not protection or exploitability verdicts/);
   assert.doesNotMatch(html, /credentialBearingHandler/);
   assert.doesNotMatch(html, /secret-bearing-route/);
   assert.doesNotMatch(html, /ghp_abcdefghijklmnopqrstuvwxyz1234567890/);
+});
+
+test("dashboard rejects inconsistent route-security metadata before rendering", () => {
+  const input = inputWithRouteReviews();
+  input.routeSecurityReviews[0].signal = "sensitive-sink-with-authorization-signal";
+  assert.throws(
+    () => renderProjectDashboardIndex(input),
+    /inconsistent protection metadata/,
+  );
 });

@@ -9,7 +9,10 @@ import { writeHistoryHtml } from "@synsec/report/history-html";
 import { buildSbomView, writeSbomHtml } from "@synsec/report/sbom-html";
 import type { RepositoryPostureSummary } from "@synsec/repository/posture";
 import { writeRepositoryPostureHtml } from "@synsec/repository/posture-html";
-import type { RouteSecurityReviewContext } from "@synsec/repository/route-security-review";
+import {
+  summarizeRouteSecurityReviews,
+  type RouteSecurityReviewContext,
+} from "@synsec/repository/route-security-review";
 
 export interface ProjectDashboardInput {
   report: SynSecReport;
@@ -48,14 +51,10 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
     ? `<div class=card aria-label="${input.reviewDeadlines.summary.overdue} overdue lifecycle reviews, ${input.reviewDeadlines.summary.unscheduled} unscheduled lifecycle reviews"><div class=value>${input.reviewDeadlines.summary.overdue}</div><div>overdue exception reviews</div><small>${input.reviewDeadlines.summary.dueSoon} due soon · ${input.reviewDeadlines.summary.unscheduled} unscheduled</small></div>`
     : "";
   const routeReviewSummary = input.routeSecurityReviews
-    ? {
-      authReview: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-without-auth-signal" || item.signal === "sensitive-sink-auth-context-unavailable").length,
-      authorization: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-with-authorization-signal").length,
-      authentication: input.routeSecurityReviews.filter((item) => item.signal === "sensitive-sink-with-authentication-signal").length,
-    }
+    ? summarizeRouteSecurityReviews(input.routeSecurityReviews)
     : undefined;
   const routeReviewCard = routeReviewSummary
-    ? `<div class=card aria-label="${routeReviewSummary.authReview} sensitive-sink routes needing auth-context review"><div class=value>${routeReviewSummary.authReview}</div><div>sensitive-sink auth reviews</div><small>${routeReviewSummary.authorization} authorization signal · ${routeReviewSummary.authentication} authentication signal</small></div>`
+    ? `<div class=card aria-label="${routeReviewSummary.needsAuthReview} sensitive-sink routes needing auth-context review"><div class=value>${routeReviewSummary.needsAuthReview}</div><div>sensitive-sink auth reviews</div><small>${routeReviewSummary.signals["sensitive-sink-with-authorization-signal"]} authorization signal · ${routeReviewSummary.signals["sensitive-sink-with-authentication-signal"]} authentication signal</small></div>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -83,7 +82,7 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
 <div class=severity>
   <span>${summary.critical} critical</span><span>${summary.high} high</span><span>${summary.medium} medium</span><span>${summary.low} low</span><span>${summary.info} info</span><span>${summary.unknown} unknown</span>
 </div>
-<p class=muted>This index links only to locally generated sanitized views. Repository source excerpts, scanner diagnostics, lifecycle notes/owners, tokens, route names/handlers, and arbitrary outbound URLs are not embedded by this dashboard composition. Exception-review counts are governance metadata, not scanner evidence. Route-security counts are structural review context, not protection or exploitability verdicts.</p>
+<p class=muted>This index links only to locally generated sanitized views. Repository source excerpts, scanner diagnostics, lifecycle notes/owners, tokens, route names/handlers, and arbitrary outbound URLs are not embedded by this dashboard composition. Exception-review counts are governance metadata, not scanner evidence. Route-security counts are validated structural review context, not protection or exploitability verdicts.</p>
 </body>
 </html>\n`;
 }
@@ -95,7 +94,8 @@ export function renderProjectDashboardIndex(input: ProjectDashboardInput): strin
  * credentials. It is a developer-facing local composition primitive, not the future multi-user web
  * application. Optional history is accepted only through the existing trend-safe history model;
  * optional exception-review health and route-security review context are rendered only as minimized
- * aggregate counts. All generated files are written with restrictive permissions where supported.
+ * aggregate counts. Route-security contexts cross the summary validator before rendering. All
+ * generated files are written with restrictive permissions where supported.
  */
 export async function writeProjectDashboard(
   directory: string,
