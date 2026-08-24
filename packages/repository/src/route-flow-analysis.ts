@@ -17,6 +17,10 @@ import {
 } from "./request-input-flow.js";
 import { resolveRouteEntrypoints, type RouteEntrypoint } from "./route-entrypoints.js";
 import {
+  buildRouteMiddlewareCompositionContexts,
+  type RouteMiddlewareCompositionContext,
+} from "./route-middleware-composition.js";
+import {
   repositoryRouteProtectionContexts,
   type RouteProtectionContext,
   type RouteProtectionOptions,
@@ -39,6 +43,7 @@ export interface RepositoryRouteFlowAnalysis {
   importCallLinks: ImportCallLinkGraph;
   requestInputs: RequestInputSignal[];
   entrypoints: RouteEntrypoint[];
+  routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
   routeFlows: RouteSinkFlowContext[];
   requestInputFlows: RouteRequestInputFlowContext[];
   requestInputForwardingFlows: RouteRequestInputForwardingContext[];
@@ -131,9 +136,12 @@ async function safeAnalysisFiles(
  * unique lexical source/sink ownership, and a bounded directed call path. A separate forwarding
  * layer recognizes only simple immutable JS/TS request bindings passed unchanged once into one
  * resolved call; transformations, sanitization, aliasing, mutation, multiple use, and ambiguity
- * fail closed. Both layers are structural evidence, not general taint or proof of attacker control.
- * Auth-related route protection and route-security review summaries likewise never claim runtime
- * protection or reachability.
+ * fail closed. Explicit all-named Node route registrations additionally receive bounded middleware
+ * composition evidence: middleware identifiers resolve only to unique same-file functions or
+ * explicit repository-local named imports, and shadowed/dynamic/ambiguous middleware stays
+ * unresolved. Middleware auth signals and bounded callees remain structural context rather than
+ * proof that middleware executes or protects a route. Auth-related route protection and
+ * route-security review summaries likewise never claim runtime protection or reachability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -162,6 +170,20 @@ export async function buildRepositoryRouteFlowAnalysis(
     callGraph,
     entrypoints,
     {
+      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+      maxCallNodes,
+    },
+  );
+  const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(
+    rootPath,
+    safe.files,
+    index,
+    moduleGraph,
+    callGraph,
+    importCallLinks,
+    entrypoints,
+    {
+      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
       ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
       maxCallNodes,
     },
@@ -219,6 +241,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     importCallLinks,
     requestInputs,
     entrypoints,
+    routeMiddlewareContexts,
     routeFlows,
     requestInputFlows,
     requestInputForwardingFlows,
