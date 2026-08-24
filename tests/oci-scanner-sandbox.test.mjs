@@ -43,8 +43,9 @@ test("OCI scanner plan enforces immutable offline non-root resource and filesyst
   assert.ok(plan.runtimeArgs.includes("--cpus=1.5"));
   assert.ok(plan.runtimeArgs.includes("--user=65532:65532"));
   assert.ok(plan.runtimeArgs.includes("type=bind,src=/srv/synsec/workspaces/job-1,dst=/workspace,readonly"));
-  assert.ok(plan.runtimeArgs.some((value) => value.startsWith("type=tmpfs,dst=/scratch,")));
-  assert.ok(plan.runtimeArgs.some((value) => value.startsWith("type=tmpfs,dst=/tmp,")));
+  assert.ok(plan.runtimeArgs.includes("--tmpfs"));
+  assert.ok(plan.runtimeArgs.includes("/scratch:rw,noexec,nosuid,nodev,size=67108864,uid=65532,gid=65532,mode=0700"));
+  assert.ok(plan.runtimeArgs.includes("/tmp:rw,noexec,nosuid,nodev,size=67108864,uid=65532,gid=65532,mode=0700"));
   assert.equal(plan.runtimeArgs.includes("--privileged"), false);
   assert.equal(plan.runtimeArgs.some((value) => value.includes("docker.sock")), false);
 });
