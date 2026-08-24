@@ -6,6 +6,11 @@ import {
   PostgresGitHubScanQueue,
   PostgresGitHubWebhookReplayStore,
 } from "@synsec/github/postgres-shared-state";
+import {
+  migrateSynSecGitHubPostgresInstallationState,
+  PostgresGitHubInstallationStore,
+} from "@synsec/github/postgres-installation-store";
+import { synchronizeGitHubInstallationState } from "@synsec/github/installation-sync";
 
 const connectionString = process.env.SYNSEC_TEST_POSTGRES_URL?.trim();
 const integration = connectionString ? test : test.skip;
@@ -21,11 +26,37 @@ function job(deliveryId, headByte, createdAt) {
   };
 }
 
-integration("PostgreSQL migration is idempotent and records the exact shared-state schema version", async () => {
+function installationEvent(overrides = {}) {
+  return {
+    event: "installation",
+    action: "created",
+    installationId: 4242,
+    accountLogin: "synsec-org",
+    accountType: "Organization",
+    repositorySelection: "selected",
+    repositories: ["synsec/base"],
+    repositoriesAdded: [],
+    repositoriesRemoved: [],
+    ...overrides,
+  };
+}
+
+function repositoryDelta(repository) {
+  return installationEvent({
+    event: "installation_repositories",
+    action: "added",
+    repositories: [],
+    repositoriesAdded: [repository],
+  });
+}
+
+integration("PostgreSQL migrations are idempotent and record the exact shared-state schema version", async () => {
   const pool = new pg.Pool({ connectionString, max: 4 });
   try {
     await migrateSynSecGitHubPostgresState(pool);
     await migrateSynSecGitHubPostgresState(pool);
+    await migrateSynSecGitHubPostgresInstallationState(pool);
+    await migrateSynSecGitHubPostgresInstallationState(pool);
     const result = await pool.query("SELECT version FROM synsec_github_schema WHERE component = 'shared-state'");
     assert.deepEqual(result.rows, [{ version: 1 }]);
   } finally {
@@ -113,6 +144,63 @@ integration("PostgreSQL queue rejects a stale fence after lease reclamation", as
     );
     assert.equal(await queueB.complete(newLease.jobId, newLease.leaseId), true);
     assert.deepEqual(await queueA.list(), []);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration("PostgreSQL installation deltas are serialized transactionally across independent stores", async () => {
+  const pool = new pg.Pool({ connectionString, max: 12 });
+  try {
+    await migrateSynSecGitHubPostgresInstallationState(pool);
+    await pool.query("DELETE FROM synsec_github_installations");
+    const storeA = new PostgresGitHubInstallationStore(pool);
+    const storeB = new PostgresGitHubInstallationStore(pool);
+    await synchronizeGitHubInstallationState(installationEvent(), storeA, Date.parse("2026-08-24T00:00:00.000Z"));
+
+    await Promise.all([
+      synchronizeGitHubInstallationState(repositoryDelta("synsec/alpha"), storeA, Date.parse("2026-08-24T00:00:01.000Z")),
+      synchronizeGitHubInstallationState(repositoryDelta("synsec/beta"), storeB, Date.parse("2026-08-24T00:00:02.000Z")),
+    ]);
+
+    const record = await storeA.get(4242);
+    assert.deepEqual(record?.repositories, ["synsec/alpha", "synsec/base", "synsec/beta"]);
+  } finally {
+    await pool.end();
+  }
+});
+
+integration("PostgreSQL authorization revocation is immediately shared across store instances", async () => {
+  const pool = new pg.Pool({ connectionString, max: 8 });
+  try {
+    await migrateSynSecGitHubPostgresInstallationState(pool);
+    await pool.query("DELETE FROM synsec_github_installations");
+    const storeA = new PostgresGitHubInstallationStore(pool);
+    const storeB = new PostgresGitHubInstallationStore(pool);
+    await synchronizeGitHubInstallationState(installationEvent(), storeA, Date.parse("2026-08-24T00:00:00.000Z"));
+    assert.equal(await storeB.isRepositoryAllowed(4242, "synsec/base"), true);
+    assert.equal(await storeB.isRepositoryAllowed(4242, "synsec/other"), false);
+
+    await synchronizeGitHubInstallationState(
+      installationEvent({ action: "suspend", suspendedAt: "2026-08-24T00:00:03.000Z", repositories: [] }),
+      storeA,
+      Date.parse("2026-08-24T00:00:03.000Z"),
+    );
+    assert.equal(await storeB.isRepositoryAllowed(4242, "synsec/base"), false);
+
+    await synchronizeGitHubInstallationState(
+      installationEvent({ action: "unsuspend", repositories: [] }),
+      storeB,
+      Date.parse("2026-08-24T00:00:04.000Z"),
+    );
+    assert.equal(await storeA.isRepositoryAllowed(4242, "synsec/base"), true);
+
+    await synchronizeGitHubInstallationState(
+      installationEvent({ action: "deleted", accountLogin: undefined, accountType: undefined, repositorySelection: undefined, repositories: [] }),
+      storeA,
+      Date.parse("2026-08-24T00:00:05.000Z"),
+    );
+    assert.equal(await storeB.isRepositoryAllowed(4242, "synsec/base"), false);
   } finally {
     await pool.end();
   }
