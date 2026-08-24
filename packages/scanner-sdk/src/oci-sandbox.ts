@@ -36,6 +36,12 @@ export interface OciScannerSandboxOptions {
   killGraceMs?: number;
 }
 
+interface NumericContainerUser {
+  uid: number;
+  gid: number;
+  value: string;
+}
+
 function boundedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number, label: string): number {
   const resolved = value ?? fallback;
   if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
@@ -62,7 +68,7 @@ function immutableImage(value: string): string {
   return value;
 }
 
-function numericNonRootUser(value: string | undefined): string {
+function numericNonRootUser(value: string | undefined): NumericContainerUser {
   const normalized = value ?? DEFAULT_CONTAINER_USER;
   const match = /^(\d+):(\d+)$/.exec(normalized);
   if (!match) throw new Error("OCI scanner user must be a numeric uid:gid pair.");
@@ -71,7 +77,7 @@ function numericNonRootUser(value: string | undefined): string {
   if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid) || uid <= 0 || gid <= 0 || uid > 2_147_483_647 || gid > 2_147_483_647) {
     throw new Error("OCI scanner user must use positive bounded non-root uid/gid values.");
   }
-  return `${uid}:${gid}`;
+  return { uid, gid, value: `${uid}:${gid}` };
 }
 
 function repositoryRoot(value: string): string {
@@ -86,6 +92,10 @@ function scannerToken(value: string, label: string): string {
     throw new Error(`${label} must be a bounded single-line string.`);
   }
   return value;
+}
+
+function ownedTmpfs(path: "/scratch" | "/tmp", bytes: number, user: NumericContainerUser): string {
+  return `${path}:rw,noexec,nosuid,nodev,size=${bytes},uid=${user.uid},gid=${user.gid},mode=0700`;
 }
 
 export interface OciScannerSandboxPlan {
@@ -164,13 +174,13 @@ export function buildOciScannerSandboxPlan(
     `--memory=${memoryBytes}`,
     `--memory-swap=${memoryBytes}`,
     `--cpus=${cpuLimit}`,
-    `--user=${user}`,
+    `--user=${user.value}`,
     "--mount",
     `type=bind,src=${root},dst=${DEFAULT_CONTAINER_WORKDIR},readonly`,
-    "--mount",
-    `type=tmpfs,dst=/scratch,tmpfs-size=${scratchBytes},tmpfs-mode=0700`,
-    "--mount",
-    `type=tmpfs,dst=/tmp,tmpfs-size=${scratchBytes},tmpfs-mode=0700`,
+    "--tmpfs",
+    ownedTmpfs("/scratch", scratchBytes, user),
+    "--tmpfs",
+    ownedTmpfs("/tmp", scratchBytes, user),
     `--workdir=${DEFAULT_CONTAINER_WORKDIR}`,
     "--env=HOME=/scratch",
     "--env=TMPDIR=/tmp",
