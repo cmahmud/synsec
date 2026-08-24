@@ -179,8 +179,12 @@ function simpleRequestBinding(line: string): string | undefined {
   return match?.[1];
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function identifierPattern(identifier: string): RegExp {
-  return new RegExp(`(^|[^A-Za-z0-9_$])${identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9_$]|$)`);
+  return new RegExp(`(^|[^A-Za-z0-9_$])${escapeRegExp(identifier)}([^A-Za-z0-9_$]|$)`);
 }
 
 function directCallCallees(line: string, identifier: string): string[] {
@@ -213,8 +217,7 @@ function resolvedTargetAtLine(
     candidates.set(link.target, true);
   }
   if (candidates.size !== 1) return undefined;
-  const [entry] = candidates.entries();
-  const first = entry.next().value as [string, boolean] | undefined;
+  const first = candidates.entries().next().value as [string, boolean] | undefined;
   return first ? { target: first[0], usedImport: first[1] } : undefined;
 }
 
@@ -239,7 +242,7 @@ function forwardingTarget(
     if (lineNumber > end) return undefined;
     if (/^\s*(?:\/\/|\/\*|\*)/.test(line)) continue;
     if (candidate) return undefined;
-    if (new RegExp(`\\b${binding.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*(?:=|\\+=|-=|\\*=|\/=|%=|\\+\\+|--)`).test(line)) return undefined;
+    if (new RegExp(`\\b${escapeRegExp(binding)}\\s*(?:=|\\+=|-=|\\*=|\/=|%=|\\+\\+|--)`).test(line)) return undefined;
     const callees = directCallCallees(line, binding);
     if (callees.length === 0) return undefined;
     const resolved = resolvedTargetAtLine(graph, importCallLinks, owner, lineNumber, callees);
