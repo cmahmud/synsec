@@ -18,6 +18,7 @@
     "./credential-rotation": "./dist/credential-rotation.js",
     "./credential-reload": "./dist/credential-reload.js",
     "./credential-reload-freshness": "./dist/credential-reload-freshness.js",
+    "./runtime-credentials": "./dist/runtime-credentials.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./scanner-isolation-profile": "./dist/scanner-isolation-profile.js",
     "./scanner-production-readiness": "./dist/scanner-production-readiness.js",
