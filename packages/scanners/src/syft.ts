@@ -1,5 +1,10 @@
 import type { SbomArtifact, SbomPackage, ScanResult } from "@synsec/core";
-import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
+import type {
+  ScannerAdapter,
+  ScannerAvailability,
+  ScannerContext,
+  ScannerProcessRunner,
+} from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asRecord, asString, commandAvailability, relativeLike, safeJson } from "./utils.js";
 
@@ -81,13 +86,15 @@ export class SyftAdapter implements ScannerAdapter {
   readonly displayName = "Syft";
   readonly capabilities = ["sbom"] as const;
 
+  constructor(private readonly processRunner: ScannerProcessRunner = runProcess) {}
+
   checkAvailability(): Promise<ScannerAvailability> {
-    return commandAvailability("syft", ["version"], this.displayName);
+    return commandAvailability("syft", ["version"], this.displayName, this.processRunner);
   }
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
-    const output = await runProcess(
+    const output = await this.processRunner(
       "syft",
       [`dir:${context.target.path}`, "-o", "syft-json"],
       { timeoutMs: context.timeoutMs ?? 10 * 60_000, signal: context.signal },
