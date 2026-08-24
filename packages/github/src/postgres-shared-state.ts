@@ -179,6 +179,25 @@ function jobFromRow(row: Record<string, unknown>): GitHubScanJob {
   };
 }
 
+function matchesLogicalJob(
+  existing: GitHubScanJob,
+  input: {
+    installationId: number;
+    repository: string;
+    headSha: string;
+    event: GitHubScanJob["event"];
+    baseSha?: string;
+    pullRequestNumber?: number;
+  },
+): boolean {
+  return existing.installationId === input.installationId
+    && existing.repository === input.repository
+    && existing.headSha === input.headSha
+    && existing.event === input.event
+    && existing.baseSha === input.baseSha
+    && existing.pullRequestNumber === input.pullRequestNumber;
+}
+
 async function transaction<T>(pool: PostgresPoolLike, operation: (client: PostgresTransactionClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -340,27 +359,42 @@ export class PostgresGitHubScanQueue {
 
     return transaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock($1)", [ENQUEUE_ADVISORY_LOCK]);
+      const existingResult = await client.query(
+        "SELECT * FROM synsec_github_scan_jobs WHERE delivery_id = $1",
+        [delivery],
+      );
+      if (existingResult.rows.length > 1) throw new Error("PostgreSQL scan queue contains duplicate delivery ids.");
+      const existingRow = existingResult.rows[0];
+      if (existingRow) {
+        const existing = jobFromRow(existingRow);
+        if (!matchesLogicalJob(existing, {
+          installationId,
+          repository: repo,
+          headSha,
+          event,
+          ...(baseSha ? { baseSha } : {}),
+          ...(pullRequestNumber ? { pullRequestNumber } : {}),
+        })) {
+          throw new Error("GitHub delivery id is already queued with different scan provenance.");
+        }
+        return existing;
+      }
+
       const countResult = await client.query("SELECT count(*)::integer AS count FROM synsec_github_scan_jobs");
       const count = Number(countResult.rows[0]?.count);
       if (!Number.isSafeInteger(count) || count < 0) throw new Error("PostgreSQL scan queue returned an invalid job count.");
       if (count >= MAX_QUEUE_ENTRIES) throw new Error(`GitHub scan queue reached the ${MAX_QUEUE_ENTRIES}-job limit.`);
-      try {
-        const result = await client.query(
-          `INSERT INTO synsec_github_scan_jobs(
-            job_id, delivery_id, installation_id, repository, head_sha, event, base_sha,
-            pull_request_number, created_at, attempts, status
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::timestamptz, clock_timestamp()),0,'pending')
-          RETURNING *`,
-          [id, delivery, installationId, repo, headSha, event, baseSha ?? null, pullRequestNumber ?? null, createdAt ?? null],
-        );
-        const row = result.rows[0];
-        if (!row) throw new Error("PostgreSQL scan queue insertion did not return durable state.");
-        return jobFromRow(row);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-        if (code === "23505") throw new Error("GitHub delivery id is already queued.");
-        throw error;
-      }
+      const result = await client.query(
+        `INSERT INTO synsec_github_scan_jobs(
+          job_id, delivery_id, installation_id, repository, head_sha, event, base_sha,
+          pull_request_number, created_at, attempts, status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::timestamptz, clock_timestamp()),0,'pending')
+        RETURNING *`,
+        [id, delivery, installationId, repo, headSha, event, baseSha ?? null, pullRequestNumber ?? null, createdAt ?? null],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error("PostgreSQL scan queue insertion did not return durable state.");
+      return jobFromRow(row);
     });
   }
 
