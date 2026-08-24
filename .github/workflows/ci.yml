@@ -71,5 +71,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: PostgreSQL shared-state integration
-        run: node --test tests/postgres-shared-state.test.mjs
+      - name: PostgreSQL shared-state integration and canonical conformance
+        run: node --test tests/postgres-shared-state.test.mjs tests/postgres-shared-state-conformance.test.mjs
