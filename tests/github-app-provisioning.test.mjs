@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildSynSecGitHubAppManifest,
   createSynSecGitHubAppManifestRegistration,
+  provisionSynSecGitHubAppManifestConversion,
   validateSynSecGitHubAppManifestCallback,
 } from "@synsec/github/app-provisioning";
 
@@ -17,6 +18,17 @@ function options(overrides = {}) {
     ...overrides,
   };
 }
+
+function validatedCallback() {
+  return validateSynSecGitHubAppManifestCallback({
+    code: "temporary_manifest_code_123",
+    state: "expected_state_123",
+    expectedState: "expected_state_123",
+  });
+}
+
+const privateKey = `-----BEGIN PRIVATE KEY-----\n${"A".repeat(128)}\n-----END PRIVATE KEY-----`;
+const webhookSecret = "w".repeat(48);
 
 test("manifest provisioning uses the feature-aware least-privilege setup contract", () => {
   const manifest = buildSynSecGitHubAppManifest(options());
@@ -72,11 +84,7 @@ test("manifest registration emits a bounded POST contract for personal and organ
 });
 
 test("manifest callback validation requires matching state and never treats callback presence as conversion success", () => {
-  const callback = validateSynSecGitHubAppManifestCallback({
-    code: "temporary_manifest_code_123",
-    state: "expected_state_123",
-    expectedState: "expected_state_123",
-  });
+  const callback = validatedCallback();
   assert.deepEqual(callback, {
     version: 1,
     code: "temporary_manifest_code_123",
@@ -98,6 +106,97 @@ test("manifest callback validation requires matching state and never treats call
       expectedState: "expected_state_123",
     }),
     /missing code or state/,
+  );
+});
+
+test("manifest conversion hands credentials directly to activation and returns secret-free metadata", async () => {
+  let activated;
+  const result = await provisionSynSecGitHubAppManifestConversion({
+    callback: validatedCallback(),
+    async exchange(code) {
+      assert.equal(code, "temporary_manifest_code_123");
+      return {
+        id: 424242,
+        pem: privateKey,
+        webhook_secret: webhookSecret,
+        client_secret: "unused-client-secret-must-not-be-forwarded",
+        owner: { login: "untrusted-response-metadata" },
+      };
+    },
+    async activate(credentials) {
+      activated = credentials;
+      return { generation: "secret-manager:version/42" };
+    },
+  });
+
+  assert.deepEqual(activated, {
+    appId: 424242,
+    privateKey,
+    webhookSecret,
+  });
+  assert.deepEqual(result, {
+    version: 1,
+    appId: 424242,
+    generation: "secret-manager:version/42",
+    interpretation: "secret-manager-handoff-complete-not-runtime-readiness",
+  });
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /BEGIN PRIVATE KEY/);
+  assert.doesNotMatch(serialized, /unused-client-secret/);
+  assert.doesNotMatch(serialized, new RegExp(webhookSecret));
+});
+
+test("manifest conversion fails closed on malformed credential responses before activation", async () => {
+  let activationCount = 0;
+  await assert.rejects(
+    provisionSynSecGitHubAppManifestConversion({
+      callback: validatedCallback(),
+      async exchange() {
+        return { id: 42, pem: "not-a-key", webhook_secret: webhookSecret };
+      },
+      async activate() {
+        activationCount += 1;
+        return { generation: "never" };
+      },
+    }),
+    /private key must be PEM encoded/,
+  );
+  assert.equal(activationCount, 0);
+});
+
+test("manifest conversion sanitizes transport and activation failures", async () => {
+  await assert.rejects(
+    provisionSynSecGitHubAppManifestConversion({
+      callback: validatedCallback(),
+      async exchange() {
+        throw new Error(`backend leaked ${webhookSecret}`);
+      },
+      async activate() {
+        throw new Error("unreachable");
+      },
+    }),
+    (error) => {
+      assert.equal(error.message, "GitHub App manifest conversion transport failed.");
+      assert.doesNotMatch(error.message, new RegExp(webhookSecret));
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    provisionSynSecGitHubAppManifestConversion({
+      callback: validatedCallback(),
+      async exchange() {
+        return { id: 42, pem: privateKey, webhook_secret: webhookSecret };
+      },
+      async activate() {
+        throw new Error(`secret manager leaked ${privateKey}`);
+      },
+    }),
+    (error) => {
+      assert.equal(error.message, "GitHub App credential activation failed.");
+      assert.doesNotMatch(error.message, /BEGIN PRIVATE KEY/);
+      return true;
+    },
   );
 });
 
