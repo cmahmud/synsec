@@ -7,6 +7,7 @@ import { buildRepositoryIndex } from "@synsec/repository/analysis";
 import { buildModuleGraph } from "@synsec/repository/module-graph";
 import { buildRepositoryRouteFlowAnalysis } from "@synsec/repository/route-flow-analysis";
 import { findingRequestInputFlowEvidence } from "@synsec/repository/request-input-flow";
+import { findingRequestInputForwardingEvidence } from "@synsec/repository/request-input-forwarding";
 
 async function makeRepository(filesByPath) {
   const root = await mkdtemp(join(tmpdir(), "synsec-request-input-flow-"));
@@ -118,6 +119,7 @@ test("request source evidence does not jump to a sibling sink without a source-b
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
     assert.equal(analysis.requestInputs.length, 1);
     assert.deepEqual(analysis.requestInputFlows, []);
+    assert.deepEqual(analysis.requestInputForwardingFlows, []);
   } finally {
     await repo.cleanup();
   }
@@ -143,6 +145,7 @@ test("request input identification omits request-looking parameter names without
     const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
     assert.deepEqual(analysis.requestInputs, []);
     assert.deepEqual(analysis.requestInputFlows, []);
+    assert.deepEqual(analysis.requestInputForwardingFlows, []);
   } finally {
     await repo.cleanup();
   }
@@ -175,8 +178,130 @@ test("python request access categories are explicit and sanitized", async () => 
       access: "request.args",
     }]);
     assert.deepEqual(analysis.requestInputFlows, []);
+    assert.deepEqual(analysis.requestInputForwardingFlows, []);
     assert.equal(JSON.stringify(analysis.requestInputs).includes("'q'"), false);
   } finally {
     await repo.cleanup();
+  }
+});
+
+test("immutable single-use request binding forwards structurally through an explicit imported call", async () => {
+  const repo = await makeRepository({
+    "server.ts": [
+      'import { saveUser } from "./service.js";',
+      "export function createUser(req) {",
+      "  const name = req.body.name;",
+      "  saveUser(name);",
+      "}",
+      'router.post("/users", createUser);',
+    ].join("\n"),
+    "service.ts": [
+      "export function saveUser(name) {",
+      "  db.query(sql, [name]);",
+      "}",
+    ].join("\n"),
+  });
+  try {
+    const index = await buildRepositoryIndex(repo.root, repo.files);
+    const moduleGraph = buildModuleGraph(index, repo.files);
+    const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
+
+    assert.deepEqual(analysis.requestInputFlows, []);
+    assert.equal(analysis.requestInputForwardingFlows.length, 1);
+    const flow = analysis.requestInputForwardingFlows[0];
+    assert.equal(flow?.interpretation, "structural-request-source-immutable-binding-call-sink-evidence-only");
+    assert.equal(flow?.callScope, "same-file-and-explicit-imports");
+    assert.deepEqual(flow?.evidence.map((item) => ({
+      sourceLine: item.source.line,
+      declarationLine: item.forwarding.declarationLine,
+      callLine: item.forwarding.callLine,
+      forwardingKind: item.forwarding.kind,
+      sinkPath: item.sink.path,
+      sinkLine: item.sink.line,
+      callDistance: item.callDistance,
+    })), [{
+      sourceLine: 3,
+      declarationLine: 3,
+      callLine: 4,
+      forwardingKind: "immutable-local-binding-direct-call-argument",
+      sinkPath: "service.ts",
+      sinkLine: 2,
+      callDistance: 1,
+    }]);
+
+    assert.deepEqual(findingRequestInputForwardingEvidence(
+      analysis.requestInputForwardingFlows,
+      "service.ts",
+      2,
+    ), [{
+      method: "POST",
+      route: "/users",
+      frameworkHint: "Node HTTP router",
+      resolution: "named-function",
+      handler: "createUser",
+      sourceKind: "body",
+      sourceFunction: "createUser",
+      sinkKind: "database",
+      sinkFunction: "saveUser",
+      callDistance: 1,
+      callScope: "same-file-and-explicit-imports",
+      interpretation: "structural-request-source-immutable-binding-call-sink-evidence-only",
+    }]);
+    assert.equal(JSON.stringify(flow).includes("name ="), false);
+    assert.equal(JSON.stringify(flow).includes("req.body.name"), false);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("request forwarding fails closed on mutation, transformation, multiple use, and unresolved calls", async () => {
+  const cases = [
+    ["mutation", [
+      "export function handler(req) {",
+      "  const term = req.query.term;",
+      "  term = normalize(term);",
+      "  runQuery(term);",
+      "}",
+      "function runQuery(term) { db.query(sql); }",
+      'router.get("/search", handler);',
+    ]],
+    ["transformation", [
+      "export function handler(req) {",
+      "  const term = req.query.term;",
+      "  runQuery(normalize(term));",
+      "}",
+      "function runQuery(term) { db.query(sql); }",
+      'router.get("/search", handler);',
+    ]],
+    ["multiple-use", [
+      "export function handler(req) {",
+      "  const term = req.query.term;",
+      "  audit(term);",
+      "  runQuery(term);",
+      "}",
+      "function audit(term) { return term; }",
+      "function runQuery(term) { db.query(sql); }",
+      'router.get("/search", handler);',
+    ]],
+    ["unresolved", [
+      "export function handler(req) {",
+      "  const term = req.query.term;",
+      "  externalClient.send(term);",
+      "}",
+      'router.get("/search", handler);',
+      "function localSink() { db.query(sql); }",
+    ]],
+  ];
+
+  for (const [name, lines] of cases) {
+    const repo = await makeRepository({ [`${name}.ts`]: lines.join("\n") });
+    try {
+      const index = await buildRepositoryIndex(repo.root, repo.files);
+      const moduleGraph = buildModuleGraph(index, repo.files);
+      const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, moduleGraph);
+      assert.deepEqual(analysis.requestInputForwardingFlows, [], name);
+    } finally {
+      await repo.cleanup();
+    }
   }
 });
