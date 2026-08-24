@@ -1,55 +1,83 @@
 # PostgreSQL shared state
 
-SynSec now includes a PostgreSQL implementation for the webhook replay and scan-queue portions of the hosted GitHub App shared-state contract.
+SynSec now includes a built-in PostgreSQL implementation for all seven hosted GitHub App shared-state capabilities. The low-level replay/queue pieces are exported from `@synsec/github/postgres-shared-state`, transactional installation authorization from `@synsec/github/postgres-installation-store`, and the production composition boundary from `@synsec/github/postgres-shared-backend`.
 
-The implementation is exported from `@synsec/github/postgres-shared-state` and accepts a caller-owned PostgreSQL pool through a narrow `query()` / `connect()` interface. SynSec does not accept, parse, persist, or expose a database connection string through this API. Hosting code remains responsible for creating the database client from its secret manager and for keeping database credentials outside scanner processes.
+All database APIs accept a caller-owned PostgreSQL pool through a narrow `query()` / `connect()` interface. SynSec does not accept, parse, persist, or expose a database connection string through these APIs. Hosting code remains responsible for constructing the client from its secret manager and for keeping database credentials outside scanner processes.
 
 ## Implemented guarantees
 
-The PostgreSQL adapter currently implements and continuously exercises these shared-state capabilities against a real PostgreSQL service in CI:
+The PostgreSQL backend implements and exercises the complete shared-state contract against a real PostgreSQL 16 service in CI:
 
 - `atomicReplayClaim` — one SQL upsert/CTE atomically accepts a new or expired delivery while concurrent replicas observe the same durable claim.
 - `atomicQueueInsertion` — a database unique constraint prevents duplicate delivery insertion; queue capacity and insertion are serialized by a transaction-scoped PostgreSQL advisory lock.
 - `atomicQueueClaimWithFence` — workers select claimable work with `FOR UPDATE SKIP LOCKED` and create a fresh random lease id in the same atomic update.
 - `compareAndSetLeaseRenewal` — renewal updates only the currently leased row with the exact unexpired lease id.
 - `fencedQueueTransitions` — release, failure, and completion require the exact current unexpired lease id.
+- `transactionalInstallationState` — installation and repository-selection read/modify/write operations execute on one transaction-scoped connection under an installation-specific PostgreSQL advisory lock, so independent replicas cannot overwrite one another's repository deltas.
+- `sharedAuthorizationState` — authorization checks query the shared durable installation table each time, so suspension, deletion, and repository-selection changes become authoritative across independent replicas rather than relying on process-local caches.
 
-The schema stores commit-pinned job metadata and installation ids only. It does not contain installation tokens, GitHub App private keys, webhook secrets, repository credentials, scanner output, source excerpts, or arbitrary outbound URLs.
+The database schema stores only replay identity/timestamps, commit-pinned scan-job metadata, installation/account authorization metadata, selected repository identities, lease metadata, and schema version state. It does not store installation tokens, GitHub App private keys, webhook secrets, repository credentials, scanner output, source excerpts, or arbitrary outbound URLs.
 
-## Not implemented yet
+## Canonical conformance
 
-This module does **not** yet satisfy the complete seven-capability SynSec shared-state contract. In particular:
+The PostgreSQL CI job runs SynSec's existing canonical seven-scenario conformance runner against the real database service. The matrix covers concurrent duplicate replay claims, concurrent idempotent queue insertion, competing fenced claims, stale-fence renewal, stale-fence terminal transitions, concurrent installation-selection mutation, and cross-replica authorization revocation.
 
-- `transactionalInstallationState` is still missing from the PostgreSQL adapter/runtime path. The current installation synchronization helper performs a read-modify-write sequence protected by an in-process lock; merely replacing its filesystem `get()` / `put()` methods with database queries would not make repository-selection deltas safe across replicas.
-- `sharedAuthorizationState` therefore also remains incomplete as a demonstrated multi-host runtime guarantee.
+Passing CI demonstrates the behavior of the built-in adapter implementation under those adversarial scenarios. It is still **evidence**, not a magic property inferred from a configuration flag. `createGitHubAppPostgresSharedRuntime()` routes through the same evidence gate as every other shared runtime and requires a complete conformance report whose `backendId` and `implementationVersion` exactly match the built-in PostgreSQL contract.
 
-For that reason, the PostgreSQL replay/queue adapter must not be represented as a complete backend contract and cannot by itself pass `createGitHubAppSharedRuntime()` production evidence checks.
+The current stable identity is:
+
+- backend id: `postgres-v1`
+- implementation version: `0.2.0-postgres-v1`
+
+Do not edit these fields in a stored report to make stale evidence appear current. The evidence gate recomputes canonical coverage and checks exact identity matching.
 
 ## Schema migration
 
-Call `migrateSynSecGitHubPostgresState(pool)` before activating the adapter. Migration runs in one database transaction, creates the required tables/indexes idempotently, and records schema version `1` in `synsec_github_schema`. A different recorded version fails closed rather than being silently overwritten.
+Use `migrateSynSecGitHubPostgresBackend(pool)` from `@synsec/github/postgres-shared-backend` before activating the stores. The composed migration:
 
-Migration is intentionally separate from runtime construction so operators can run it with a purpose-specific deployment identity rather than granting DDL privileges to long-running webhook or worker processes.
+- runs under one transaction-scoped PostgreSQL advisory lock so concurrent deployment replicas cannot race DDL;
+- creates replay, queue, installation, index, and schema-version structures idempotently;
+- records shared-state schema version `1` and fails closed on an unsupported recorded version; and
+- repairs the pre-release replay timestamp shape to millisecond precision so the exact replay claim token returned through JavaScript can be used for compare-and-set release without precision loss.
 
-## Example integration
+Migration remains deliberately separate from runtime construction. Production operators can therefore execute it with a purpose-specific deployment identity and avoid granting DDL privileges to long-running webhook or worker processes.
+
+## Store composition
 
 ```ts
 import { Pool } from "pg";
 import {
-  migrateSynSecGitHubPostgresState,
-  PostgresGitHubScanQueue,
-  PostgresGitHubWebhookReplayStore,
-} from "@synsec/github/postgres-shared-state";
+  buildSynSecGitHubPostgresBackendContract,
+  createSynSecGitHubPostgresSharedStores,
+  migrateSynSecGitHubPostgresBackend,
+} from "@synsec/github/postgres-shared-backend";
 
 const pool = new Pool({ connectionString: process.env.SYNSEC_DATABASE_URL });
-await migrateSynSecGitHubPostgresState(pool);
+await migrateSynSecGitHubPostgresBackend(pool);
 
-const replayStore = new PostgresGitHubWebhookReplayStore(pool);
-const queue = new PostgresGitHubScanQueue(pool);
+const stores = createSynSecGitHubPostgresSharedStores(pool);
+const contract = buildSynSecGitHubPostgresBackendContract();
 ```
 
 The example keeps the connection string in hosting code. Do not pass `SYNSEC_DATABASE_URL`, GitHub tokens, App private keys, webhook secrets, or other hosting credentials into scanner environments.
 
-## Real-backend verification
+## Evidence-gated hosted runtime
 
-The repository CI starts PostgreSQL 16 and verifies migration idempotence, competing replay claims, concurrent idempotent queue insertion, competing queue claims, lease reclamation, fresh fencing identities, and stale-fence renewal rejection. Those tests demonstrate only the implemented replay/queue capabilities. Complete multi-replica readiness still requires transactional installation/authorization storage and then the canonical seven-scenario shared-state conformance report bound to the exact adapter version.
+Once a complete portable conformance report has been produced for the exact built-in backend identity, hosting code can compose the concrete stores through `createGitHubAppPostgresSharedRuntime()`:
+
+```ts
+const runtime = createGitHubAppPostgresSharedRuntime({
+  pool,
+  conformanceReport,
+  webhookSecret,
+  worker,
+});
+```
+
+The factory generates the backend contract itself and does not accept caller-supplied capability booleans. Invalid, incomplete, tampered, or stale conformance evidence fails before the external stores become active.
+
+This runtime boundary does not manage PostgreSQL credentials, create cloud databases, run migrations automatically, or weaken SynSec's existing GitHub authorization, replay, lease-fencing, exact-commit acquisition, scanner credential-isolation, or publication checks.
+
+## Operational boundary
+
+A passing shared-state conformance report establishes only the tested coordination semantics. It does not certify PostgreSQL availability, backups, encryption, tenant isolation, disaster recovery, network policy, scanner sandboxing, or GitHub App credential management. Those remain separate hosting responsibilities and readiness boundaries.
