@@ -73,3 +73,9 @@ jobs:
 
       - name: PostgreSQL shared-state integration and canonical conformance
         run: node --test --test-concurrency=1 tests/postgres-shared-state.test.mjs tests/postgres-shared-state-conformance.test.mjs tests/postgres-shared-backend.test.mjs
+
+      - name: Enforced OCI scanner sandbox integration
+        run: |
+          OCI_IMAGE="$(docker image inspect postgres:16-alpine --format '{{index .RepoDigests 0}}')"
+          test -n "$OCI_IMAGE"
+          SYNSEC_TEST_OCI_IMAGE="$OCI_IMAGE" node --test tests/oci-scanner-sandbox.test.mjs
