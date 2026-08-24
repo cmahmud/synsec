@@ -1,6 +1,11 @@
 import { lstat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
-import { runProcess, type ProcessOutput } from "./index.js";
+import { isAbsolute, relative, resolve } from "node:path";
+import {
+  runProcess,
+  type ProcessOptions,
+  type ProcessOutput,
+  type ScannerProcessRunner,
+} from "./index.js";
 
 const DEFAULT_CPU_LIMIT = 2;
 const MIN_CPU_LIMIT = 0.1;
@@ -96,6 +101,27 @@ function scannerToken(value: string, label: string): string {
 
 function ownedTmpfs(path: "/scratch" | "/tmp", bytes: number, user: NumericContainerUser): string {
   return `${path}:rw,noexec,nosuid,nodev,size=${bytes},uid=${user.uid},gid=${user.gid},mode=0700`;
+}
+
+function isWithinDirectory(candidate: string, root: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function mapRepositoryArgument(value: string, root: string): string {
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/\/$/, "");
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized === normalizedRoot) return DEFAULT_CONTAINER_WORKDIR;
+  if (normalized.startsWith(`${normalizedRoot}/`)) {
+    return `${DEFAULT_CONTAINER_WORKDIR}/${normalized.slice(normalizedRoot.length + 1)}`;
+  }
+  for (const prefix of ["dir:", "file:"]) {
+    if (normalized === `${prefix}${normalizedRoot}`) return `${prefix}${DEFAULT_CONTAINER_WORKDIR}`;
+    if (normalized.startsWith(`${prefix}${normalizedRoot}/`)) {
+      return `${prefix}${DEFAULT_CONTAINER_WORKDIR}/${normalized.slice(prefix.length + normalizedRoot.length + 1)}`;
+    }
+  }
+  return value;
 }
 
 export interface OciScannerSandboxPlan {
@@ -236,4 +262,39 @@ export async function runOciSandboxedScanner(
     maxOutputBytes: options.maxOutputBytes,
     killGraceMs: options.killGraceMs,
   });
+}
+
+/**
+ * Adapt the OCI sandbox into the same process-runner contract used by scanner adapters.
+ *
+ * Host repository paths in scanner arguments are rewritten only when they exactly identify the
+ * configured repository root (or a descendant, including `dir:` / `file:` source forms). Arbitrary
+ * absolute host paths are not mounted into the container. Explicit child environments are rejected
+ * because scanner-specific credentials must never cross this boundary.
+ */
+export function createOciScannerProcessRunner(options: OciScannerSandboxOptions): ScannerProcessRunner {
+  const root = repositoryRoot(options.repositoryRoot);
+  return async (command: string, args: string[], processOptions: ProcessOptions = {}): Promise<ProcessOutput> => {
+    if (processOptions.env !== undefined) {
+      throw new Error("OCI scanner execution does not accept explicit child environments.");
+    }
+    if (processOptions.cwd !== undefined) {
+      const cwd = resolve(processOptions.cwd);
+      if (!isWithinDirectory(cwd, root)) {
+        throw new Error("OCI scanner working directory must remain inside the configured repository root.");
+      }
+      if (cwd !== root) {
+        throw new Error("OCI scanner process runner currently requires the repository root as its working directory.");
+      }
+    }
+    const mappedArgs = args.map((value) => mapRepositoryArgument(value, root));
+    return runOciSandboxedScanner(command, mappedArgs, {
+      ...options,
+      repositoryRoot: root,
+      timeoutMs: processOptions.timeoutMs ?? options.timeoutMs,
+      signal: processOptions.signal ?? options.signal,
+      maxOutputBytes: processOptions.maxOutputBytes ?? options.maxOutputBytes,
+      killGraceMs: processOptions.killGraceMs ?? options.killGraceMs,
+    });
+  };
 }
