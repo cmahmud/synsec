@@ -12,8 +12,11 @@ import type { GitHubScanJobEnqueuer } from "./app-dispatch.js";
 const MAX_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024;
 const DEFAULT_PATH = "/github/webhooks";
 
+export type GitHubWebhookSecretSource = GitHubWebhookSecret | (() => GitHubWebhookSecret);
+
 export interface GitHubAppWebhookHttpOptions {
-  webhookSecret: GitHubWebhookSecret;
+  /** Static secret set or memory-only supplier resolved immediately before signature verification. */
+  webhookSecret: GitHubWebhookSecretSource;
   replayStore: GitHubWebhookReplayManager;
   installationStore: GitHubAppInstallationStore;
   queue: GitHubScanJobEnqueuer;
@@ -53,6 +56,20 @@ function safeCallbackError(error: unknown): Error {
   return new Error(sanitizeOperationalText(message, 1000) || "GitHub App webhook processing failed.");
 }
 
+function validateWebhookSecret(value: GitHubWebhookSecret): GitHubWebhookSecret {
+  const values = typeof value === "string" ? [value] : [...value];
+  if (values.length < 1 || values.length > 2 || values.some((secret) => typeof secret !== "string" || !secret)) {
+    throw new Error("GitHub App webhook secret source returned an invalid secret set.");
+  }
+  return value;
+}
+
+function webhookSecretSupplier(value: GitHubWebhookSecretSource): () => GitHubWebhookSecret {
+  if (typeof value === "function") return () => validateWebhookSecret(value());
+  const fixed = validateWebhookSecret(value);
+  return () => fixed;
+}
+
 async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
   const declared = header(request, "content-length");
   if (declared !== undefined) {
@@ -77,19 +94,21 @@ async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
  *
  * The handler accepts only POST requests to one configured path, bounds the raw body before
  * signature processing, requires GitHub's event/delivery/signature headers, and delegates to the
- * replay-protected durable App handler. Internal error details are never returned to the caller.
- * Errors forwarded to the optional operator callback are also sanitized and bounded so hosted
- * logging integrations cannot accidentally persist credentials from backend/process failures.
- * A durable-processing failure returns 500 only after the App handler has attempted to release the
- * exact replay claim, allowing GitHub to retry the delivery instead of losing it.
+ * replay-protected durable App handler. A webhook-secret supplier, when configured, is resolved
+ * immediately before every verification so a validated memory-only credential source can atomically
+ * rotate one/two-secret overlap generations without rebuilding the HTTP handler. Supplier failures
+ * fail the request closed. Internal error details are never returned to the caller. Errors forwarded
+ * to the optional operator callback are sanitized and bounded so hosted logging integrations cannot
+ * accidentally persist credentials from backend/process failures. A durable-processing failure
+ * returns 500 only after the App handler has attempted to release the exact replay claim, allowing
+ * GitHub to retry the delivery instead of losing it.
  */
 export function createGitHubAppWebhookHttpHandler(options: GitHubAppWebhookHttpOptions) {
   const path = options.path?.trim() || DEFAULT_PATH;
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
     throw new Error("GitHub App webhook path must be an absolute path without query or fragment components.");
   }
-  const secretCount = typeof options.webhookSecret === "string" ? 1 : options.webhookSecret.length;
-  if (secretCount < 1) throw new Error("GitHub App webhook secret is required.");
+  const getWebhookSecret = webhookSecretSupplier(options.webhookSecret);
 
   return async function githubAppWebhookHttpHandler(
     request: IncomingMessage,
@@ -135,7 +154,7 @@ export function createGitHubAppWebhookHttpHandler(options: GitHubAppWebhookHttpO
       const result = await handleGitHubAppWebhook({
         body,
         signatureHeader,
-        webhookSecret: options.webhookSecret,
+        webhookSecret: getWebhookSecret(),
         eventName,
         deliveryId,
         replayStore: options.replayStore,
