@@ -37,6 +37,7 @@
     "./postgres-shared-state": "./dist/postgres-shared-state.js",
     "./postgres-installation-store": "./dist/postgres-installation-store.js",
     "./postgres-shared-backend": "./dist/postgres-shared-backend.js",
+    "./postgres-lease-observer": "./dist/postgres-lease-observer.js",
     "./app-status": "./dist/app-status.js",
     "./app-readiness-policy": "./dist/app-readiness-policy.js",
     "./app-server": "./dist/app-server.js",
