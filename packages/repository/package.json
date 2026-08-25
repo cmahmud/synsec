@@ -10,6 +10,7 @@
     "./dependency-usage": "./dist/dependency-usage.js",
     "./call-graph": "./dist/call-graph.js",
     "./import-call-links": "./dist/import-call-links.js",
+    "./import-route-handlers": "./dist/import-route-handlers.js",
     "./request-input-flow": "./dist/request-input-flow.js",
     "./request-input-forwarding": "./dist/request-input-forwarding.js",
     "./request-input-return-flow": "./dist/request-input-return-flow.js",
