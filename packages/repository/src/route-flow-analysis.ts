@@ -8,6 +8,7 @@ import {
   buildFastApiRouteDependencyContexts,
   type FastApiRouteDependencyContext,
 } from "./fastapi-route-dependencies.js";
+import { composeFastApiRouterEntrypoints } from "./fastapi-router-composition.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
@@ -81,6 +82,8 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRequestInputReturnForwardLines?: number;
   maxDjangoIncludeDepth?: number;
   maxDjangoComposedRoutes?: number;
+  maxFastApiIncludeDepth?: number;
+  maxFastApiComposedRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -162,7 +165,11 @@ async function safeAnalysisFiles(
  * `dependencies=[Depends(name), Security(name)]` lists with explicitly imported FastAPI wrappers.
  * Dependency identifiers resolve only to unique already-defined same-file Python functions or
  * unshadowed repository-local named imports; factories, dotted expressions, dynamic lists,
- * ambiguous targets, and shadowed names remain unresolved. Django URLConf `path()` registrations
+ * ambiguous targets, and shadowed names remain unresolved. A separate FastAPI router-composition
+ * layer follows only explicit literal `APIRouter(prefix=...)` declarations and bounded
+ * `app.include_router()` / `router.include_router()` edges. Imported routers require one unshadowed
+ * repository-local named import and one matching router declaration; dynamic prefixes, factories,
+ * dotted references, ambiguous targets, and cycles fail closed. Django URLConf `path()` registrations
  * receive view-function resolution only for a simple function identifier that maps uniquely to a
  * same-file function or an unshadowed explicit repository-local `from ... import ...` binding. A
  * separate bounded Django include layer composes route identities only for literal
@@ -170,9 +177,10 @@ async function safeAnalysisFiles(
  * Python file, starts from structural URLConf roots, bounds include depth/output, and rejects cycles,
  * ambiguous modules, and dynamic include forms. Dotted views, class-based `as_view()`, lambdas,
  * wildcard/parenthesized imports, and dynamic expressions remain unresolved. Included route
- * identities, FastAPI dependencies, middleware auth signals, resolved view calls, bounded callees,
- * and all request-flow layers remain structural context rather than proof that framework registration,
- * dependencies, ROOT_URLCONF, include(), middleware, views, or data flows execute at runtime.
+ * identities, FastAPI router/dependency composition, middleware auth signals, resolved view calls,
+ * bounded callees, and all request-flow layers remain structural context rather than proof that
+ * framework registration, dependencies, ROOT_URLCONF, include(), middleware, views, or data flows
+ * execute at runtime.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -223,6 +231,16 @@ export async function buildRepositoryRouteFlowAnalysis(
     {
       ...(options.maxDjangoIncludeDepth !== undefined ? { maxIncludeDepth: options.maxDjangoIncludeDepth } : {}),
       ...(options.maxDjangoComposedRoutes !== undefined ? { maxComposedRoutes: options.maxDjangoComposedRoutes } : {}),
+    },
+  );
+  entrypoints = await composeFastApiRouterEntrypoints(
+    rootPath,
+    safe.files,
+    moduleGraph,
+    entrypoints,
+    {
+      ...(options.maxFastApiIncludeDepth !== undefined ? { maxIncludeDepth: options.maxFastApiIncludeDepth } : {}),
+      ...(options.maxFastApiComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFastApiComposedRoutes } : {}),
     },
   );
   const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(
