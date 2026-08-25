@@ -11,6 +11,10 @@ import {
 } from "./fastapi-route-dependencies.js";
 import { composeFastApiRouterEntrypoints } from "./fastapi-router-composition.js";
 import { composeFlaskBlueprintEntrypoints } from "./flask-blueprint-composition.js";
+import {
+  composeGinRouterEntrypoints,
+  type GinRouteMiddlewareContext,
+} from "./gin-router-composition.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import {
@@ -65,6 +69,7 @@ export interface RepositoryRouteFlowAnalysis {
   requestInputs: RequestInputSignal[];
   entrypoints: RouteEntrypoint[];
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
+  ginMiddlewareContexts: GinRouteMiddlewareContext[];
   koaMiddlewareContexts: KoaRouteMiddlewareContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
@@ -100,6 +105,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxFastApiComposedRoutes?: number;
   maxFlaskBlueprintDepth?: number;
   maxFlaskComposedRoutes?: number;
+  maxGinRoutes?: number;
   maxKoaRoutes?: number;
   maxNestJsDecoratorDistance?: number;
   maxNestJsRoutes?: number;
@@ -190,6 +196,13 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxExpressMountDepth !== undefined ? { maxMountDepth: options.maxExpressMountDepth } : {}),
     ...(options.maxExpressComposedRoutes !== undefined ? { maxComposedRoutes: options.maxExpressComposedRoutes } : {}),
   });
+  const gin = await composeGinRouterEntrypoints(rootPath, safe.files, callGraph, entrypoints, {
+    ...(options.maxGinRoutes !== undefined ? { maxRoutes: options.maxGinRoutes } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = gin.entrypoints;
+  const ginMiddlewareContexts = gin.middlewareContexts;
   const koa = await composeKoaRouterEntrypoints(rootPath, safe.files, callGraph, entrypoints, {
     ...(options.maxKoaRoutes !== undefined ? { maxRoutes: options.maxKoaRoutes } : {}),
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
@@ -282,6 +295,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     requestInputs,
     entrypoints,
     routeMiddlewareContexts,
+    ginMiddlewareContexts,
     koaMiddlewareContexts,
     fastApiDependencyContexts,
     nestJsGuardContexts,
