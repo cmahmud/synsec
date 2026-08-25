@@ -21,6 +21,10 @@ import {
   type RequestInputSignal,
   type RouteRequestInputFlowContext,
 } from "./request-input-flow.js";
+import {
+  repositoryRouteRequestInputReturnFlowContexts,
+  type RouteRequestInputReturnFlowContext,
+} from "./request-input-return-flow.js";
 import { resolveRouteEntrypoints, type RouteEntrypoint } from "./route-entrypoints.js";
 import {
   buildRouteMiddlewareCompositionContexts,
@@ -54,6 +58,7 @@ export interface RepositoryRouteFlowAnalysis {
   routeFlows: RouteSinkFlowContext[];
   requestInputFlows: RouteRequestInputFlowContext[];
   requestInputForwardingFlows: RouteRequestInputForwardingContext[];
+  requestInputReturnFlows: RouteRequestInputReturnFlowContext[];
   routeProtectionContexts: RouteProtectionContext[];
   routeSecurityReviews: RouteSecurityReviewContext[];
   inputFileCount: number;
@@ -73,6 +78,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRoutes?: number;
   maxRequestInputSignals?: number;
   maxRequestInputForwardLines?: number;
+  maxRequestInputReturnForwardLines?: number;
   maxDjangoIncludeDepth?: number;
   maxDjangoComposedRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
@@ -145,25 +151,28 @@ async function safeAnalysisFiles(
  * unique lexical source/sink ownership, and a bounded directed call path. A separate forwarding
  * layer recognizes only simple immutable JS/TS request bindings passed unchanged once into one
  * resolved call; transformations, sanitization, aliasing, mutation, multiple use, and ambiguity
- * fail closed. Explicit all-named Node route registrations additionally receive bounded middleware
- * composition evidence: middleware identifiers resolve only to unique same-file functions or
- * explicit repository-local named imports, and shadowed/dynamic/ambiguous middleware stays
- * unresolved. FastAPI route decorators receive a separate dependency-composition layer only for
- * literal route-level `dependencies=[Depends(name), Security(name)]` lists with explicitly imported
- * FastAPI wrappers. Dependency identifiers resolve only to unique already-defined same-file Python
- * functions or unshadowed repository-local named imports; factories, dotted expressions, dynamic
- * lists, ambiguous targets, and shadowed names remain unresolved. Django URLConf `path()`
- * registrations receive view-function resolution only for a simple function identifier that maps
- * uniquely to a same-file function or an unshadowed explicit repository-local `from ... import ...`
- * binding. A separate bounded Django include layer composes route identities only for literal
+ * fail closed. A second, separately labeled return-flow layer recognizes only helpers with one
+ * exact direct request-access return, one resolved helper invocation assigned to `const`, and one
+ * unchanged direct-argument use of that return value before a bounded sink. It does not generalize
+ * into variable-level taint or infer that parameter names establish request control. Explicit
+ * all-named Node route registrations additionally receive bounded middleware composition evidence:
+ * middleware identifiers resolve only to unique same-file functions or explicit repository-local
+ * named imports, and shadowed/dynamic/ambiguous middleware stays unresolved. FastAPI route decorators
+ * receive a separate dependency-composition layer only for literal route-level
+ * `dependencies=[Depends(name), Security(name)]` lists with explicitly imported FastAPI wrappers.
+ * Dependency identifiers resolve only to unique already-defined same-file Python functions or
+ * unshadowed repository-local named imports; factories, dotted expressions, dynamic lists,
+ * ambiguous targets, and shadowed names remain unresolved. Django URLConf `path()` registrations
+ * receive view-function resolution only for a simple function identifier that maps uniquely to a
+ * same-file function or an unshadowed explicit repository-local `from ... import ...` binding. A
+ * separate bounded Django include layer composes route identities only for literal
  * `path("prefix/", include("module.urls"))` edges that resolve to exactly one supplied repository
  * Python file, starts from structural URLConf roots, bounds include depth/output, and rejects cycles,
  * ambiguous modules, and dynamic include forms. Dotted views, class-based `as_view()`, lambdas,
  * wildcard/parenthesized imports, and dynamic expressions remain unresolved. Included route
- * identities, FastAPI dependencies, middleware auth signals, resolved view calls, and bounded
- * callees remain structural context rather than proof that framework registration, dependencies,
- * ROOT_URLCONF, include(), middleware, or views execute or protect/reach a route. Auth-related route
- * protection and route-security review summaries likewise never claim runtime protection or reachability.
+ * identities, FastAPI dependencies, middleware auth signals, resolved view calls, bounded callees,
+ * and all request-flow layers remain structural context rather than proof that framework registration,
+ * dependencies, ROOT_URLCONF, include(), middleware, views, or data flows execute at runtime.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -285,6 +294,22 @@ export async function buildRepositoryRouteFlowAnalysis(
         : {}),
     },
   );
+  const requestInputReturnFlows = await repositoryRouteRequestInputReturnFlowContexts(
+    rootPath,
+    safe.files,
+    requestInputs,
+    routeFlows,
+    callGraph,
+    importCallLinks,
+    {
+      maxCallNodes,
+      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+      ...(options.maxRequestInputReturnForwardLines !== undefined
+        ? { maxForwardLines: options.maxRequestInputReturnForwardLines }
+        : {}),
+    },
+  );
   const routeProtectionContexts = repositoryRouteProtectionContexts(index, entrypoints, callGraph, protectionOptions);
   const routeSecurityReviews = buildRouteSecurityReviewContexts(
     routeFlows,
@@ -302,6 +327,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     routeFlows,
     requestInputFlows,
     requestInputForwardingFlows,
+    requestInputReturnFlows,
     routeProtectionContexts,
     routeSecurityReviews,
     inputFileCount: files.length,
