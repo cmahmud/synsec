@@ -27,6 +27,7 @@
     "./mounted-runtime-credentials": "./dist/mounted-runtime-credentials.js",
     "./app-deployment": "./dist/app-deployment.js",
     "./app-host-profile": "./dist/app-host-profile.js",
+    "./app-intake-host": "./dist/app-intake-host.js",
     "./app-upgrade": "./dist/app-upgrade.js",
     "./app-drain": "./dist/app-drain.js",
     "./app-worker-drain": "./dist/app-worker-drain.js",
