@@ -76,6 +76,10 @@ function escapeIdentifier(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function explicitFastApiDecorator(line: string): boolean {
+  return /^\s*@(app|router)\.(get|post|put|patch|delete|options|head|route)\s*\(/i.test(line);
+}
+
 function explicitFastApiWrappers(content: string, routeLine: number): Set<"Depends" | "Security"> {
   const wrappers = new Set<"Depends" | "Security">();
   const prefix = content.split(/\r?\n/).slice(0, Math.max(0, routeLine - 1));
@@ -203,8 +207,8 @@ function evidenceForDependency(
  * lists, nested expressions, wildcard/parenthesized imports, ambiguous targets, and shadowed names
  * fail closed. Auth evidence is lexical evidence within the resolved dependency and bounded same-file
  * callees; it is not proof the dependency executes, authorizes a request, or makes a route secure.
- * Route-level dependency registration is indexed independently from handler resolution; a missing or
- * ambiguous handler therefore cannot erase explicit dependency syntax from the structural result.
+ * The analyzer independently revalidates `@app` / `@router` decorator syntax from bounded source and
+ * does not trust a generic framework hint to establish FastAPI identity.
  */
 export async function buildFastApiRouteDependencyContexts(
   rootPath: string,
@@ -232,15 +236,16 @@ export async function buildFastApiRouteDependencyContexts(
     return source;
   }
 
-  for (const route of index.routes) {
+  for (const indexedRoute of index.routes) {
     if (output.length >= maxRoutes) break;
-    if (route.frameworkHint !== "Python web router") continue;
-    const routePath = normalizePath(route.path);
+    const routePath = normalizePath(indexedRoute.path);
     const content = await sourceFor(routePath);
     if (!content) continue;
-    const routeLine = content.split(/\r?\n/)[route.line - 1] ?? "";
-    const declarations = parseExplicitDependencies(routeLine, explicitFastApiWrappers(content, route.line));
+    const routeLine = content.split(/\r?\n/)[indexedRoute.line - 1] ?? "";
+    if (!explicitFastApiDecorator(routeLine)) continue;
+    const declarations = parseExplicitDependencies(routeLine, explicitFastApiWrappers(content, indexedRoute.line));
     if (!declarations || declarations.length === 0) continue;
+    const route: RouteSignal = { ...indexedRoute, frameworkHint: "FastAPI route decorator" };
 
     const lines = content.split(/\r?\n/);
     const dependencies: FastApiRouteDependency[] = [];
@@ -282,7 +287,7 @@ export async function buildFastApiRouteDependencyContexts(
       authEvidence.push(...evidenceForDependency(dependency, index, graph, maxEvidence - authEvidence.length));
       if (authEvidence.length >= maxEvidence) break;
     }
-    const entrypoint = entrypoints.find((candidate) => sameRoute(candidate.route, route));
+    const entrypoint = entrypoints.find((candidate) => sameRoute(candidate.route, indexedRoute));
 
     output.push({
       route,
