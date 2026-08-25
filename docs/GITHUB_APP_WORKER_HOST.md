@@ -28,11 +28,13 @@ The PostgreSQL connection value is read only from the environment-variable name 
 
 ## Current scanner scope
 
-The production worker **fails closed unless every configured scanner is one of `grype` or `syft`**.
+The production worker **fails closed unless every configured scanner is one of `checkov`, `grype`, or `syft`**.
 
-This is not a product-level claim that those scanners are sufficient. They are currently the adapters whose availability and scan execution both support SynSec's enforced OCI process runner. The worker refuses `opengrep`, `trivy`, `checkov`, `osv-scanner`, `scorecard`, or any other adapter in this role rather than silently executing it on the host.
+This is not a product-level claim that those scanners are sufficient. They are currently the adapters whose availability and scan execution both support SynSec's enforced OCI process runner. Checkov adds offline IaC/configuration analysis to the hosted subset; its normal bundled checks do not require SynSec to grant scanner network access. The worker still refuses `opengrep`, `trivy`, `osv-scanner`, `scorecard`, or any other unsupported adapter in this role rather than silently executing it on the host.
 
-The pinned scanner image must contain both selected tools and all data required for offline execution. The OCI sandbox uses `network=none`; SynSec will not widen networking to make an unprepared vulnerability database succeed.
+The pinned scanner image must contain every selected tool. For Grype it must also contain all vulnerability database/cache material required by the pinned version. The OCI sandbox uses `network=none`; SynSec will not widen networking to make an unprepared scanner image succeed.
+
+Changed-file Checkov scans remain bounded to validated repository-relative `-f` arguments and execute from the read-only `/workspace` repository root. Full Checkov scans map the configured repository directory into `/workspace` through the same OCI runner. Checkov exit code `1` remains its normal findings-present result; other non-zero exits fail the job.
 
 AI review must also be disabled in the worker configuration. AI review is a separate outbound disclosure/trust boundary and is not part of scanner isolation.
 
