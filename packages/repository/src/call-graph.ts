@@ -191,14 +191,16 @@ function parseGoFunctions(path: string, content: string): ParsedFunction[] {
     if (!name || !line.includes("{")) continue;
 
     let runningDepth = braceDelta(line);
-    if (runningDepth <= 0) continue;
+    if (runningDepth < 0) continue;
     let endIndex = index;
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      runningDepth += braceDelta(lines[cursor] ?? "");
-      endIndex = cursor;
-      if (runningDepth <= 0) break;
+    if (runningDepth > 0) {
+      for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+        runningDepth += braceDelta(lines[cursor] ?? "");
+        endIndex = cursor;
+        if (runningDepth <= 0) break;
+      }
+      if (runningDepth > 0) continue;
     }
-    if (runningDepth > 0) continue;
 
     functions.push({
       node: {
