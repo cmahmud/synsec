@@ -10,6 +10,7 @@ export type SynSecGitHubAppUpgradeIssueCode =
   | "replica-not-ready"
   | "mixed-schema"
   | "target-schema-mismatch"
+  | "worker-admission-open"
   | "active-work-remains"
   | "rollback-schema-incompatible"
   | "previous-release-unavailable";
@@ -19,6 +20,9 @@ export interface SynSecGitHubAppReplicaUpgradeObservation {
   releaseId: string;
   schemaVersion: number;
   ready: boolean;
+  /** True only while this replica can admit a new background worker run/queue claim. */
+  acceptingWorkerRuns: boolean;
+  /** Durable fenced leases observed from the shared backend, not the local worker-run count. */
   activeLeases: number;
   observedAt: string;
 }
@@ -102,9 +106,10 @@ function maxObservationAge(value: number | undefined): number {
  * Assess one rolling GitHub App release transition from trusted supervisor observations.
  *
  * This function never performs a deployment, migration, drain, credential operation, or rollback.
- * It is a fail-closed gate for an external service manager. Release and replica identifiers are
- * bounded non-secret metadata. Timestamps and active-lease counts must come from trusted runtime or
- * orchestration observations; repository content and webhook input must not be allowed to supply them.
+ * It is a fail-closed gate for an external service manager. A replica is drained only when worker
+ * admission is closed and the shared durable backend reports zero active fenced leases. A local
+ * zero-run observation or a momentary zero-lease count while admission remains open is insufficient.
+ * Repository content, webhook input, and scanner output must never supply these observations.
  */
 export function assessSynSecGitHubAppUpgrade(
   input: SynSecGitHubAppUpgradeAssessmentInput,
@@ -164,6 +169,10 @@ export function assessSynSecGitHubAppUpgrade(
     if (!observation.ready) {
       allReady = false;
       issues.push({ code: "replica-not-ready", replicaId: id });
+    }
+    if (observation.acceptingWorkerRuns !== false) {
+      allDrained = false;
+      issues.push({ code: "worker-admission-open", replicaId: id });
     }
     if (!Number.isSafeInteger(observation.activeLeases) || observation.activeLeases < 0 || observation.activeLeases > 1_000_000) {
       allDrained = false;
