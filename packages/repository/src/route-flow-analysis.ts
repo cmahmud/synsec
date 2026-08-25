@@ -15,6 +15,10 @@ import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-cal
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
 import {
+  composeNestJsControllerEntrypoints,
+  type NestJsGuardContext,
+} from "./nestjs-controller-composition.js";
+import {
   repositoryRouteRequestInputForwardingContexts,
   type RouteRequestInputForwardingContext,
 } from "./request-input-forwarding.js";
@@ -58,6 +62,7 @@ export interface RepositoryRouteFlowAnalysis {
   entrypoints: RouteEntrypoint[];
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
+  nestJsGuardContexts: NestJsGuardContext[];
   routeFlows: RouteSinkFlowContext[];
   requestInputFlows: RouteRequestInputFlowContext[];
   requestInputForwardingFlows: RouteRequestInputForwardingContext[];
@@ -90,6 +95,8 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxFastApiComposedRoutes?: number;
   maxFlaskBlueprintDepth?: number;
   maxFlaskComposedRoutes?: number;
+  maxNestJsDecoratorDistance?: number;
+  maxNestJsRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -199,6 +206,14 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
     maxCallNodes,
   });
+  const nestJs = await composeNestJsControllerEntrypoints(rootPath, safe.files, callGraph, entrypoints, {
+    ...(options.maxNestJsDecoratorDistance !== undefined ? { maxDecoratorDistance: options.maxNestJsDecoratorDistance } : {}),
+    ...(options.maxNestJsRoutes !== undefined ? { maxRoutes: options.maxNestJsRoutes } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = nestJs.entrypoints;
+  const nestJsGuardContexts = nestJs.guardContexts;
   const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(rootPath, safe.files, index, moduleGraph, callGraph, importCallLinks, entrypoints, {
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
@@ -251,6 +266,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     entrypoints,
     routeMiddlewareContexts,
     fastApiDependencyContexts,
+    nestJsGuardContexts,
     routeFlows,
     requestInputFlows,
     requestInputForwardingFlows,
