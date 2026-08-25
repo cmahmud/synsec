@@ -4,7 +4,7 @@ SynSec exposes `@synsec/github/app-maintenance` to connect the enforced webhook 
 
 ## Stop/restart sequence
 
-A hosting process should create one maintenance controller with the same `app-drain` and `app-worker-drain` controllers used by the live webhook and configured worker paths. The caller also supplies `countActiveLeases()`, backed by the transactional shared-state backend rather than local memory.
+A hosting process should create one maintenance controller with the same `app-drain` and `app-worker-drain` controllers used by the live webhook and configured worker paths. The caller also supplies `countActiveLeases()`, backed by the transactional shared-state backend rather than local memory. PostgreSQL deployments can pass a callback around `countSynSecGitHubPostgresActiveLeases()` from `@synsec/github/postgres-lease-observer`.
 
 Before an intentional service stop, restart, or replacement:
 
@@ -28,6 +28,8 @@ The service manager must use a stop timeout longer than SynSec's configured main
 ## Durable lease observer boundary
 
 `countActiveLeases()` is trusted hosting input. It must query the same transactional backend used for worker leases and return only a bounded non-negative integer. A local worker-run count, process table, readiness flag, or operator assertion is not a substitute.
+
+The built-in PostgreSQL observer counts only rows whose status is `leased` and whose fence has not expired according to PostgreSQL `clock_timestamp()`. Expired leases are reclaimable and therefore do not establish current ownership. CI exercises this helper against the real PostgreSQL backend, including a transition from two valid leases to one valid/one expired lease and finally zero valid leases.
 
 Backend errors are deliberately reduced to a categorical maintenance error because driver diagnostics can contain connection strings, SQL, hostnames, tenant data, or other sensitive values. Invalid counts, including negative, fractional, non-finite, or unreasonably large values, also fail closed.
 
