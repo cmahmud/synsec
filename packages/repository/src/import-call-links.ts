@@ -245,7 +245,9 @@ function callerShadowsBinding(
     return true;
   }
   const escaped = escapeRegExp(localName);
-  const declaration = new RegExp(`\\b(?:const|let|var|class|function|def|for|catch|except)\\b[^;\\n]*\\b${escaped}\\b`);
+  const variableDeclaration = new RegExp(`\\b(?:const|let|var)\\s+${escaped}\\b`);
+  const namedDeclaration = new RegExp(`\\b(?:class|function|def)\\s+${escaped}\\b`);
+  const bindingDeclaration = new RegExp(`\\b(?:for|catch|except)\\b[^;\\n]*\\b${escaped}\\b`);
   const assignment = new RegExp(`^\\s*${escaped}\\s*=`);
   const parameter = new RegExp(`\\([^)]*\\b${escaped}\\b[^)]*\\)`);
   const lines = source.split(/\r?\n/);
@@ -254,7 +256,9 @@ function callerShadowsBinding(
 
   for (let index = start; index < end; index += 1) {
     const line = lines[index] ?? "";
-    if (declaration.test(line) || assignment.test(line)) return true;
+    if (variableDeclaration.test(line) || namedDeclaration.test(line) || bindingDeclaration.test(line) || assignment.test(line)) {
+      return true;
+    }
     if (index === start && parameter.test(line)) return true;
   }
   return false;
