@@ -30,7 +30,10 @@ test("Koa router prefixes, middleware, and same-file handlers participate in exa
     'const router = new Router({ prefix: "/api" });',
     "function requireUser(ctx, next) { return next(); }",
     "function runJob(ctx) {",
-    "  child_process.exec(ctx.request.body.command);",
+    "  execute(ctx.request.body.command);",
+    "}",
+    "function execute(command) {",
+    "  child_process.exec(command);",
     "}",
     'router.post("/jobs/run", requireUser, runJob);',
   ].join("\n");
@@ -49,12 +52,12 @@ test("Koa router prefixes, middleware, and same-file handlers participate in exa
     assert.equal(entrypoint?.resolution, "named-function");
 
     const middleware = analysis.koaMiddlewareContexts.find((item) => item.route.route === "/api/jobs/run");
-    assert.deepEqual(middleware?.middleware, [{ name: "requireUser", line: 7 }]);
+    assert.deepEqual(middleware?.middleware, [{ name: "requireUser", line: 10 }]);
     assert.equal(middleware?.interpretation, "structural-koa-route-middleware-attachment-not-runtime-protection");
 
     const flow = analysis.routeFlows.find((item) => item.route.route === "/api/jobs/run");
     assert.deepEqual(flow?.evidence.map((item) => ({ path: item.path, line: item.line, kind: item.kind, depth: item.depth })), [
-      { path: "routes.ts", line: 5, kind: "process", depth: 0 },
+      { path: "routes.ts", line: 8, kind: "process", depth: 1 },
     ]);
     assert.equal(flow?.interpretation, "structural-route-call-sink-evidence-only");
 
@@ -66,7 +69,7 @@ test("Koa router prefixes, middleware, and same-file handlers participate in exa
       sinkLine: item.sink.line,
       callDistance: item.callDistance,
     })), [
-      { sourceKind: "body", sourceLine: 5, sinkKind: "process", sinkLine: 5, callDistance: 0 },
+      { sourceKind: "body", sourceLine: 5, sinkKind: "process", sinkLine: 8, callDistance: 1 },
     ]);
     assert.equal(requestFlow?.interpretation, "structural-request-source-call-sink-evidence-only");
   } finally {
