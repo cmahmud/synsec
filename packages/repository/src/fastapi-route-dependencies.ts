@@ -79,8 +79,7 @@ function escapeIdentifier(value: string): string {
 function explicitFastApiWrappers(content: string, routeLine: number): Set<"Depends" | "Security"> {
   const wrappers = new Set<"Depends" | "Security">();
   const prefix = content.split(/\r?\n/).slice(0, Math.max(0, routeLine - 1));
-  for (let index = 0; index < prefix.length; index += 1) {
-    const line = prefix[index] ?? "";
+  for (const line of prefix) {
     const match = line.match(/^\s*from\s+fastapi(?:\.[A-Za-z0-9_.]+)?\s+import\s+(.+?)\s*(?:#.*)?$/);
     if (!match?.[1] || match[1].includes("(")) continue;
     for (const raw of match[1].split(",")) {
@@ -152,6 +151,13 @@ function uniqueNode(graph: CallGraph, path: string, name: string): CallGraphNode
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function sameRoute(left: RouteSignal, right: RouteSignal): boolean {
+  return normalizePath(left.path) === normalizePath(right.path)
+    && left.line === right.line
+    && left.method === right.method
+    && left.route === right.route;
+}
+
 function evidenceForDependency(
   dependency: FastApiRouteDependency,
   index: RepositoryIndex,
@@ -197,6 +203,8 @@ function evidenceForDependency(
  * lists, nested expressions, wildcard/parenthesized imports, ambiguous targets, and shadowed names
  * fail closed. Auth evidence is lexical evidence within the resolved dependency and bounded same-file
  * callees; it is not proof the dependency executes, authorizes a request, or makes a route secure.
+ * Route-level dependency registration is indexed independently from handler resolution; a missing or
+ * ambiguous handler therefore cannot erase explicit dependency syntax from the structural result.
  */
 export async function buildFastApiRouteDependencyContexts(
   rootPath: string,
@@ -224,9 +232,8 @@ export async function buildFastApiRouteDependencyContexts(
     return source;
   }
 
-  for (const entrypoint of entrypoints) {
+  for (const route of index.routes) {
     if (output.length >= maxRoutes) break;
-    const route = entrypoint.route;
     if (route.frameworkHint !== "Python web router") continue;
     const routePath = normalizePath(route.path);
     const content = await sourceFor(routePath);
@@ -275,10 +282,11 @@ export async function buildFastApiRouteDependencyContexts(
       authEvidence.push(...evidenceForDependency(dependency, index, graph, maxEvidence - authEvidence.length));
       if (authEvidence.length >= maxEvidence) break;
     }
+    const entrypoint = entrypoints.find((candidate) => sameRoute(candidate.route, route));
 
     output.push({
       route,
-      ...(entrypoint.handler ? { handler: entrypoint.handler.name } : {}),
+      ...(entrypoint?.handler ? { handler: entrypoint.handler.name } : {}),
       dependencies,
       authEvidence,
       status: authEvidence.length > 0 ? "auth-signal-observed" : "no-auth-signal-observed",
