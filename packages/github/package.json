@@ -24,6 +24,7 @@
     "./app-deployment": "./dist/app-deployment.js",
     "./app-upgrade": "./dist/app-upgrade.js",
     "./app-drain": "./dist/app-drain.js",
+    "./app-worker-drain": "./dist/app-worker-drain.js",
     "./scanner-isolation-profile": "./dist/scanner-isolation-profile.js",
     "./scanner-production-readiness": "./dist/scanner-production-readiness.js",
     "./production-readiness": "./dist/production-readiness.js",
