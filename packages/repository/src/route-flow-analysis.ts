@@ -13,6 +13,10 @@ import { composeFastApiRouterEntrypoints } from "./fastapi-router-composition.js
 import { composeFlaskBlueprintEntrypoints } from "./flask-blueprint-composition.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
+import {
+  composeKoaRouterEntrypoints,
+  type KoaRouteMiddlewareContext,
+} from "./koa-router-composition.js";
 import type { ModuleGraph } from "./module-graph.js";
 import {
   composeNestJsControllerEntrypoints,
@@ -61,6 +65,7 @@ export interface RepositoryRouteFlowAnalysis {
   requestInputs: RequestInputSignal[];
   entrypoints: RouteEntrypoint[];
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
+  koaMiddlewareContexts: KoaRouteMiddlewareContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
   routeFlows: RouteSinkFlowContext[];
@@ -95,6 +100,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxFastApiComposedRoutes?: number;
   maxFlaskBlueprintDepth?: number;
   maxFlaskComposedRoutes?: number;
+  maxKoaRoutes?: number;
   maxNestJsDecoratorDistance?: number;
   maxNestJsRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
@@ -184,6 +190,17 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxExpressMountDepth !== undefined ? { maxMountDepth: options.maxExpressMountDepth } : {}),
     ...(options.maxExpressComposedRoutes !== undefined ? { maxComposedRoutes: options.maxExpressComposedRoutes } : {}),
   });
+  const koa = await composeKoaRouterEntrypoints(rootPath, safe.files, callGraph, entrypoints, {
+    ...(options.maxKoaRoutes !== undefined ? { maxRoutes: options.maxKoaRoutes } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = koa.entrypoints;
+  const koaMiddlewareContexts = koa.middlewareContexts;
+  entrypoints = await resolveImportedNodeRouteEntrypoints(rootPath, safe.files, moduleGraph, callGraph, entrypoints, {
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
   entrypoints = await resolveDjangoRouteEntrypoints(rootPath, safe.files, moduleGraph, callGraph, entrypoints, {
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
     maxCallNodes,
@@ -265,6 +282,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     requestInputs,
     entrypoints,
     routeMiddlewareContexts,
+    koaMiddlewareContexts,
     fastApiDependencyContexts,
     nestJsGuardContexts,
     routeFlows,
