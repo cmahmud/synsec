@@ -237,6 +237,7 @@ implements SynSecHostedInstallationOwnershipStore, SynSecHostedInstallationRever
     if (result.rows.length === 0) return undefined;
     if (result.rows.length !== 1) throw new Error("Hosted installation ownership state is inconsistent.");
     const row = result.rows[0];
+    if (!row) throw new Error("Hosted installation ownership state is inconsistent.");
     return {
       epoch: positiveInteger(row.verification_epoch, "Hosted installation verification epoch"),
       tenantId: tenant,
@@ -314,6 +315,7 @@ implements SynSecHostedInstallationOwnershipStore, SynSecHostedInstallationRever
     );
     if (current.rows.length !== 1) return "conflict";
     const row = current.rows[0];
+    if (!row) return "conflict";
     if (row.tenant_id !== input.tenantId
       || positiveInteger(row.github_user_id, "Stored GitHub user id") !== input.githubUserId
       || positiveInteger(row.account_id, "Stored GitHub installation account id") !== input.accountId
