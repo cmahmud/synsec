@@ -37,3 +37,48 @@ test("mounted Express routes participate in exact sink correlation", async () =>
     await repo.cleanup();
   }
 });
+
+test("mounted Express routes preserve structural request-source to sink evidence", async () => {
+  const repo = await makeRepository({
+    "app.js": [
+      'import express from "express";',
+      'import adminRouter from "./admin.js";',
+      "const app = express();",
+      'app.use("/api", adminRouter);',
+    ].join("\n"),
+    "admin.js": [
+      'import express from "express";',
+      "const router = express.Router();",
+      'router.post("/admin/run", runAdmin);',
+      "function runAdmin(req, res) {",
+      "  child_process.exec(req.body.command);",
+      "}",
+      "export default router;",
+    ].join("\n"),
+  });
+  try {
+    const index = await buildRepositoryIndex(repo.root, repo.files);
+    const analysis = await buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, buildModuleGraph(index, repo.files));
+    const flow = analysis.requestInputFlows.find((item) => item.route.route === "/api/admin/run");
+    assert.equal(flow?.route.frameworkHint, "Express composed router");
+    assert.equal(flow?.interpretation, "structural-request-source-call-sink-evidence-only");
+    assert.deepEqual(flow?.evidence.map((item) => ({
+      sourcePath: item.source.path,
+      sourceLine: item.source.line,
+      sourceKind: item.source.kind,
+      sinkPath: item.sink.path,
+      sinkLine: item.sink.line,
+      sinkKind: item.sink.kind,
+    })), [{
+      sourcePath: "admin.js",
+      sourceLine: 5,
+      sourceKind: "body",
+      sinkPath: "admin.js",
+      sinkLine: 5,
+      sinkKind: "process",
+    }]);
+    assert.equal(JSON.stringify(flow).includes("req.body.command"), false);
+  } finally {
+    await repo.cleanup();
+  }
+});
