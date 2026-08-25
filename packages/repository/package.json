@@ -14,6 +14,7 @@
     "./request-input-forwarding": "./dist/request-input-forwarding.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./django-route-handlers": "./dist/django-route-handlers.js",
+    "./django-urlconf-composition": "./dist/django-urlconf-composition.js",
     "./route-middleware-composition": "./dist/route-middleware-composition.js",
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-protection-context": "./dist/route-protection-context.js",
