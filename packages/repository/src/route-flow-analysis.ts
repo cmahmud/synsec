@@ -4,6 +4,10 @@ import type { IndexFileInput, RepositoryIndex } from "./analysis.js";
 import { buildCallGraph, type CallGraph } from "./call-graph.js";
 import { resolveDjangoRouteEntrypoints } from "./django-route-handlers.js";
 import { composeDjangoIncludedRouteEntrypoints } from "./django-urlconf-composition.js";
+import {
+  buildFastApiRouteDependencyContexts,
+  type FastApiRouteDependencyContext,
+} from "./fastapi-route-dependencies.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
@@ -46,6 +50,7 @@ export interface RepositoryRouteFlowAnalysis {
   requestInputs: RequestInputSignal[];
   entrypoints: RouteEntrypoint[];
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
+  fastApiDependencyContexts: FastApiRouteDependencyContext[];
   routeFlows: RouteSinkFlowContext[];
   requestInputFlows: RouteRequestInputFlowContext[];
   requestInputForwardingFlows: RouteRequestInputForwardingContext[];
@@ -143,17 +148,22 @@ async function safeAnalysisFiles(
  * fail closed. Explicit all-named Node route registrations additionally receive bounded middleware
  * composition evidence: middleware identifiers resolve only to unique same-file functions or
  * explicit repository-local named imports, and shadowed/dynamic/ambiguous middleware stays
- * unresolved. Django URLConf `path()` registrations receive view-function resolution only for a
- * simple function identifier that maps uniquely to a same-file function or an unshadowed explicit
- * repository-local `from ... import ...` binding. A separate bounded Django include layer composes
- * route identities only for literal `path("prefix/", include("module.urls"))` edges that resolve to
- * exactly one supplied repository Python file, starts from structural URLConf roots, bounds include
- * depth/output, and rejects cycles, ambiguous modules, and dynamic include forms. Dotted views,
- * class-based `as_view()`, lambdas, wildcard/parenthesized imports, and dynamic expressions remain
- * unresolved. Included route identities, middleware auth signals, resolved view calls, and bounded
- * callees remain structural context rather than proof that ROOT_URLCONF, include(), middleware, or
- * views execute or protect/reach a route. Auth-related route protection and route-security review
- * summaries likewise never claim runtime protection or reachability.
+ * unresolved. FastAPI route decorators receive a separate dependency-composition layer only for
+ * literal route-level `dependencies=[Depends(name), Security(name)]` lists with explicitly imported
+ * FastAPI wrappers. Dependency identifiers resolve only to unique already-defined same-file Python
+ * functions or unshadowed repository-local named imports; factories, dotted expressions, dynamic
+ * lists, ambiguous targets, and shadowed names remain unresolved. Django URLConf `path()`
+ * registrations receive view-function resolution only for a simple function identifier that maps
+ * uniquely to a same-file function or an unshadowed explicit repository-local `from ... import ...`
+ * binding. A separate bounded Django include layer composes route identities only for literal
+ * `path("prefix/", include("module.urls"))` edges that resolve to exactly one supplied repository
+ * Python file, starts from structural URLConf roots, bounds include depth/output, and rejects cycles,
+ * ambiguous modules, and dynamic include forms. Dotted views, class-based `as_view()`, lambdas,
+ * wildcard/parenthesized imports, and dynamic expressions remain unresolved. Included route
+ * identities, FastAPI dependencies, middleware auth signals, resolved view calls, and bounded
+ * callees remain structural context rather than proof that framework registration, dependencies,
+ * ROOT_URLCONF, include(), middleware, or views execute or protect/reach a route. Auth-related route
+ * protection and route-security review summaries likewise never claim runtime protection or reachability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -220,6 +230,20 @@ export async function buildRepositoryRouteFlowAnalysis(
       maxCallNodes,
     },
   );
+  const fastApiDependencyContexts = await buildFastApiRouteDependencyContexts(
+    rootPath,
+    safe.files,
+    index,
+    moduleGraph,
+    callGraph,
+    entrypoints,
+    {
+      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+      maxCallNodes,
+      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    },
+  );
   const flowOptions: RouteSinkFlowOptions = {
     importCallLinks,
     maxCallNodes,
@@ -274,6 +298,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     requestInputs,
     entrypoints,
     routeMiddlewareContexts,
+    fastApiDependencyContexts,
     routeFlows,
     requestInputFlows,
     requestInputForwardingFlows,
