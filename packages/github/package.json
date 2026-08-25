@@ -28,6 +28,7 @@
     "./app-deployment": "./dist/app-deployment.js",
     "./app-host-profile": "./dist/app-host-profile.js",
     "./app-intake-host": "./dist/app-intake-host.js",
+    "./app-worker-host": "./dist/app-worker-host.js",
     "./app-upgrade": "./dist/app-upgrade.js",
     "./app-drain": "./dist/app-drain.js",
     "./app-worker-drain": "./dist/app-worker-drain.js",
@@ -78,6 +79,7 @@
     "@synsec/engine": "0.2.0",
     "@synsec/report": "0.2.0",
     "@synsec/scanner-sdk": "0.1.0",
+    "@synsec/scanners": "0.1.0",
     "@synsec/workflows": "0.2.0"
   }
 }
