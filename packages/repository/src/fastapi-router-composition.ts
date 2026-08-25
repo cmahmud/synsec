@@ -9,12 +9,12 @@ const DEFAULT_MAX_INCLUDE_DEPTH = 8;
 const MAX_INCLUDE_DEPTH = 32;
 const DEFAULT_MAX_COMPOSED_ROUTES = 2_000;
 const MAX_COMPOSED_ROUTES = 10_000;
-const ROUTER_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 interface RouterNode {
   path: string;
   name: string;
   prefix: string;
+  declarationLine: number;
 }
 
 interface ImportedRouterBinding {
@@ -24,8 +24,6 @@ interface ImportedRouterBinding {
 }
 
 interface RouterIncludeEdge {
-  path: string;
-  line: number;
   parent?: RouterNode;
   child: RouterNode;
   prefix: string;
@@ -168,9 +166,9 @@ function routeKey(entrypoint: RouteEntrypoint): string {
  * calls. Imported child routers require an unshadowed repository-local named `from ... import ...`
  * binding whose target contains exactly one matching APIRouter declaration. Dotted references,
  * factories, dynamic prefixes, multiline expressions, wildcard imports, ambiguous declarations,
- * cycles, and unresolved imports fail closed. Traversal starts only at explicit `app.include_router`
- * roots and is bounded by depth/output limits. The returned route identity is structural evidence;
- * it is not proof that FastAPI imports, registers, or serves the route at runtime.
+ * and unresolved imports fail closed. Traversal starts only at explicit `app.include_router` roots,
+ * stops at repeated router nodes, and is bounded by depth/output limits. The returned route identity
+ * is structural evidence; it is not proof that FastAPI imports, registers, or serves the route.
  */
 export async function composeFastApiRouterEntrypoints(
   rootPath: string,
@@ -201,7 +199,9 @@ export async function composeFastApiRouterEntrypoints(
         ambiguousRouters.add(key);
         continue;
       }
-      if (!ambiguousRouters.has(key)) routers.set(key, { path, name: parsed.name, prefix: parsed.prefix });
+      if (!ambiguousRouters.has(key)) {
+        routers.set(key, { path, name: parsed.name, prefix: parsed.prefix, declarationLine: index + 1 });
+      }
     }
   }
 
@@ -220,7 +220,7 @@ export async function composeFastApiRouterEntrypoints(
   function resolveRouter(path: string, localName: string, useLine: number): RouterNode | undefined {
     const normalized = normalizePath(path);
     const sameFile = routers.get(routerKey(normalized, localName));
-    if (sameFile) return sameFile;
+    if (sameFile && sameFile.declarationLine < useLine) return sameFile;
     const content = sourceByPath.get(normalized);
     if (!content) return undefined;
     const candidates = (importBindingsByPath.get(normalized) ?? []).filter((binding) => (
@@ -244,7 +244,7 @@ export async function composeFastApiRouterEntrypoints(
       if (!child) continue;
       const parent = parsed.parentName ? resolveRouter(path, parsed.parentName, line) : undefined;
       if (parsed.parentName && !parent) continue;
-      includeEdges.push({ path, line, ...(parent ? { parent } : {}), child, prefix: parsed.prefix });
+      includeEdges.push({ ...(parent ? { parent } : {}), child, prefix: parsed.prefix });
     }
   }
 
@@ -258,7 +258,7 @@ export async function composeFastApiRouterEntrypoints(
     const routerName = match?.[1];
     if (!routerName || routerName === "app") continue;
     const router = routers.get(routerKey(path, routerName));
-    if (!router) continue;
+    if (!router || router.declarationLine >= entrypoint.route.line) continue;
     const key = routerKey(router.path, router.name);
     routesByRouter.set(key, [...(routesByRouter.get(key) ?? []), entrypoint]);
   }
@@ -315,7 +315,7 @@ export async function composeFastApiRouterEntrypoints(
 
   for (const root of roots) {
     if (composed.length >= maxComposedRoutes) break;
-    appendRoutes(root.child, root.prefix ? [root.prefix] : [], 1, root.path, new Set());
+    appendRoutes(root.child, root.prefix ? [root.prefix] : [], 1, root.child.path, new Set());
   }
 
   const existingKeys = new Set(entrypoints.map(routeKey));
