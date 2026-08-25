@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import type { IndexFileInput } from "./analysis.js";
 
-export type CallGraphNodeKind = "function" | "arrow-function" | "python-function";
+export type CallGraphNodeKind = "function" | "arrow-function" | "python-function" | "go-function";
 export type CallResolution = "same-file-function" | "external-or-unresolved";
 
 export interface CallGraphNode {
@@ -180,6 +180,42 @@ function parsePythonFunctions(path: string, content: string): ParsedFunction[] {
   return functions;
 }
 
+function parseGoFunctions(path: string, content: string): ParsedFunction[] {
+  const lines = content.split(/\r?\n/);
+  const functions: ParsedFunction[] = [];
+
+  for (let index = 0; index < lines.length && functions.length < MAX_FUNCTIONS_PER_FILE; index += 1) {
+    const line = lines[index] ?? "";
+    const declaration = line.match(/^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+    const name = declaration?.[1];
+    if (!name || !line.includes("{")) continue;
+
+    let runningDepth = braceDelta(line);
+    if (runningDepth <= 0) continue;
+    let endIndex = index;
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      runningDepth += braceDelta(lines[cursor] ?? "");
+      endIndex = cursor;
+      if (runningDepth <= 0) break;
+    }
+    if (runningDepth > 0) continue;
+
+    functions.push({
+      node: {
+        id: nodeId(path, name, index + 1),
+        path: normalizedPath(path),
+        name,
+        line: index + 1,
+        endLine: endIndex + 1,
+        kind: "go-function",
+      },
+      bodyStart: index,
+      bodyEnd: endIndex,
+    });
+  }
+  return functions;
+}
+
 function collectCalls(lines: readonly string[], fn: ParsedFunction): Array<{ callee: string; line: number; direct: boolean }> {
   const calls: Array<{ callee: string; line: number; direct: boolean }> = [];
   const regex = /\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(/g;
@@ -219,7 +255,7 @@ export async function buildCallGraph(root: string, files: readonly IndexFileInpu
 
   for (const file of selected) {
     const extension = extname(file.path).toLowerCase();
-    if (!jsExtensions.has(extension) && extension !== ".py") continue;
+    if (!jsExtensions.has(extension) && extension !== ".py" && extension !== ".go") continue;
 
     const source = await readBoundedSource(root, file);
     if (!source.content) {
@@ -229,7 +265,9 @@ export async function buildCallGraph(root: string, files: readonly IndexFileInpu
 
     const parsed = extension === ".py"
       ? parsePythonFunctions(file.path, source.content)
-      : parseJavascriptFunctions(file.path, source.content);
+      : extension === ".go"
+        ? parseGoFunctions(file.path, source.content)
+        : parseJavascriptFunctions(file.path, source.content);
     const lines = source.content.split(/\r?\n/);
     const sameFileByName = new Map<string, CallGraphNode[]>();
     for (const fn of parsed) {
