@@ -7,6 +7,7 @@ import {
   type GitHubAppWorkerResult,
   type GitHubInstallationTokenPurpose,
 } from "./app-worker.js";
+import type { SynSecGitHubAppWorkerDrainController } from "./app-worker-drain.js";
 import {
   acquireGitHubRepositoryScanTarget,
   type GitHubRepositoryAcquisitionOptions,
@@ -21,6 +22,8 @@ export interface ConfiguredGitHubAppWorkerOptions extends GitHubPublisherOptions
   installationStore: GitHubAppWorkerAuthorizer;
   config: SynSecConfig;
   getInstallationToken(installationId: number, purpose: GitHubInstallationTokenPurpose): Promise<string>;
+  /** Optional enforced local admission boundary for safe maintenance/rolling replacement. */
+  workerDrain?: SynSecGitHubAppWorkerDrainController;
   threshold?: GitHubCheckThreshold;
   publishSarif?: boolean;
   toolVersion?: string;
@@ -29,6 +32,8 @@ export interface ConfiguredGitHubAppWorkerOptions extends GitHubPublisherOptions
   deriveChangedFiles?: typeof deriveExactChangedFiles;
   acquisitionOptions?: GitHubRepositoryAcquisitionOptions;
 }
+
+export type ConfiguredGitHubAppWorkerResult = GitHubAppWorkerResult | { status: "draining" };
 
 function contextForJob(job: {
   repository: string;
@@ -66,17 +71,7 @@ function useTargetedHeadScan(plan: ExactTreeDiffPlan | undefined, publishSarif: 
   );
 }
 
-/**
- * Execute one configured hosted-App job through SynSec's existing repository scan engine.
- *
- * Push jobs scan the exact acquired head commit. Pull-request jobs additionally acquire and scan
- * the exact queued base commit, bind that report to baseSha, and use it as the deterministic
- * baseline for the exact head scan. When the two acquired Git trees can be compared safely, the
- * head scan may use only exact changed paths. Tree-diff ambiguity, deletions, excessive scope, and
- * SARIF publication fail back to a full repository scan rather than weakening coverage. No branch
- * names, unbounded history fetches, or remote target expansion are used for scope derivation.
- */
-export async function runConfiguredGitHubAppWorkerOnce(
+async function runConfiguredWorkerOperation(
   options: ConfiguredGitHubAppWorkerOptions,
 ): Promise<GitHubAppWorkerResult> {
   const scan = options.scan ?? runScanEngine;
@@ -141,4 +136,20 @@ export async function runConfiguredGitHubAppWorkerOnce(
       }
     },
   });
+}
+
+/**
+ * Execute at most one configured hosted-App job through SynSec's repository scan engine.
+ *
+ * When workerDrain is supplied, admission is checked synchronously before claimNext() can run.
+ * beginDrain() therefore closes new local queue claims while work admitted before the boundary keeps
+ * its existing fenced lease/heartbeat until normal completion. A draining result means no queue claim
+ * was attempted by this invocation; it is not evidence that other replicas or durable leases drained.
+ */
+export async function runConfiguredGitHubAppWorkerOnce(
+  options: ConfiguredGitHubAppWorkerOptions,
+): Promise<ConfiguredGitHubAppWorkerResult> {
+  if (!options.workerDrain) return runConfiguredWorkerOperation(options);
+  const admitted = await options.workerDrain.run(() => runConfiguredWorkerOperation(options));
+  return admitted.admitted ? admitted.value : { status: "draining" };
 }
