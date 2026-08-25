@@ -24,13 +24,13 @@ async function makeRepository(files) {
   };
 }
 
-test("Koa router prefixes, middleware, and same-file handlers participate in exact sink correlation", async () => {
+test("Koa router prefixes, middleware, and same-file handlers participate in exact source and sink correlation", async () => {
   const source = [
     'import Router from "@koa/router";',
     'const router = new Router({ prefix: "/api" });',
     "function requireUser(ctx, next) { return next(); }",
     "function runJob(ctx) {",
-    "  child_process.exec(command);",
+    "  child_process.exec(ctx.request.body.command);",
     "}",
     'router.post("/jobs/run", requireUser, runJob);',
   ].join("\n");
@@ -57,6 +57,18 @@ test("Koa router prefixes, middleware, and same-file handlers participate in exa
       { path: "routes.ts", line: 5, kind: "process", depth: 0 },
     ]);
     assert.equal(flow?.interpretation, "structural-route-call-sink-evidence-only");
+
+    const requestFlow = analysis.requestInputFlows.find((item) => item.route.route === "/api/jobs/run");
+    assert.deepEqual(requestFlow?.evidence.map((item) => ({
+      sourceKind: item.source.kind,
+      sourceLine: item.source.line,
+      sinkKind: item.sink.kind,
+      sinkLine: item.sink.line,
+      callDistance: item.callDistance,
+    })), [
+      { sourceKind: "body", sourceLine: 5, sinkKind: "process", sinkLine: 5, callDistance: 0 },
+    ]);
+    assert.equal(requestFlow?.interpretation, "structural-request-source-call-sink-evidence-only");
   } finally {
     await repo.cleanup();
   }
