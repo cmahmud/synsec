@@ -31,6 +31,7 @@
     "./app-worker-drain": "./dist/app-worker-drain.js",
     "./app-maintenance": "./dist/app-maintenance.js",
     "./app-service-lifecycle": "./dist/app-service-lifecycle.js",
+    "./app-recovery": "./dist/app-recovery.js",
     "./scanner-isolation-profile": "./dist/scanner-isolation-profile.js",
     "./scanner-production-readiness": "./dist/scanner-production-readiness.js",
     "./production-readiness": "./dist/production-readiness.js",
