@@ -22,6 +22,7 @@
     "./fastapi-router-composition": "./dist/fastapi-router-composition.js",
     "./flask-blueprint-composition": "./dist/flask-blueprint-composition.js",
     "./express-router-composition": "./dist/express-router-composition.js",
+    "./gin-router-composition": "./dist/gin-router-composition.js",
     "./koa-router-composition": "./dist/koa-router-composition.js",
     "./nestjs-controller-composition": "./dist/nestjs-controller-composition.js",
     "./route-middleware-composition": "./dist/route-middleware-composition.js",
