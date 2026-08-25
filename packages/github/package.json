@@ -17,6 +17,7 @@
     "./app-setup": "./dist/app-setup.js",
     "./app-provisioning": "./dist/app-provisioning.js",
     "./hosted-installation-ownership": "./dist/hosted-installation-ownership.js",
+    "./hosted-installation-reverification": "./dist/hosted-installation-reverification.js",
     "./postgres-hosted-installation-ownership": "./dist/postgres-hosted-installation-ownership.js",
     "./credential-rotation": "./dist/credential-rotation.js",
     "./credential-reload": "./dist/credential-reload.js",
