@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { IndexFileInput, RepositoryIndex } from "./analysis.js";
 import { buildCallGraph, type CallGraph } from "./call-graph.js";
 import { resolveDjangoRouteEntrypoints } from "./django-route-handlers.js";
+import { composeDjangoIncludedRouteEntrypoints } from "./django-urlconf-composition.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
@@ -67,6 +68,8 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRoutes?: number;
   maxRequestInputSignals?: number;
   maxRequestInputForwardLines?: number;
+  maxDjangoIncludeDepth?: number;
+  maxDjangoComposedRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -142,11 +145,15 @@ async function safeAnalysisFiles(
  * explicit repository-local named imports, and shadowed/dynamic/ambiguous middleware stays
  * unresolved. Django URLConf `path()` registrations receive view-function resolution only for a
  * simple function identifier that maps uniquely to a same-file function or an unshadowed explicit
- * repository-local `from ... import ...` binding. Dotted views, class-based `as_view()`, lambdas,
- * wildcard/parenthesized imports, and dynamic expressions remain unresolved. Middleware auth
- * signals, resolved view calls, and bounded callees remain structural context rather than proof
- * that middleware or views execute or protect/reach a route. Auth-related route protection and
- * route-security review summaries likewise never claim runtime protection or reachability.
+ * repository-local `from ... import ...` binding. A separate bounded Django include layer composes
+ * route identities only for literal `path("prefix/", include("module.urls"))` edges that resolve to
+ * exactly one supplied repository Python file, starts from structural URLConf roots, bounds include
+ * depth/output, and rejects cycles, ambiguous modules, and dynamic include forms. Dotted views,
+ * class-based `as_view()`, lambdas, wildcard/parenthesized imports, and dynamic expressions remain
+ * unresolved. Included route identities, middleware auth signals, resolved view calls, and bounded
+ * callees remain structural context rather than proof that ROOT_URLCONF, include(), middleware, or
+ * views execute or protect/reach a route. Auth-related route protection and route-security review
+ * summaries likewise never claim runtime protection or reachability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -188,6 +195,15 @@ export async function buildRepositoryRouteFlowAnalysis(
     {
       ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
       maxCallNodes,
+    },
+  );
+  entrypoints = await composeDjangoIncludedRouteEntrypoints(
+    rootPath,
+    safe.files,
+    entrypoints,
+    {
+      ...(options.maxDjangoIncludeDepth !== undefined ? { maxIncludeDepth: options.maxDjangoIncludeDepth } : {}),
+      ...(options.maxDjangoComposedRoutes !== undefined ? { maxComposedRoutes: options.maxDjangoComposedRoutes } : {}),
     },
   );
   const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(
