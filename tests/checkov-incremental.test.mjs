@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCheckovArguments } from "../packages/scanners/dist/index.js";
+import { CheckovAdapter, buildCheckovArguments } from "../packages/scanners/dist/index.js";
 
 const context = {
   target: { path: "/repo" },
@@ -45,4 +45,32 @@ test("Checkov changed-file execution bounds adapter scope and treats an empty li
     ...context,
     changedFiles: Array.from({ length: 501 }, (_, index) => `infra/file-${index}.tf`),
   }), /500-file adapter limit/);
+});
+
+test("Checkov uses one injected runner for availability and scan execution", async () => {
+  const calls = [];
+  const runner = async (command, args, options = {}) => {
+    calls.push({ command, args, options });
+    if (args[0] === "--version") {
+      return { exitCode: 0, stdout: "Checkov 3.2.0\n", stderr: "", signal: null, timedOut: false, truncated: false };
+    }
+    return {
+      exitCode: 1,
+      stdout: JSON.stringify({ check_type: "terraform", results: { failed_checks: [] } }),
+      stderr: "",
+      signal: null,
+      timedOut: false,
+      truncated: false,
+    };
+  };
+  const adapter = new CheckovAdapter(runner);
+
+  assert.deepEqual(await adapter.checkAvailability(), { available: true, version: "Checkov 3.2.0" });
+  const result = await adapter.scan({ ...context, changedFiles: ["infra/main.tf"] });
+  assert.equal(result.scanner, "checkov");
+  assert.deepEqual(result.findings, []);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, ["--version"]);
+  assert.deepEqual(calls[1].args, ["-o", "json", "--quiet", "--compact", "-f", "infra/main.tf"]);
+  assert.equal(calls[1].options.cwd, "/repo");
 });
