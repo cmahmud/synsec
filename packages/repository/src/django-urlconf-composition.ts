@@ -47,7 +47,7 @@ function explicitInclude(line: string): { prefix: string; module: string } | und
   const match = line.match(
     /\bpath\s*\(\s*["']([^"']*)["']\s*,\s*include\s*\(\s*["']([A-Za-z_][A-Za-z0-9_.]*)["']\s*\)\s*(?:,|\))?/,
   );
-  if (!match?.[1] || !match[2]) return undefined;
+  if (match?.[1] === undefined || !match[2]) return undefined;
   return { prefix: match[1], module: match[2] };
 }
 
@@ -62,7 +62,7 @@ function joinRoute(prefix: string, child: string): string {
   const right = child.replace(/^\/+/, "");
   if (!left) return right || "/";
   if (!right) return left;
-  if (left.endsWith("/") || right.startsWith("/")) return `${left}${right}`;
+  if (left.endsWith("/")) return `${left}${right}`;
   return `${left}/${right}`;
 }
 
