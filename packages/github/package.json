@@ -22,6 +22,7 @@
     "./runtime-credentials": "./dist/runtime-credentials.js",
     "./mounted-runtime-credentials": "./dist/mounted-runtime-credentials.js",
     "./app-deployment": "./dist/app-deployment.js",
+    "./app-upgrade": "./dist/app-upgrade.js",
     "./scanner-isolation-profile": "./dist/scanner-isolation-profile.js",
     "./scanner-production-readiness": "./dist/scanner-production-readiness.js",
     "./production-readiness": "./dist/production-readiness.js",
