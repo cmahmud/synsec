@@ -19,7 +19,7 @@ function scanner(id) {
 function isolatedConfig(overrides = {}) {
   return {
     ...structuredClone(defaultConfig),
-    scanners: ["grype", "syft"],
+    scanners: ["checkov", "grype", "syft"],
     ai: { ...defaultConfig.ai, enabled: false },
     ...overrides,
   };
@@ -75,8 +75,9 @@ test("scoped scanner factories reject empty and duplicate adapter sets", async (
 
 test("hosted OCI worker accepts only the currently enforced scanner subset", () => {
   assert.doesNotThrow(() => assertGitHubAppOciWorkerConfig(isolatedConfig()));
+  assert.doesNotThrow(() => assertGitHubAppOciWorkerConfig(isolatedConfig({ scanners: ["checkov"] })));
   assert.throws(
-    () => assertGitHubAppOciWorkerConfig(isolatedConfig({ scanners: ["grype", "opengrep"] })),
+    () => assertGitHubAppOciWorkerConfig(isolatedConfig({ scanners: ["checkov", "opengrep"] })),
     /without enforced hosted isolation support/,
   );
   assert.throws(
