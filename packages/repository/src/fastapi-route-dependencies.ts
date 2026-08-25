@@ -11,6 +11,7 @@ const MAX_ROUTES = 5_000;
 const DEFAULT_MAX_EVIDENCE = 100;
 const MAX_EVIDENCE = 1_000;
 const MAX_HANDLER_SIGNATURE_LENGTH = 16_384;
+const MAX_HANDLER_DECLARATION_DISTANCE = 5;
 
 interface PythonImportBinding {
   localName: string;
@@ -203,6 +204,21 @@ function sameRoute(left: RouteSignal, right: RouteSignal): boolean {
     && left.route === right.route;
 }
 
+function nearestFastApiHandler(graph: CallGraph, path: string, routeLine: number): CallGraphNode | undefined {
+  const candidates = graph.nodes
+    .filter((node) => (
+      node.kind === "python-function"
+      && normalizePath(node.path) === normalizePath(path)
+      && node.line > routeLine
+      && node.line - routeLine <= MAX_HANDLER_DECLARATION_DISTANCE
+    ))
+    .sort((left, right) => left.line - right.line || left.name.localeCompare(right.name));
+  const first = candidates[0];
+  if (!first) return undefined;
+  const nearest = candidates.filter((candidate) => candidate.line === first.line);
+  return nearest.length === 1 ? first : undefined;
+}
+
 function evidenceForDependency(
   dependency: FastApiRouteDependency,
   index: RepositoryIndex,
@@ -249,8 +265,9 @@ function evidenceForDependency(
  * lists, multiline signatures, nested expressions, wildcard/parenthesized imports, ambiguous targets,
  * and shadowed names fail closed. Auth evidence is lexical evidence within the resolved dependency and
  * bounded same-file callees; it is not proof the dependency executes, authorizes a request, or makes a
- * route secure. The analyzer independently revalidates `@app` / `@router` decorator syntax from bounded
- * source and does not trust a generic framework hint to establish FastAPI identity.
+ * route secure. The analyzer independently revalidates `@app` / `@router` decorator syntax and the
+ * nearest following Python function from bounded source/call-graph evidence instead of trusting a
+ * generic route framework hint to establish FastAPI identity or handler ownership.
  */
 export async function buildFastApiRouteDependencyContexts(
   rootPath: string,
@@ -295,9 +312,13 @@ export async function buildFastApiRouteDependencyContexts(
     if (!routeDeclarations) continue;
 
     const entrypoint = entrypoints.find((candidate) => sameRoute(candidate.route, indexedRoute));
-    const handler = entrypoint?.handler;
+    const entrypointHandler = entrypoint?.handler;
+    const handler = entrypointHandler?.kind === "python-function"
+      && normalizePath(entrypointHandler.path) === routePath
+      ? entrypointHandler
+      : nearestFastApiHandler(graph, routePath, indexedRoute.line);
     let handlerDeclarations: DependencyDeclaration[] = [];
-    if (handler && normalizePath(handler.path) === routePath) {
+    if (handler) {
       const handlerLine = lines[handler.line - 1] ?? "";
       const parsed = parseExplicitHandlerDependencies(
         handlerLine,
