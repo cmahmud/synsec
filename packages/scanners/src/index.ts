@@ -21,7 +21,9 @@ export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
 export { SyftAdapter, parseSyftJson } from "./syft.js";
 export { TrivyAdapter, normalizeTrivyChangedFiles, parseTrivyJson } from "./trivy.js";
 export {
+  createOciIsolatedScanners,
   createOciIsolatedDependencyScanners,
+  type OciIsolatedScannerOptions,
   type OciIsolatedDependencyScannerOptions,
 } from "./oci-isolated.js";
 
