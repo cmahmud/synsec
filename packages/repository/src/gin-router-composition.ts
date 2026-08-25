@@ -117,13 +117,6 @@ function parsePlainArguments(value: string): string[] | undefined {
   return args;
 }
 
-function localHandler(graph: CallGraph, path: string, name: string): CallGraphNode | undefined {
-  const matches = graph.nodes.filter(
-    (node) => normalizePath(node.path) === path && node.kind === "go-function" && node.name === name,
-  );
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
 function samePackageHandler(graph: CallGraph, path: string, name: string): CallGraphNode | undefined {
   const directory = dirname(path).replaceAll("\\", "/");
   const matches = graph.nodes.filter((node) => {
@@ -232,7 +225,7 @@ export async function composeGinRouterEntrypoints(
         frameworkHint: "Gin router",
         handler: handlerName,
       };
-      const handler = localHandler(graph, path, handlerName) ?? samePackageHandler(graph, path, handlerName);
+      const handler = samePackageHandler(graph, path, handlerName);
       const entrypoint: RouteEntrypoint = handler
         ? {
             route,
