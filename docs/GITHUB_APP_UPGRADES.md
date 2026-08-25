@@ -2,7 +2,7 @@
 
 SynSec's hosted GitHub App has durable shared state and fenced workers, but those properties do not by themselves make an application rollout safe. A production service manager also needs exact fleet membership, fresh runtime observations, drained work, an immutable previous artifact, and an explicit database-schema rollback decision.
 
-`@synsec/github/app-upgrade` provides a secret-free gate for that orchestration boundary. It does **not** restart processes, mutate PostgreSQL, execute migrations, revoke credentials, or call a deployment platform.
+`@synsec/github/app-upgrade` provides a secret-free gate for that orchestration boundary. `@synsec/github/app-drain` provides the local enforced webhook-admission primitive used while draining one replica. Neither module restarts processes, mutates PostgreSQL, executes migrations, revokes credentials, or calls a deployment platform.
 
 ## Trusted observations
 
@@ -17,6 +17,12 @@ The service manager supplies:
 
 Replica observations and `assessedAt` must come from trusted supervisor/runtime state. Repository content, webhook payloads, scanner output, or user-controlled metadata must never be allowed to manufacture these values.
 
+## Enforced local admission drain
+
+Wrap the production webhook handler with `createSynSecGitHubAppDrainController()` before passing it to the GitHub App listener. `beginDrain()` immediately prevents new webhook requests from entering the wrapped handler. Rejected requests receive only an aggregate `503 {"status":"draining"}` response plus `Retry-After: 1`, allowing GitHub to retry without reflecting delivery ids, repositories, payloads, or backend errors.
+
+Requests admitted before the drain continue running. `waitForDrained()` waits only for those in-process webhook calls; it does not claim that background scan workers or durable queue leases are drained. The service manager must separately observe the worker lease count before replacing the replica. `resumeAdmission()` is explicit so a failed rollout can reopen the old replica without recreating the handler.
+
 ## Start gate
 
 `readyToBeginRollout` is true only when the exact expected fleet is:
@@ -29,17 +35,18 @@ Replica observations and `assessedAt` must come from trusted supervisor/runtime 
 
 For schema-changing releases, rollback capability must be an explicit operator/migration property. SynSec does not infer reversibility merely because a migration completed successfully.
 
-A useful rolling sequence is:
+A conservative rolling sequence is:
 
-1. stop admitting new scan work to the replica being replaced;
-2. wait for its fenced work/lease count to reach zero;
-3. keep the previous immutable artifact and compatible database state available;
-4. replace one replica with the target release;
-5. verify that replica's normal readiness and shared-state health;
-6. continue one replica at a time; and
-7. run the final fleet assessment before retiring the previous artifact.
+1. call `beginDrain()` on the replica being replaced;
+2. wait for `waitForDrained()` so no admitted webhook handler is still executing;
+3. stop worker intake and observe its fenced durable lease count reach zero;
+4. keep the previous immutable artifact and compatible database state available;
+5. replace that replica with the target release;
+6. verify its normal readiness and shared-state health;
+7. continue one replica at a time; and
+8. run the final fleet assessment before retiring the previous artifact.
 
-The assessment intentionally treats active work as a rollout blocker. A deployment platform can choose a different drain policy, but it must not reinterpret this result as proof that interrupting workers is safe.
+The assessment intentionally treats active durable work as a rollout blocker. A deployment platform can choose a different drain policy, but it must not reinterpret this result as proof that interrupting workers is safe.
 
 ## Finalization gate
 
@@ -55,6 +62,6 @@ This is deliberately conservative. A migration declaration, application readines
 
 ## Disclosure boundary
 
-Assessment output contains only bounded release/replica identifiers, counts, booleans, and categorical issue codes. It should not contain database connection strings, GitHub credentials, webhook secrets, repository contents, scanner output, or backend exception text.
+Assessment output and drain status contain only bounded release/replica identifiers, counts, booleans, and categorical state. They should not contain database connection strings, GitHub credentials, webhook secrets, repository contents, scanner output, or backend exception text.
 
-The gate is operational evidence, not an assertion that GitHub accepted credentials, that every request is authorized, that a scanner sandbox is correct, or that a deployment platform actually performed the requested rollout steps.
+These controls are operational evidence, not assertions that GitHub accepted credentials, that every request is authorized, that a scanner sandbox is correct, or that a deployment platform actually performed the requested rollout steps.
