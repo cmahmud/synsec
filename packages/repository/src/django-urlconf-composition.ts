@@ -80,6 +80,7 @@ function entrypointKey(entrypoint: RouteEntrypoint): string {
     entrypoint.route.line,
     entrypoint.route.method,
     entrypoint.route.route,
+    entrypoint.route.frameworkHint ?? "unknown-framework",
     entrypoint.handler?.id ?? "unresolved",
   ].join(":");
 }
