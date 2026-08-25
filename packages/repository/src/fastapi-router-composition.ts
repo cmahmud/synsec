@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { IndexFileInput } from "./analysis.js";
-import { findCallNeighborhood, type CallGraph, type CallGraphNode } from "./call-graph.js";
+import { buildCallGraph, findCallNeighborhood, type CallGraph, type CallGraphNode } from "./call-graph.js";
 import type { ModuleGraph, ResolvedModuleEdge } from "./module-graph.js";
 import type { RouteEntrypoint } from "./route-entrypoints.js";
 
@@ -200,7 +200,6 @@ export async function composeFastApiRouterEntrypoints(
   rootPath: string,
   files: readonly IndexFileInput[],
   moduleGraph: ModuleGraph,
-  graph: CallGraph,
   entrypoints: readonly RouteEntrypoint[],
   options: {
     maxIncludeDepth?: number;
@@ -215,6 +214,7 @@ export async function composeFastApiRouterEntrypoints(
   const maxDeclarationDistance = boundedInteger(options.maxDeclarationDistance, DEFAULT_MAX_DECLARATION_DISTANCE, 20, "FastAPI router maxDeclarationDistance");
   const maxCallDepth = Math.max(0, Math.min(20, options.maxCallDepth ?? 3));
   const maxCallNodes = Math.max(1, Math.min(1_000, options.maxCallNodes ?? 100));
+  const graph = await buildCallGraph(rootPath, files);
   const pythonFiles = files.filter((file) => extname(file.path).toLowerCase() === ".py");
   const sourceByPath = new Map<string, string>();
   for (const file of pythonFiles) {
