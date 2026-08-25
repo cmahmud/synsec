@@ -10,6 +10,7 @@
     { "path": "../core" },
     { "path": "../report" },
     { "path": "../scanner-sdk" },
+    { "path": "../scanners" },
     { "path": "../engine" },
     { "path": "../workflows" }
   ],
