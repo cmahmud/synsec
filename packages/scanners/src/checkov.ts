@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Finding, ScanResult } from "@synsec/core";
-import type { ScannerAdapter, ScannerAvailability, ScannerContext } from "@synsec/scanner-sdk";
+import type {
+  ScannerAdapter,
+  ScannerAvailability,
+  ScannerContext,
+  ScannerProcessRunner,
+} from "@synsec/scanner-sdk";
 import { runProcess } from "@synsec/scanner-sdk";
 import { asArray, asNumber, asRecord, asString, commandAvailability, normalizeSeverity, relativeLike, safeJson } from "./utils.js";
 
@@ -100,13 +105,15 @@ export class CheckovAdapter implements ScannerAdapter {
   readonly displayName = "Checkov";
   readonly capabilities = ["iac"] as const;
 
+  constructor(private readonly processRunner: ScannerProcessRunner = runProcess) {}
+
   checkAvailability(): Promise<ScannerAvailability> {
-    return commandAvailability("checkov", ["--version"], this.displayName);
+    return commandAvailability("checkov", ["--version"], this.displayName, this.processRunner);
   }
 
   async scan(context: ScannerContext): Promise<ScanResult> {
     const startedAt = new Date().toISOString();
-    const output = await runProcess(
+    const output = await this.processRunner(
       "checkov",
       buildCheckovArguments(context),
       {
