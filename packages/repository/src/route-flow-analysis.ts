@@ -4,6 +4,7 @@ import type { IndexFileInput, RepositoryIndex } from "./analysis.js";
 import { buildCallGraph, type CallGraph } from "./call-graph.js";
 import { resolveDjangoRouteEntrypoints } from "./django-route-handlers.js";
 import { composeDjangoIncludedRouteEntrypoints } from "./django-urlconf-composition.js";
+import { composeExpressRouterEntrypoints } from "./express-router-composition.js";
 import {
   buildFastApiRouteDependencyContexts,
   type FastApiRouteDependencyContext,
@@ -83,6 +84,8 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRequestInputReturnForwardLines?: number;
   maxDjangoIncludeDepth?: number;
   maxDjangoComposedRoutes?: number;
+  maxExpressMountDepth?: number;
+  maxExpressComposedRoutes?: number;
   maxFastApiIncludeDepth?: number;
   maxFastApiComposedRoutes?: number;
   maxFlaskBlueprintDepth?: number;
@@ -145,18 +148,7 @@ async function safeAnalysisFiles(
   };
 }
 
-/**
- * Build bounded defensive route-flow context from already-indexed repository files.
- *
- * Framework composition remains deliberately structural. Node imported handlers and named middleware,
- * Django function views and literal URLConf includes, FastAPI route dependencies and literal APIRouter
- * includes, and Flask Blueprint registration are accepted only when their repository-local identities
- * resolve uniquely inside configured bounds. Dynamic/factory forms, ambiguous imports, shadowing,
- * unsupported control/data flow, path escapes, symlinks, and oversized input fail closed. Request
- * source/forwarding/return evidence, route protection context, and sink correlation remain static
- * repository evidence and never establish runtime registration, reachability, attacker control,
- * effective authorization, exploitability, or absence of a vulnerability.
- */
+/** Build bounded defensive route-flow context from already-indexed repository files. */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
   files: readonly IndexFileInput[],
@@ -177,91 +169,47 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
     maxCallNodes,
   });
-  entrypoints = await resolveImportedNodeRouteEntrypoints(
-    rootPath,
-    safe.files,
-    moduleGraph,
-    callGraph,
-    entrypoints,
-    {
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-    },
-  );
-  entrypoints = await resolveDjangoRouteEntrypoints(
-    rootPath,
-    safe.files,
-    moduleGraph,
-    callGraph,
-    entrypoints,
-    {
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-    },
-  );
-  entrypoints = await composeDjangoIncludedRouteEntrypoints(
-    rootPath,
-    safe.files,
-    entrypoints,
-    {
-      ...(options.maxDjangoIncludeDepth !== undefined ? { maxIncludeDepth: options.maxDjangoIncludeDepth } : {}),
-      ...(options.maxDjangoComposedRoutes !== undefined ? { maxComposedRoutes: options.maxDjangoComposedRoutes } : {}),
-    },
-  );
-  entrypoints = await composeFastApiRouterEntrypoints(
-    rootPath,
-    safe.files,
-    moduleGraph,
-    entrypoints,
-    {
-      ...(options.maxFastApiIncludeDepth !== undefined ? { maxIncludeDepth: options.maxFastApiIncludeDepth } : {}),
-      ...(options.maxFastApiComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFastApiComposedRoutes } : {}),
-      ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-    },
-  );
-  entrypoints = await composeFlaskBlueprintEntrypoints(
-    rootPath,
-    safe.files,
-    moduleGraph,
-    entrypoints,
-    {
-      ...(options.maxFlaskBlueprintDepth !== undefined ? { maxRegisterDepth: options.maxFlaskBlueprintDepth } : {}),
-      ...(options.maxFlaskComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFlaskComposedRoutes } : {}),
-      ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-    },
-  );
-  const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(
-    rootPath,
-    safe.files,
-    index,
-    moduleGraph,
-    callGraph,
-    importCallLinks,
-    entrypoints,
-    {
-      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-    },
-  );
-  const fastApiDependencyContexts = await buildFastApiRouteDependencyContexts(
-    rootPath,
-    safe.files,
-    index,
-    moduleGraph,
-    callGraph,
-    entrypoints,
-    {
-      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
-      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
-      maxCallNodes,
-      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
-    },
-  );
+  entrypoints = await resolveImportedNodeRouteEntrypoints(rootPath, safe.files, moduleGraph, callGraph, entrypoints, {
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = await composeExpressRouterEntrypoints(rootPath, safe.files, moduleGraph, entrypoints, {
+    ...(options.maxExpressMountDepth !== undefined ? { maxMountDepth: options.maxExpressMountDepth } : {}),
+    ...(options.maxExpressComposedRoutes !== undefined ? { maxComposedRoutes: options.maxExpressComposedRoutes } : {}),
+  });
+  entrypoints = await resolveDjangoRouteEntrypoints(rootPath, safe.files, moduleGraph, callGraph, entrypoints, {
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = await composeDjangoIncludedRouteEntrypoints(rootPath, safe.files, entrypoints, {
+    ...(options.maxDjangoIncludeDepth !== undefined ? { maxIncludeDepth: options.maxDjangoIncludeDepth } : {}),
+    ...(options.maxDjangoComposedRoutes !== undefined ? { maxComposedRoutes: options.maxDjangoComposedRoutes } : {}),
+  });
+  entrypoints = await composeFastApiRouterEntrypoints(rootPath, safe.files, moduleGraph, entrypoints, {
+    ...(options.maxFastApiIncludeDepth !== undefined ? { maxIncludeDepth: options.maxFastApiIncludeDepth } : {}),
+    ...(options.maxFastApiComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFastApiComposedRoutes } : {}),
+    ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  entrypoints = await composeFlaskBlueprintEntrypoints(rootPath, safe.files, moduleGraph, entrypoints, {
+    ...(options.maxFlaskBlueprintDepth !== undefined ? { maxRegisterDepth: options.maxFlaskBlueprintDepth } : {}),
+    ...(options.maxFlaskComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFlaskComposedRoutes } : {}),
+    ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(rootPath, safe.files, index, moduleGraph, callGraph, importCallLinks, entrypoints, {
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+  });
+  const fastApiDependencyContexts = await buildFastApiRouteDependencyContexts(rootPath, safe.files, index, moduleGraph, callGraph, entrypoints, {
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+    maxCallNodes,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+  });
   const flowOptions: RouteSinkFlowOptions = {
     importCallLinks,
     maxCallNodes,
@@ -275,56 +223,26 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
   };
   const routeFlows = repositoryRouteSinkFlowContexts(index, entrypoints, callGraph, flowOptions);
-  const requestInputFlows = repositoryRouteRequestInputFlowContexts(
-    index,
-    requestInputs,
-    entrypoints,
-    callGraph,
-    {
-      importCallLinks,
-      maxCallNodes,
-      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
-      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
-    },
-  );
-  const requestInputForwardingFlows = await repositoryRouteRequestInputForwardingContexts(
-    rootPath,
-    safe.files,
-    requestInputs,
-    routeFlows,
-    callGraph,
+  const requestInputFlows = repositoryRouteRequestInputFlowContexts(index, requestInputs, entrypoints, callGraph, {
     importCallLinks,
-    {
-      maxCallNodes,
-      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
-      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
-      ...(options.maxRequestInputForwardLines !== undefined
-        ? { maxForwardLines: options.maxRequestInputForwardLines }
-        : {}),
-    },
-  );
-  const requestInputReturnFlows = await repositoryRouteRequestInputReturnFlowContexts(
-    rootPath,
-    safe.files,
-    requestInputs,
-    routeFlows,
-    callGraph,
-    importCallLinks,
-    {
-      maxCallNodes,
-      ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
-      ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
-      ...(options.maxRequestInputReturnForwardLines !== undefined
-        ? { maxForwardLines: options.maxRequestInputReturnForwardLines }
-        : {}),
-    },
-  );
+    maxCallNodes,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+  });
+  const requestInputForwardingFlows = await repositoryRouteRequestInputForwardingContexts(rootPath, safe.files, requestInputs, routeFlows, callGraph, importCallLinks, {
+    maxCallNodes,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxRequestInputForwardLines !== undefined ? { maxForwardLines: options.maxRequestInputForwardLines } : {}),
+  });
+  const requestInputReturnFlows = await repositoryRouteRequestInputReturnFlowContexts(rootPath, safe.files, requestInputs, routeFlows, callGraph, importCallLinks, {
+    maxCallNodes,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxRequestInputReturnForwardLines !== undefined ? { maxForwardLines: options.maxRequestInputReturnForwardLines } : {}),
+  });
   const routeProtectionContexts = repositoryRouteProtectionContexts(index, entrypoints, callGraph, protectionOptions);
-  const routeSecurityReviews = buildRouteSecurityReviewContexts(
-    routeFlows,
-    routeProtectionContexts,
-    options.maxRoutes ?? 1_000,
-  );
+  const routeSecurityReviews = buildRouteSecurityReviewContexts(routeFlows, routeProtectionContexts, options.maxRoutes ?? 1_000);
 
   return {
     callGraph,
