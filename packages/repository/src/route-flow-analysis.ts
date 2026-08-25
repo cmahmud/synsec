@@ -9,6 +9,7 @@ import {
   type FastApiRouteDependencyContext,
 } from "./fastapi-route-dependencies.js";
 import { composeFastApiRouterEntrypoints } from "./fastapi-router-composition.js";
+import { composeFlaskBlueprintEntrypoints } from "./flask-blueprint-composition.js";
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import type { ModuleGraph } from "./module-graph.js";
@@ -84,6 +85,8 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxDjangoComposedRoutes?: number;
   maxFastApiIncludeDepth?: number;
   maxFastApiComposedRoutes?: number;
+  maxFlaskBlueprintDepth?: number;
+  maxFlaskComposedRoutes?: number;
   /** Maximum number of supplied repository files eligible for lexical analysis. */
   maxFiles?: number;
 }
@@ -143,44 +146,16 @@ async function safeAnalysisFiles(
 }
 
 /**
- * Build the complete defensive route-flow context from already-indexed repository files.
+ * Build bounded defensive route-flow context from already-indexed repository files.
  *
- * The module graph must come from the same repository index/file inventory. The function does
- * not perform network access, execute repository code, or broaden analysis beyond the supplied
- * repository files. It independently rejects path escape, missing/non-regular files, and symlink
- * entries before lexical source analysis. Input above the configured file bound is explicitly
- * reported as bounded coverage rather than silently treated as analyzed. Ambiguous imports and
- * calls remain unresolved. Request-source flow requires an explicit framework request access,
- * unique lexical source/sink ownership, and a bounded directed call path. A separate forwarding
- * layer recognizes only simple immutable JS/TS request bindings passed unchanged once into one
- * resolved call; transformations, sanitization, aliasing, mutation, multiple use, and ambiguity
- * fail closed. A second, separately labeled return-flow layer recognizes only helpers with one
- * exact direct request-access return, one resolved helper invocation assigned to `const`, and one
- * unchanged direct-argument use of that return value before a bounded sink. It does not generalize
- * into variable-level taint or infer that parameter names establish request control. Explicit
- * all-named Node route registrations additionally receive bounded middleware composition evidence:
- * middleware identifiers resolve only to unique same-file functions or explicit repository-local
- * named imports, and shadowed/dynamic/ambiguous middleware stays unresolved. FastAPI route decorators
- * receive a separate dependency-composition layer only for literal route-level
- * `dependencies=[Depends(name), Security(name)]` lists with explicitly imported FastAPI wrappers.
- * Dependency identifiers resolve only to unique already-defined same-file Python functions or
- * unshadowed repository-local named imports; factories, dotted expressions, dynamic lists,
- * ambiguous targets, and shadowed names remain unresolved. A separate FastAPI router-composition
- * layer follows only explicit literal `APIRouter(prefix=...)` declarations and bounded
- * `app.include_router()` / `router.include_router()` edges. Imported routers require one unshadowed
- * repository-local named import and one matching router declaration; dynamic prefixes, factories,
- * dotted references, ambiguous targets, and cycles fail closed. Django URLConf `path()` registrations
- * receive view-function resolution only for a simple function identifier that maps uniquely to a
- * same-file function or an unshadowed explicit repository-local `from ... import ...` binding. A
- * separate bounded Django include layer composes route identities only for literal
- * `path("prefix/", include("module.urls"))` edges that resolve to exactly one supplied repository
- * Python file, starts from structural URLConf roots, bounds include depth/output, and rejects cycles,
- * ambiguous modules, and dynamic include forms. Dotted views, class-based `as_view()`, lambdas,
- * wildcard/parenthesized imports, and dynamic expressions remain unresolved. Included route
- * identities, FastAPI router/dependency composition, middleware auth signals, resolved view calls,
- * bounded callees, and all request-flow layers remain structural context rather than proof that
- * framework registration, dependencies, ROOT_URLCONF, include(), middleware, views, or data flows
- * execute at runtime.
+ * Framework composition remains deliberately structural. Node imported handlers and named middleware,
+ * Django function views and literal URLConf includes, FastAPI route dependencies and literal APIRouter
+ * includes, and Flask Blueprint registration are accepted only when their repository-local identities
+ * resolve uniquely inside configured bounds. Dynamic/factory forms, ambiguous imports, shadowing,
+ * unsupported control/data flow, path escapes, symlinks, and oversized input fail closed. Request
+ * source/forwarding/return evidence, route protection context, and sink correlation remain static
+ * repository evidence and never establish runtime registration, reachability, attacker control,
+ * effective authorization, exploitability, or absence of a vulnerability.
  */
 export async function buildRepositoryRouteFlowAnalysis(
   rootPath: string,
@@ -241,6 +216,22 @@ export async function buildRepositoryRouteFlowAnalysis(
     {
       ...(options.maxFastApiIncludeDepth !== undefined ? { maxIncludeDepth: options.maxFastApiIncludeDepth } : {}),
       ...(options.maxFastApiComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFastApiComposedRoutes } : {}),
+      ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
+      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+      maxCallNodes,
+    },
+  );
+  entrypoints = await composeFlaskBlueprintEntrypoints(
+    rootPath,
+    safe.files,
+    moduleGraph,
+    entrypoints,
+    {
+      ...(options.maxFlaskBlueprintDepth !== undefined ? { maxRegisterDepth: options.maxFlaskBlueprintDepth } : {}),
+      ...(options.maxFlaskComposedRoutes !== undefined ? { maxComposedRoutes: options.maxFlaskComposedRoutes } : {}),
+      ...(options.maxDeclarationDistance !== undefined ? { maxDeclarationDistance: options.maxDeclarationDistance } : {}),
+      ...(options.maxCallDepth !== undefined ? { maxCallDepth: options.maxCallDepth } : {}),
+      maxCallNodes,
     },
   );
   const routeMiddlewareContexts = await buildRouteMiddlewareCompositionContexts(
