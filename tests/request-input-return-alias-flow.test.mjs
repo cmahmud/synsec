@@ -198,7 +198,9 @@ test("return alias flow does not duplicate the existing direct-binding return sh
 test("return alias flow enforces one total bounded forwarding window", async () => {
   const repo = await makeRepository({
     "server.ts": [
-      "function readName(req) { return req.body.name; }",
+      "function readName(req) {",
+      "  return req.body.name;",
+      "}",
       "function persistName(name) { db.query(name); }",
       "function createUser(req) {",
       "  const name = readName(req);",
