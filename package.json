@@ -19,6 +19,7 @@
     "release:check": "node scripts/release-readiness.mjs",
     "release:check:json": "node scripts/release-readiness.mjs --json",
     "release:ready": "node scripts/release-readiness.mjs --strict",
+    "github-app:intake-host": "npm run build && node scripts/github-app-intake-host.mjs",
     "synsec": "npm run build && node --enable-source-maps apps/cli/dist/index.js"
   },
   "devDependencies": {
