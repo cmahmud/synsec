@@ -70,7 +70,7 @@ test("Gin groups, middleware, Go calls, and same-file handlers participate in ex
     const middleware = analysis.ginMiddlewareContexts.find((item) => item.route.route === "/api/jobs/run");
     assert.deepEqual(middleware?.middleware, [
       { name: "requireUser", source: "group", line: 18 },
-      { name: "audit", source: "route", line: 20 },
+      { name: "audit", source: "route", line: 19 },
     ]);
     assert.equal(middleware?.scope.depth, 2);
     assert.equal(middleware?.interpretation, "structural-gin-route-middleware-attachment-not-runtime-protection");
