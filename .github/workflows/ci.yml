@@ -72,7 +72,7 @@ jobs:
         run: npm run build
 
       - name: PostgreSQL shared-state integration and canonical conformance
-        run: node --test --test-concurrency=1 tests/postgres-shared-state.test.mjs tests/postgres-shared-state-conformance.test.mjs tests/postgres-shared-backend.test.mjs
+        run: node --test --test-concurrency=1 tests/postgres-shared-state.test.mjs tests/postgres-shared-state-conformance.test.mjs tests/postgres-shared-backend.test.mjs tests/postgres-lease-observer.test.mjs
 
       - name: Enforced OCI scanner sandbox integration
         run: |
