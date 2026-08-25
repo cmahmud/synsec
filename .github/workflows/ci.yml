@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Release readiness assessment
+        run: npm run release:check
+
   postgres-shared-state:
     runs-on: ubuntu-latest
     services:
