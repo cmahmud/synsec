@@ -61,9 +61,10 @@ test("Gin groups, middleware, Go calls, and same-file handlers participate in ex
     assert.deepEqual(goNodes.map((node) => node.name), ["requireUser", "audit", "runJob", "runQuery", "routes"]);
     assert.equal(analysis.callGraph.edges.some((edge) => edge.callee === "runQuery" && edge.resolution === "same-file-function"), true);
 
-    const entrypoint = analysis.entrypoints.find((item) => item.route.route === "/api/jobs/run");
+    const entrypoint = analysis.entrypoints.find(
+      (item) => item.route.route === "/api/jobs/run" && item.route.frameworkHint === "Gin router",
+    );
     assert.equal(entrypoint?.route.method, "POST");
-    assert.equal(entrypoint?.route.frameworkHint, "Gin router");
     assert.equal(entrypoint?.handler?.name, "runJob");
     assert.equal(entrypoint?.resolution, "named-function");
 
@@ -75,7 +76,9 @@ test("Gin groups, middleware, Go calls, and same-file handlers participate in ex
     assert.equal(middleware?.scope.depth, 2);
     assert.equal(middleware?.interpretation, "structural-gin-route-middleware-attachment-not-runtime-protection");
 
-    const flow = analysis.routeFlows.find((item) => item.route.route === "/api/jobs/run");
+    const flow = analysis.routeFlows.find(
+      (item) => item.route.route === "/api/jobs/run" && item.route.frameworkHint === "Gin router",
+    );
     assert.deepEqual(flow?.evidence
       .filter((item) => item.kind === "database")
       .map((item) => ({ path: item.path, line: item.line, depth: item.depth, functionName: item.functionName })), [
@@ -112,10 +115,14 @@ test("Gin routes resolve one unique handler in the same Go package directory", a
       index,
       buildModuleGraph(index, repo.files),
     );
-    const entrypoint = analysis.entrypoints.find((item) => item.route.route === "/jobs/run");
+    const entrypoint = analysis.entrypoints.find(
+      (item) => item.route.route === "/jobs/run" && item.route.frameworkHint === "Gin router",
+    );
     assert.equal(entrypoint?.handler?.path, "api/handlers.go");
     assert.equal(entrypoint?.handler?.name, "runJob");
-    const flow = analysis.routeFlows.find((item) => item.route.route === "/jobs/run");
+    const flow = analysis.routeFlows.find(
+      (item) => item.route.route === "/jobs/run" && item.route.frameworkHint === "Gin router",
+    );
     assert.deepEqual(flow?.evidence.map((item) => ({ path: item.path, line: item.line, kind: item.kind })), [
       { path: "api/handlers.go", line: 4, kind: "database" },
     ]);
@@ -166,14 +173,34 @@ test("Gin composition rejects aliased imports and transformed handlers", async (
   }
 });
 
-test("Gin composition rejects reassigned scopes and ambiguous same-package handlers", async () => {
-  const routes = [
+test("Gin composition rejects reassigned scopes", async () => {
+  const source = [
     "package api",
     'import "github.com/gin-gonic/gin"',
     "func runJob(c *gin.Context) {}",
     "func routes() {",
     "  router := gin.Default()",
     "  router = replacement",
+    '  router.POST("/jobs/run", runJob)',
+    "}",
+  ].join("\n");
+  const repo = await makeRepository({ "api/routes.go": source });
+  try {
+    const graph = await buildCallGraph(repo.root, repo.files);
+    const result = await composeGinRouterEntrypoints(repo.root, repo.files, graph, []);
+    assert.deepEqual(result.entrypoints, []);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("Gin ambiguous same-package handler names remain unresolved", async () => {
+  const routes = [
+    "package api",
+    'import "github.com/gin-gonic/gin"',
+    "func runJob(c *gin.Context) {}",
+    "func routes() {",
+    "  router := gin.Default()",
     '  router.POST("/jobs/run", runJob)',
     "}",
   ].join("\n");
@@ -186,7 +213,9 @@ test("Gin composition rejects reassigned scopes and ambiguous same-package handl
   try {
     const graph = await buildCallGraph(repo.root, repo.files);
     const result = await composeGinRouterEntrypoints(repo.root, repo.files, graph, []);
-    assert.deepEqual(result.entrypoints, []);
+    const entrypoint = result.entrypoints.find((item) => item.route.frameworkHint === "Gin router");
+    assert.equal(entrypoint?.resolution, "unresolved");
+    assert.equal(entrypoint?.handler, undefined);
   } finally {
     await repo.cleanup();
   }
