@@ -1,7 +1,7 @@
 import type { SynSecConfig } from "@synsec/config";
 import { runScanEngine } from "@synsec/engine";
 import {
-  createOciIsolatedDependencyScanners,
+  createOciIsolatedScanners,
   withBuiltInScannerFactory,
 } from "@synsec/scanners";
 import { parseGitHubAppHostProfile, type NormalizedGitHubAppHostProfile } from "./app-host-profile.js";
@@ -21,7 +21,7 @@ import {
 import type { PostgresGitHubSharedStateOptions, PostgresPoolLike } from "./postgres-shared-state.js";
 import { assessGitHubAppSharedStateConformanceEvidence } from "./shared-state-evidence.js";
 
-const OCI_WORKER_SCANNERS = new Set(["grype", "syft"]);
+const OCI_WORKER_SCANNERS = new Set(["checkov", "grype", "syft"]);
 
 export interface SynSecGitHubAppWorkerHostOptions {
   /** Exact-keyed non-secret deployment profile shared with the intake role. */
@@ -30,7 +30,7 @@ export interface SynSecGitHubAppWorkerHostOptions {
   pool: PostgresPoolLike;
   /** Canonical real-backend conformance report bound to the exact built-in PostgreSQL adapter. */
   conformanceReport: unknown;
-  /** Trusted worker scan configuration. Hosted OCI workers currently accept only grype/syft. */
+  /** Trusted worker scan configuration. Hosted OCI workers currently accept Checkov, Grype, and Syft. */
   config: SynSecConfig;
   sharedStateOptions?: PostgresGitHubSharedStateOptions;
   publishSarif?: boolean;
@@ -57,11 +57,11 @@ export interface SynSecGitHubAppWorkerHost {
 /**
  * Validate the scanner set that the executable hosted worker can truthfully isolate today.
  *
- * The current enforced OCI integration supports Grype and Syft because both adapters accept the
- * sandbox process runner for availability checks and scan execution. Rejecting every other selected
- * scanner is intentional: the worker must never silently fall back to host execution merely to gain
- * scanner breadth. AI review is likewise disabled in this role because it is a separate outbound
- * trust boundary and is not part of the scanner sandbox contract.
+ * The current enforced OCI integration supports Checkov, Grype, and Syft because all three adapters
+ * accept the sandbox process runner for availability checks and scan execution. Rejecting every other
+ * selected scanner is intentional: the worker must never silently fall back to host execution merely
+ * to gain scanner breadth. AI review is likewise disabled in this role because it is a separate
+ * outbound trust boundary and is not part of the scanner sandbox contract.
  */
 export function assertGitHubAppOciWorkerConfig(config: SynSecConfig): void {
   if (!config || config.schemaVersion !== 1 || !Array.isArray(config.scanners)) {
@@ -97,8 +97,8 @@ export function assertGitHubAppOciWorkerConfig(config: SynSecConfig): void {
  * the host acquisition/publication layers and are never supplied as scanner environment variables.
  *
  * This role intentionally rejects unsupported scanner ids rather than falling back to host execution.
- * Therefore successful execution is evidence for the enforced Grype/Syft worker path only, not proof
- * of complete scanner coverage, fleet readiness, runtime exploitability, or absence of vulnerabilities.
+ * Therefore successful execution is evidence for the enforced Checkov/Grype/Syft worker path only,
+ * not proof of complete scanner coverage, fleet readiness, runtime exploitability, or absence of vulnerabilities.
  */
 export async function createSynSecGitHubAppWorkerHost(
   options: SynSecGitHubAppWorkerHostOptions,
@@ -136,7 +136,7 @@ export async function createSynSecGitHubAppWorkerHost(
   });
 
   const scan = async (input: Parameters<typeof runScanEngine>[0]) => withBuiltInScannerFactory(
-    () => createOciIsolatedDependencyScanners({
+    () => createOciIsolatedScanners({
       runtimeCommand: profile.scannerRuntimeCommand,
       image: profile.scannerImage,
       repositoryRoot: input.rootPath,
