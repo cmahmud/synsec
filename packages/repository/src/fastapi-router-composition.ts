@@ -1,6 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { IndexFileInput } from "./analysis.js";
+import { findCallNeighborhood, type CallGraph, type CallGraphNode } from "./call-graph.js";
 import type { ModuleGraph, ResolvedModuleEdge } from "./module-graph.js";
 import type { RouteEntrypoint } from "./route-entrypoints.js";
 
@@ -9,6 +10,7 @@ const DEFAULT_MAX_INCLUDE_DEPTH = 8;
 const MAX_INCLUDE_DEPTH = 32;
 const DEFAULT_MAX_COMPOSED_ROUTES = 2_000;
 const MAX_COMPOSED_ROUTES = 10_000;
+const DEFAULT_MAX_DECLARATION_DISTANCE = 5;
 
 interface RouterNode {
   path: string;
@@ -157,6 +159,26 @@ function routeKey(entrypoint: RouteEntrypoint): string {
   return [normalizePath(entrypoint.route.path), entrypoint.route.line, entrypoint.route.method, entrypoint.route.route, handler?.id ?? ""].join("\0");
 }
 
+function nearestFastApiHandler(
+  graph: CallGraph,
+  path: string,
+  routeLine: number,
+  maxDeclarationDistance: number,
+): CallGraphNode | undefined {
+  const candidates = graph.nodes
+    .filter((node) => (
+      node.kind === "python-function"
+      && normalizePath(node.path) === normalizePath(path)
+      && node.line > routeLine
+      && node.line - routeLine <= maxDeclarationDistance
+    ))
+    .sort((left, right) => left.line - right.line || left.name.localeCompare(right.name));
+  const first = candidates[0];
+  if (!first) return undefined;
+  const nearest = candidates.filter((candidate) => candidate.line === first.line);
+  return nearest.length === 1 ? first : undefined;
+}
+
 /**
  * Compose explicit FastAPI APIRouter prefixes across bounded include_router() relationships.
  *
@@ -167,18 +189,32 @@ function routeKey(entrypoint: RouteEntrypoint): string {
  * binding whose target contains exactly one matching APIRouter declaration. Dotted references,
  * factories, dynamic prefixes, multiline expressions, wildcard imports, ambiguous declarations,
  * and unresolved imports fail closed. Traversal starts only at explicit `app.include_router` roots,
- * stops at repeated router nodes, and is bounded by depth/output limits. The returned route identity
- * is structural evidence; it is not proof that FastAPI imports, registers, or serves the route.
+ * stops at repeated router nodes, and is bounded by depth/output limits. Because generic indexing can
+ * classify `@router.get(...)` as a Node-like route before FastAPI identity is known, this layer also
+ * independently revalidates the exact decorator and resolves only the unique nearest following Python
+ * function within a bounded declaration distance before carrying sink/call evidence into a composed
+ * route. The returned route identity is structural evidence; it is not proof that FastAPI imports,
+ * registers, or serves the route at runtime.
  */
 export async function composeFastApiRouterEntrypoints(
   rootPath: string,
   files: readonly IndexFileInput[],
   moduleGraph: ModuleGraph,
+  graph: CallGraph,
   entrypoints: readonly RouteEntrypoint[],
-  options: { maxIncludeDepth?: number; maxComposedRoutes?: number } = {},
+  options: {
+    maxIncludeDepth?: number;
+    maxComposedRoutes?: number;
+    maxDeclarationDistance?: number;
+    maxCallDepth?: number;
+    maxCallNodes?: number;
+  } = {},
 ): Promise<RouteEntrypoint[]> {
   const maxIncludeDepth = boundedInteger(options.maxIncludeDepth, DEFAULT_MAX_INCLUDE_DEPTH, MAX_INCLUDE_DEPTH, "FastAPI router maxIncludeDepth");
   const maxComposedRoutes = boundedInteger(options.maxComposedRoutes, DEFAULT_MAX_COMPOSED_ROUTES, MAX_COMPOSED_ROUTES, "FastAPI router maxComposedRoutes");
+  const maxDeclarationDistance = boundedInteger(options.maxDeclarationDistance, DEFAULT_MAX_DECLARATION_DISTANCE, 20, "FastAPI router maxDeclarationDistance");
+  const maxCallDepth = Math.max(0, Math.min(20, options.maxCallDepth ?? 3));
+  const maxCallNodes = Math.max(1, Math.min(1_000, options.maxCallNodes ?? 100));
   const pythonFiles = files.filter((file) => extname(file.path).toLowerCase() === ".py");
   const sourceByPath = new Map<string, string>();
   for (const file of pythonFiles) {
@@ -259,8 +295,17 @@ export async function composeFastApiRouterEntrypoints(
     if (!routerName || routerName === "app") continue;
     const router = routers.get(routerKey(path, routerName));
     if (!router || router.declarationLine >= entrypoint.route.line) continue;
+    const resolvedHandler = entrypoint.handler ?? nearestFastApiHandler(graph, path, entrypoint.route.line, maxDeclarationDistance);
+    const resolvedEntrypoint: RouteEntrypoint = resolvedHandler
+      ? {
+          ...entrypoint,
+          resolution: entrypoint.handler ? entrypoint.resolution : "decorated-function",
+          handler: resolvedHandler,
+          calls: entrypoint.calls ?? findCallNeighborhood(graph, resolvedHandler.id, maxCallDepth, maxCallNodes),
+        }
+      : entrypoint;
     const key = routerKey(router.path, router.name);
-    routesByRouter.set(key, [...(routesByRouter.get(key) ?? []), entrypoint]);
+    routesByRouter.set(key, [...(routesByRouter.get(key) ?? []), resolvedEntrypoint]);
   }
 
   const roots = includeEdges.filter((edge) => edge.parent === undefined);
