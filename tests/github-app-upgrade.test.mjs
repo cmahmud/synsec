@@ -8,6 +8,7 @@ function replica(overrides = {}) {
     releaseId: "0.2.0-old",
     schemaVersion: 1,
     ready: true,
+    acceptingWorkerRuns: false,
     activeLeases: 0,
     observedAt: "2026-08-25T03:00:00.000Z",
     ...overrides,
@@ -52,6 +53,18 @@ test("rolling upgrade can finalize only when the exact fleet is healthy, drained
   assert.equal(result.readyToFinalizeRollout, true);
   assert.equal(result.targetReplicaCount, 2);
   assert.equal(result.previousReplicaCount, 0);
+});
+
+test("zero durable leases do not count as drained while worker admission remains open", () => {
+  const result = assessSynSecGitHubAppUpgrade(base({
+    replicas: [
+      replica({ acceptingWorkerRuns: true, activeLeases: 0 }),
+      replica({ replicaId: "synsec-1" }),
+    ],
+  }));
+  assert.equal(result.readyToBeginRollout, false);
+  assert.equal(result.readyToFinalizeRollout, false);
+  assert.ok(result.issues.some((issue) => issue.code === "worker-admission-open" && issue.replicaId === "synsec-0"));
 });
 
 test("active leases prevent both rollout start and finalization", () => {
