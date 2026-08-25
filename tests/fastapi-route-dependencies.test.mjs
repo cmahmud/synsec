@@ -42,7 +42,8 @@ test("FastAPI route dependencies resolve same-file functions and bounded auth ev
     const analysis = await analyze(repo);
     assert.equal(analysis.fastApiDependencyContexts.length, 1);
     const context = analysis.fastApiDependencyContexts[0];
-    assert.equal(context?.handler, "admin_panel");
+    assert.equal(context?.route.frameworkHint, "FastAPI route decorator");
+    assert.equal(context?.route.route, "/admin");
     assert.equal(context?.dependencies[0]?.name, "require_admin");
     assert.equal(context?.dependencies[0]?.wrapper, "Depends");
     assert.equal(context?.dependencies[0]?.resolution, "same-file-function");
