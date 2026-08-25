@@ -15,6 +15,7 @@
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./django-route-handlers": "./dist/django-route-handlers.js",
     "./django-urlconf-composition": "./dist/django-urlconf-composition.js",
+    "./fastapi-route-dependencies": "./dist/fastapi-route-dependencies.js",
     "./route-middleware-composition": "./dist/route-middleware-composition.js",
     "./route-auth-context": "./dist/route-auth-context.js",
     "./route-protection-context": "./dist/route-protection-context.js",
