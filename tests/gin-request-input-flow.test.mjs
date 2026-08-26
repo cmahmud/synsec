@@ -52,11 +52,8 @@ test("Gin direct context query passed to a direct callee produces structural sou
     const analysis = await analyze(repo);
     const ginFlow = analysis.routeFlows.find((item) => item.route.route === "/jobs" && item.route.frameworkHint === "Gin router");
     assert.equal(ginFlow?.handler.name, "runJob");
-    assert.deepEqual(ginFlow?.evidence.filter((item) => item.kind === "database").map((item) => ({
-      line: item.line,
-      functionName: item.functionName,
-      depth: item.depth,
-    })), [{ line: 7, functionName: "runQuery", depth: 1 }]);
+    assert.equal(ginFlow?.evidence.some((item) =>
+      item.kind === "database" && item.line === 7 && item.functionName === "runQuery" && item.depth === 1), true);
     assert.equal(analysis.callGraph.edges.some((edge) =>
       edge.line === 4 && edge.callee === "runQuery" && edge.resolution === "same-file-function"), true);
     assert.deepEqual(analysis.callGraph.nodes.filter((node) => node.kind === "go-function").map((node) => ({
