@@ -50,6 +50,25 @@ test("Gin direct context query passed to a direct callee produces structural sou
   const repo = await makeRepository({ "api/routes.go": source });
   try {
     const analysis = await analyze(repo);
+    const ginFlow = analysis.routeFlows.find((item) => item.route.route === "/jobs" && item.route.frameworkHint === "Gin router");
+    assert.equal(ginFlow?.handler.name, "runJob");
+    assert.deepEqual(ginFlow?.evidence.filter((item) => item.kind === "database").map((item) => ({
+      line: item.line,
+      functionName: item.functionName,
+      depth: item.depth,
+    })), [{ line: 7, functionName: "runQuery", depth: 1 }]);
+    assert.equal(analysis.callGraph.edges.some((edge) =>
+      edge.line === 4 && edge.callee === "runQuery" && edge.resolution === "same-file-function"), true);
+    assert.deepEqual(analysis.callGraph.nodes.filter((node) => node.kind === "go-function").map((node) => ({
+      name: node.name,
+      line: node.line,
+      endLine: node.endLine,
+    })), [
+      { name: "runJob", line: 3, endLine: 5 },
+      { name: "runQuery", line: 6, endLine: 8 },
+      { name: "routes", line: 9, endLine: 12 },
+    ]);
+
     const contexts = await buildGinRouteRequestInputFlowContexts(repo.root, analysis.routeFlows, analysis.callGraph);
     assert.equal(contexts.length, 1);
     const context = contexts[0];
@@ -107,6 +126,11 @@ test("Gin direct context access on the exact sink line has zero call distance", 
   const repo = await makeRepository({ "api/routes.go": source });
   try {
     const analysis = await analyze(repo);
+    const ginFlow = analysis.routeFlows.find((item) => item.route.route === "/jobs/:job_id" && item.route.frameworkHint === "Gin router");
+    assert.equal(ginFlow?.handler.name, "runJob");
+    assert.deepEqual(ginFlow?.evidence.filter((item) => item.kind === "database").map((item) => ({ line: item.line, functionName: item.functionName })), [
+      { line: 4, functionName: "runJob" },
+    ]);
     const contexts = await buildGinRouteRequestInputFlowContexts(repo.root, analysis.routeFlows, analysis.callGraph);
     assert.deepEqual(contexts[0]?.evidence.map((item) => ({ kind: item.source.kind, distance: item.callDistance })), [
       { kind: "path", distance: 0 },
