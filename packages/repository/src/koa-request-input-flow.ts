@@ -160,13 +160,27 @@ function directTargets(graph: CallGraph, ownerId: string, line: number): string[
   return [...new Set(graph.edges.flatMap((edge) => edge.from === ownerId && edge.line === line && edge.target ? [edge.target] : []))].sort();
 }
 
+function isDefensibleKoaSink(
+  sink: RouteSinkFlowContext["evidence"][number],
+  files: ReadonlyMap<string, string[]>,
+): boolean {
+  if (sink.kind !== "database") return true;
+  const line = files.get(comparisonPath(sink.path))?.[sink.line - 1] ?? "";
+  // The generic repository sink index intentionally treats bare query/execute-like calls as
+  // database-looking lexical evidence. Koa directional flow is stricter: database correlation is
+  // retained only for a member-qualified database-style call. This rejects local helpers named
+  // execute/query and their function declarations instead of upgrading those lexical collisions.
+  return /\.\s*(?:query|execute|executemany|raw|rawQuery|createQueryRunner)\s*\(/i.test(line);
+}
+
 /**
  * Build deliberately narrow Koa request-source evidence from routes produced by the strict Koa
  * router composer. Only the resolved route handler's first plain identifier parameter is treated as
  * the structural Koa context. A recognized access must occur on the exact sink line or on the same
  * line as one direct call-graph edge to the sink-owning function. `ctx.body` is intentionally not a
- * request source because Koa uses it as the response body. Locals, aliasing, transformations,
- * destructuring, middleware propagation, and deeper argument flow are intentionally excluded.
+ * request source because Koa uses it as the response body. Generic bare execute/query calls are also
+ * excluded from database flow unless the sink line is member-qualified. Locals, aliasing,
+ * transformations, destructuring, middleware propagation, and deeper argument flow are excluded.
  */
 export async function buildKoaRouteRequestInputFlowContexts(
   rootPath: string,
@@ -196,6 +210,7 @@ export async function buildKoaRouteRequestInputFlowContexts(
       const targets = new Set(directTargets(graph, node.id, lineNumber));
 
       for (const sink of routeFlow.evidence) {
+        if (!isDefensibleKoaSink(sink, files)) continue;
         const sameLineSink = sink.functionId === node.id && sink.line === lineNumber;
         const distance: 0 | 1 | undefined = sameLineSink ? 0 : targets.has(sink.functionId) ? 1 : undefined;
         if (distance === undefined) continue;
