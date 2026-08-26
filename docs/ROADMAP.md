@@ -1,84 +1,212 @@
 # SynSec Roadmap
 
+This roadmap separates what is already usable in the repository from the deeper analysis and hosted-product work that follows it.
+
 ## Phase 0 — Foundation
 
 - [x] Standalone public repository
 - [x] Normalized finding model
 - [x] Scanner adapter SDK
-- [x] CLI skeleton
-- [x] First real scanner integration: Trivy
-- [x] Initial correlation layer
-- [ ] CI green on Node 24
-- [ ] Stable configuration file format
+- [x] CLI foundation
+- [x] Initial Trivy integration
+- [x] Deterministic correlation layer
+- [x] CI on Node 20 and Node 24
+- [x] Versioned configuration format
 
-## Phase 1 — Repository scanner MVP
+## Phase 1 — Repository scanner MVP (v0.2)
 
-- [ ] Opengrep adapter
-- [ ] Gitleaks adapter
-- [ ] OSV-Scanner adapter
-- [ ] Checkov adapter
-- [ ] Syft + Grype adapters
-- [ ] OpenSSF Scorecard adapter
-- [ ] SARIF import/export
-- [ ] JSON report format with schema versioning
-- [ ] Better cross-scanner deduplication
-- [ ] Severity and confidence policy engine
-- [ ] Ignore/baseline support
-- [ ] Scan only changed files when appropriate
+- [x] Opengrep adapter
+- [x] Betterleaks adapter
+- [x] Gitleaks fallback adapter
+- [x] OSV-Scanner adapter
+- [x] Trivy adapter
+- [x] Grype adapter
+- [x] Checkov IaC adapter
+- [x] Syft SBOM adapter and normalized scanner-artifact model
+- [x] OpenSSF Scorecard adapter
+- [x] Bounded parallel scanner orchestration
+- [x] Scanner failure isolation
+- [x] Refuse false clean reports when no selected scanner can run
+- [x] Versioned JSON report format
+- [x] SARIF 2.1 export
+- [x] Generic SARIF 2.1 import into normalized findings
+- [x] Self-contained HTML report/dashboard
+- [x] Stronger cross-scanner advisory and source-location correlation
+- [x] Configurable CI severity threshold
+- [x] Baseline support with new/fixed/persisting findings
+- [x] Secret redaction in normalized output
+- [x] Changed-file finding scope with persisted base/file metadata
+- [x] Direct changed-file execution for Opengrep and Betterleaks
+- [x] Native bounded changed-file execution for Checkov, Gitleaks, and Trivy with adapter-level validation/fallback
+- [x] Conservative incremental scan planner with bounded local-dependent expansion and full-scan fallback
+- [x] Engine integration of dependency-aware incremental planning for local and caller-supplied changed scopes
+- [ ] Native incremental execution for every remaining scanner that can safely support it
+
+The incremental planner always includes direct changes and may add structurally known local dependents to improve review coverage. It fails over to a full repository scan when narrowing is ambiguous or high impact, including lockfiles, CI/security/IaC/configuration changes, unindexed analyzable source, unsafe paths, excessive change sets, or dependent expansion that would exceed its configured bound. `runScanEngine()` now applies this plan to locally discovered and explicitly supplied changed-file scopes, and hosted exact-tree PR paths pass through the same planner before scanner execution. This is a coverage heuristic only; it never claims that unselected files are unaffected or safe. Universal native incremental execution remains open because only adapters that can safely narrow their own underlying scanner invocation should do so; other engines may still require repository-wide analysis followed by SynSec scope filtering.
 
 ## Phase 2 — Repository intelligence
 
-- [ ] Language/framework detection
-- [ ] Repository index
-- [ ] Import/call graph
-- [ ] Routes and externally reachable entry points
-- [ ] Authentication/authorization context
-- [ ] Database and filesystem sinks
-- [ ] Dependency reachability
-- [ ] Finding-to-code context retrieval
+- [x] Language/framework inventory
+- [x] Safe bounded finding-to-code context retrieval
+- [x] Persistent repository index
+- [x] Import/module graph with bounded dependency/dependent traversal
+- [x] Bounded same-file lexical call-graph primitive for JavaScript/TypeScript and Python
+- [x] Conservative decorator-route to callable-entrypoint mapping
+- [x] Conservative simple named Node router-handler mapping
+- [x] Bounded route-level lexical authentication/authorization context
+- [x] Bounded route-level lexical process/filesystem/database/network sink context
+- [x] Exact-line structural route-call-sink finding enrichment for resolved same-file call neighborhoods
+- [x] Bounded repository posture summary from route/auth/sink signals
+- [x] Bounded likely test-ownership context from resolved imports and filename conventions
+- [x] Bounded LCOV ingestion and finding-line test-coverage context primitive
+- [ ] Full function/call graph with reliable cross-module symbol resolution
+- [ ] Broad routes and externally reachable entry points across supported frameworks
+- [ ] Framework-aware authentication/authorization enforcement semantics
+- [ ] Data-flow-aware sink reachability beyond structural call/sink evidence
+- [ ] Dependency reachability beyond scanner-provided call analysis
+- [ ] Persisted/report-integrated runtime/test-run coverage context around findings
+
+The current call graph is deliberately labeled lexical evidence rather than runtime reachability. It resolves unambiguous direct same-file calls and leaves qualified, external, or ambiguous calls unresolved. Decorator-based route mapping links only a structurally close unambiguous declaration. Simple same-line Node router registrations can also carry a named handler candidate when the literal route is followed only by plain identifier arguments and exactly one same-file lexical function matches the final handler. Inline callbacks, call expressions, mounted routers, member expressions, spreads, dynamic paths, imported/duplicate handler ambiguity, and other compound framework shapes remain unresolved rather than guessed.
+
+Resolved route handlers can be combined with the bounded same-file call neighborhood and normalized sink lines. SynSec emits structural route-call-sink evidence only when a sink line belongs to exactly one reachable lexical function; finding enrichment additionally requires an exact normalized path/start-line match and is disabled for secret findings. This remains `structural-route-call-sink-evidence-only`, not proof of deployed exposure, attacker control, real request reachability, or executable data flow.
+
+Route authentication and nearby sink context remain conservative proximity signals. They record bounded same-file security signals near indexed routes and label the results `lexical-auth-signals-only` or `lexical-sink-signals-only`. Absence of nearby auth is reported only as `no-auth-signal-observed`, and nearby sinks are not treated as proven data-flow or call reachability. The repository posture summary aggregates these bounded signals for prioritization while explicitly remaining `bounded-lexical-posture-only`.
+
+Likely test ownership is also structural evidence only. It prioritizes test files that directly import a source module and supplements those with bounded filename-convention matches. The LCOV primitive can ingest caller-supplied test coverage and classify a concrete finding line as executed, not executed, or lacking data. SynSec does not run target tests to generate that coverage, and the result is explicitly labeled `observed-test-coverage-not-runtime-reachability`; normal report persistence/UI integration remains future work.
 
 ## Phase 3 — Contextual security review
 
-- [ ] AI-assisted finding triage
-- [ ] Explain why a finding matters in this repository
-- [ ] Distinguish deterministic evidence from model inference
-- [ ] Suggested code patch
-- [ ] Suggested tests
-- [ ] Rescan after remediation
-- [ ] Finding states: new, confirmed, false positive, accepted risk, fixed, regressed
+- [x] Provider-agnostic OpenAI-compatible AI review adapter
+- [x] Explicit opt-in for model review
+- [x] Separate deterministic scanner evidence from model inference
+- [x] Seven-question evidence gate for model review
+- [x] Source-code context disabled by default and separately opt-in
+- [x] Deterministic multi-review consensus aggregation with disagreement/insufficient-review handling
+- [x] Bounded independent multi-reviewer execution API with failure isolation
+- [x] CLI/configured multi-model review UX
+- [ ] Repository-aware explanation of reachability and impact
+- [ ] Suggested patch generation
+- [ ] Suggested regression/security tests
+- [x] Safe rescan-after-remediation verification primitive
+- [x] Finding lifecycle: new, confirmed, false positive, accepted risk, fixed, regressed
 
-## Phase 4 — Git hosting and CI
+Consensus remains model inference, not scanner evidence. Duplicate model identities do not count as independent reviewers, split verdicts fail closed to `uncertain`, insufficient reviewer sets do not fabricate consensus, reviewer execution is concurrency-bounded, and provider failures are isolated with credential redaction. CLI review supports an explicit single-model path and an opt-in `--ai-models` path with two to ten unique model ids, bounded reviewer concurrency, and a configurable minimum-successful-reviewer requirement. Multi-model output preserves individual reviews/failures and labels aggregate agreement as model consensus rather than scanner evidence.
 
-- [ ] GitHub App
-- [ ] Repository installation flow
-- [ ] Pull-request scanning
-- [ ] Commit status / checks
-- [ ] Inline findings
-- [ ] Scheduled scans
-- [ ] Optional remediation pull requests
+## Phase 4 — Reusable workflows / skills
+
+The orchestration layer should expose small reusable defensive workflows rather than hard-coding one giant agent prompt.
+
+- [x] Repository review workflow
+- [x] Dependency review workflow
+- [x] Secrets review workflow with source-context prohibition
+- [x] Infrastructure/IaC review workflow
+- [x] Fix verification workflow
+- [x] Report-writing workflow
+- [x] Provider/model routing policy by task and cost
+- [x] User-defined workflow/skill format with explicit capabilities
+- [x] Explicit capability declarations per built-in workflow
+- [x] Human approval boundary declared for any repository-changing action
+- [x] External network assessment forbidden in repository workflows
+
+These workflows operate on repository evidence and scanner results. They are not a mechanism for silently expanding into external targets.
+
+## Phase 5 — Git hosting and CI
+
+- [x] GitHub Actions context/event parsing primitives
+- [x] Deterministic GitHub check-result and inline-annotation generation
+- [x] Baseline-aware PR annotation filtering and severity-threshold conclusions
+- [x] Narrow fixed-host Checks API publication primitive
+- [x] Completed-report → GitHub check publication orchestration
+- [x] GitHub Actions repository scan → check runner with PR changed-file defaults
+- [x] Report/commit binding before check publication
+- [x] Packaged Actions entrypoint / workflow template
+- [x] Inline SARIF/code-scanning upload
+- [x] Provenance-safe pull-request baseline acquisition from the exact local base commit
+- [x] Scheduled full-repository workflow template with explicit report-artifact retention
+- [x] GitHub App HMAC webhook verification and bounded event normalization
+- [x] GitHub App short-lived JWT and fixed-host installation-token exchange primitives
+- [x] Explicit GitHub App scan-trigger allowlist for push and selected PR lifecycle events
+- [x] Durable webhook delivery replay protection with retry-safe claim release
+- [x] Durable local installation authorization state
+- [x] Installation/repository-selection event synchronization into authorization state
+- [x] Replay-protected authorization-gated local webhook handler
+- [x] Bounded framework-free webhook HTTP handler for deployment behind HTTPS
+- [x] Installation-scoped exact-commit GitHub repository acquisition primitive
+- [x] Exact queued head/base acquisition and hosted PR baseline comparison
+- [x] Authorization-aware local scan worker with commit-bound report verification
+- [x] Local worker composition through the existing scan engine and Checks/SARIF publishers
+- [x] Memory-only App installation-token provider with purpose-specific permission checks
+- [x] Deterministic worker-permission diagnostic model for acquisition, Checks, and optional SARIF
+- [x] Single-host local runtime composition with separate durable-state/workspace trees
+- [x] Exact-provenance changed-file head execution for hosted PR Checks with conservative full-scan fallback
+- [x] Optional remediation pull requests with exact approval-bound patch scope and distinct write credentials
+- [ ] Production TLS/listener deployment, supervision, and operational secret rotation
+- [ ] Repository installation/setup UX and recovery flows
+- [ ] Transactional shared App state/queue for multi-host deployment
 - [ ] GitLab and Bitbucket adapters
 
-## Phase 5 — Web application
+The Actions runner consumes the existing repository scan engine rather than introducing a second scanner path. Pull-request contexts default to changed-file scanning against `origin/<base>`, while push, schedule, workflow-dispatch, and other non-PR contexts default to full repository scans. Publication is refused when the scan cannot identify its commit or the report commit differs from the GitHub head being annotated. The packaged Action keeps explicit config/baseline file inputs inside the real checked-out workspace, including symlink resolution, before those files are read.
 
-- [ ] Project/repository dashboard
-- [ ] Scan history
-- [ ] Security score
-- [ ] New/fixed/regressed findings
-- [ ] Finding detail page with source evidence
-- [ ] Dependency and SBOM views
-- [ ] Repository posture view
-- [ ] Team triage workflow
+For PRs without an explicit baseline, the Action can scan the exact event-provided base commit in a temporary detached worktree. The base commit must already be present locally; SynSec does not implicitly fetch a remote or substitute a nearby revision. The resulting report is accepted only when its commit identity matches the requested base SHA, then the temporary worktree is removed.
 
-## Phase 6 — Isolated scan workers
+The Action also writes the completed JSON report under `RUNNER_TEMP` and exposes its path. The scheduled workflow template retains that report only through an explicit caller-owned artifact step with a visible retention period; SynSec does not silently persist security evidence.
 
+GitHub App support now has a coherent single-host local runtime: raw webhook deliveries are bounded and verified, replay-claimed, synchronized into durable authorization state, authorization-gated into a commit-pinned queue, then consumed by workers that recheck authorization and acquire exact repository commits through a fixed GitHub transport. Pull-request jobs acquire and scan both the exact queued base and head; the base report must bind to the queued base SHA before it can become the head baseline, and the head report must bind to the queued head SHA before Checks/SARIF publication. Credentials are created afresh in memory, never handed to scanners, and checked against operation-specific permission requirements. A separate deterministic diagnostic explains whether GitHub-reported token permissions satisfy `contents:read`, `checks:write`, and optional `security_events:write`; unavailable metadata fails closed rather than being treated as authorization.
+
+For hosted PR Checks, SynSec compares the already-acquired exact base/head trees locally with bounded `git ls-tree` output, accepts only safe normal-blob head paths, and feeds those direct paths through the engine's dependency-aware incremental planner. Deletions, changed non-blob entries such as submodules, malformed/unsafe tree evidence, tree-command failure, or configured size bounds force a full repository scan. SARIF-enabled hosted PR jobs deliberately remain full-repository because publishing a partial SARIF analysis as the latest code-scanning result could make untouched alerts appear absent. Incremental scope is therefore an optimization with exact provenance and conservative fallback, not evidence that omitted files are safe or unreachable. See [INCREMENTAL_SCANS.md](./INCREMENTAL_SCANS.md) and [GITHUB_APP.md](./GITHUB_APP.md).
+
+Remediation PR creation is explicitly operator-invoked. Approved proposals are bound to one exact target commit, finding set, file set, operations, and patch hashes; the writer revalidates provenance and hashes immediately before Git operations, stages only approved modifications/additions, refuses delete/rename/scope expansion, uses a deterministic non-force branch, and mints write-capable credentials only after read-only acquisition succeeds. Webhook intake, scanning, model review, and lifecycle transitions never trigger remediation automatically.
+
+See [GITHUB.md](./GITHUB.md) for the current Actions integration contract and security boundaries.
+
+## Phase 6 — Persistent web application
+
+- [x] Deterministic report-history aggregation for score, finding count, churn, and finding lifetime
+- [x] Bounded local scan-history store with atomic writes and trend-safe snapshots
+- [x] Self-contained trend-safe security-history HTML dashboard renderer
+- [x] History-store → restrictive local dashboard file generation
+- [x] Bounded lifecycle finding-ownership metadata foundation
+- [x] Bounded append-only local finding review-comment store
+- [x] Sanitized deterministic current-finding triage view model
+- [x] Self-contained restrictive local triage dashboard
+- [x] Self-contained normalized SBOM/dependency inventory dashboard
+- [x] Aggregate bounded-lexical repository-posture dashboard
+- [x] Local static project dashboard bundle composing triage, SBOM, posture, and optional trend-safe history
+- [ ] Authenticated project/repository web application
+- [ ] Multi-project/server persistence layer
+- [ ] Interactive security-score history UI backed by server persistence
+- [ ] Interactive new/fixed/regressed views
+- [ ] Finding detail page with explicitly bounded source evidence
+- [ ] Interactive dependency and SBOM views
+- [ ] Interactive repository posture exploration
+- [ ] Multi-user team triage workflow
+- [ ] Multi-user comments and richer collaboration history
+
+The current dashboard work is intentionally local and static rather than a hosted collaboration product. The project bundle writes fixed local pages for current triage metadata, normalized SBOM inventory, aggregate lexical posture, and optional trend-safe history. It embeds no remote assets and does not copy source excerpts, scanner diagnostics, tokens, or arbitrary outbound URLs into the bundle. The triage model includes only current finding identity/title/severity plus lifecycle state, ownership, bounded notes, and append-only review comments. SBOM pages deliberately omit raw package locations and describe inventory rather than vulnerability/reachability. Posture pages remain aggregate and explicitly say that lexical proximity is not runtime exposure or authentication proof. Generated dashboard/history/triage/SBOM/posture files use restrictive local permissions where supported. Core JSON, SARIF, general report HTML, history, and Markdown writers also create restrictive files and repair permissive existing file modes on overwrite where the platform supports POSIX permissions. Native SynSec JSON report ingestion is bounded to 64 MiB and rejects non-regular files before parsing.
+
+The local history store itself retains only report identifiers, timestamps, commit/branch metadata, aggregate counts/scores, and finding fingerprint/title/severity tuples. It deliberately omits source excerpts, scanner diagnostics, repository URLs, artifacts, and secret-bearing evidence. Retention is bounded, writes are atomic, and invalid/corrupt stores fail closed. Lifecycle ownership and review comments are separately bounded human triage metadata and are not scanner evidence or a multi-user collaboration database.
+
+## Phase 7 — Isolated scan workers
+
+- [x] Scanner subprocess timeout, abort, output-memory, and kill-escalation bounds
+- [x] Credential-minimized default scanner subprocess environment
+- [x] Bounded durable local scan-job queue with leases/retries
+- [x] Unique per-claim lease fencing with bounded worker renewal/heartbeat
+- [x] In-process claim serialization for the supported single-runtime file queue
+- [x] Aggregate expired-lease operational telemetry without job/repository identity
+- [x] Commit-pinned temporary checkout workspace acquisition and cleanup
+- [x] Authorization recheck before worker credential/source acquisition
+- [x] Separation of durable App state and repository workspace directory trees
 - [ ] Containerized scanner images
-- [ ] Job queue
-- [ ] Per-scan workspace isolation
-- [ ] Resource limits and timeouts
+- [ ] Per-scan process/container workspace isolation
+- [ ] OS/container CPU and memory limits
 - [ ] Network policy
-- [ ] Horizontal workers
+- [ ] Horizontal workers backed by transactional shared state/queue
 - [ ] Artifact retention policy
+- [ ] Filesystem credential minimization for private-repository scan workspaces
 
-## Later
+External scanners no longer inherit the full parent process environment by default. SynSec passes a small execution/locale/certificate allowlist and requires an explicit environment when a scanner genuinely needs additional variables. Hosted GitHub acquisition uses a separate short-lived transport credential, keeps it out of scanner inputs and Git argv, disables inherited Git configuration, and removes temporary checkout workspaces after handling. The local runtime also refuses to place repository workspaces inside durable App state. The file queue now prevents stale workers from mutating or publishing under a superseded lease and renews active work, but its claim serialization is only within one queue instance; it is not a cross-process or multi-host transactional protocol. This materially narrows credential/source/concurrency exposure but is not a complete sandbox: scanner processes still need container isolation, OS resource limits, network policy, transactional shared persistence for horizontal workers, and stronger filesystem credential separation before a production multi-tenant worker deployment.
 
-Authorized attack-surface and bug-bounty workflows can be added later as a separate product mode. They should not define the core architecture or weaken the repository-first authorization model.
+## Later — explicitly authorized external assessment
+
+External attack-surface or bug-bounty workflows may be explored as a separate mode only after scope/authorization controls exist. They should not define the core architecture, should never silently expand target scope, and should not weaken the repository-first defensive defaults.

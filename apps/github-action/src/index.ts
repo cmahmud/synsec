@@ -1,0 +1,80 @@
+import { appendFile, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { loadConfig } from "@synsec/config";
+import { runGitHubActionsRepositoryScan } from "@synsec/github/actions-runner";
+import { writeReport } from "@synsec/report";
+import {
+  booleanInput,
+  changedOnlyInput,
+  nonEmpty,
+  resolveWorkspaceFileInput,
+} from "./inputs.js";
+import { writeStepSummary } from "./summary.js";
+
+async function writeOutput(name: string, value: string | number | undefined): Promise<void> {
+  const path = nonEmpty(process.env.GITHUB_OUTPUT);
+  if (!path || value === undefined) return;
+  const normalized = String(value).replace(/[\r\n]/g, "");
+  await appendFile(path, `${name}=${normalized}\n`, "utf8");
+}
+
+async function main(): Promise<void> {
+  const workspace = resolve(nonEmpty(process.env.GITHUB_WORKSPACE) ?? process.cwd());
+  const token = nonEmpty(process.env.SYNSEC_GITHUB_TOKEN);
+  if (!token) throw new Error("The SynSec GitHub Action requires a GitHub token.");
+
+  const configInput = nonEmpty(process.env.SYNSEC_CONFIG_PATH);
+  const configPath = configInput
+    ? await resolveWorkspaceFileInput(workspace, configInput, "config-path")
+    : undefined;
+  const { config } = await loadConfig(workspace, configPath);
+  const baselineInput = nonEmpty(process.env.SYNSEC_BASELINE_PATH);
+  const baselinePath = baselineInput
+    ? await resolveWorkspaceFileInput(workspace, baselineInput, "baseline-path")
+    : undefined;
+  const autoBaseline = booleanInput(process.env.SYNSEC_AUTO_BASELINE, true);
+  const publishSarif = booleanInput(process.env.SYNSEC_PUBLISH_SARIF, false);
+  const changedOnly = changedOnlyInput(process.env.SYNSEC_CHANGED_ONLY);
+
+  const result = await runGitHubActionsRepositoryScan(token, {
+    config,
+    rootPath: workspace,
+    baselinePath,
+    autoBaseline: baselinePath ? false : autoBaseline,
+    changedOnly,
+    publishSarif,
+    threshold: config.failOn,
+  });
+
+  const reportPath = resolve(nonEmpty(process.env.RUNNER_TEMP) ?? tmpdir(), "synsec-report.json");
+  await writeReport(reportPath, result.outcome.report);
+  await chmod(reportPath, 0o600).catch(() => undefined);
+  await writeStepSummary(
+    nonEmpty(process.env.GITHUB_STEP_SUMMARY),
+    result.outcome.report,
+    result.baselineSource ?? "none",
+  );
+
+  await Promise.all([
+    writeOutput("security-score", result.outcome.report.securityScore),
+    writeOutput("finding-count", result.outcome.report.findingCount),
+    writeOutput("check-run-id", result.publication.publication.id),
+    writeOutput("sarif-upload-id", result.sarifPublication?.id),
+    writeOutput("baseline-source", result.baselineSource ?? "none"),
+    writeOutput("report-path", reportPath),
+  ]);
+
+  console.log(
+    `SynSec scanned ${result.outcome.report.scope?.mode === "changed-files" ? "changed files" : "the repository"}: `
+      + `${result.outcome.report.findingCount} finding(s), security score ${result.outcome.report.securityScore}/100.`
+      + ` Baseline: ${result.baselineSource ?? "none"}. Report: ${reportPath}.`,
+  );
+  if (result.outcome.shouldFail) process.exitCode = 1;
+}
+
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`SynSec GitHub Action failed: ${message.replace(/[\r\n]+/g, " ").slice(0, 1_000)}`);
+  process.exitCode = 1;
+});

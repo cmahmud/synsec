@@ -1,0 +1,41 @@
+[Unit]
+Description=SynSec GitHub App worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=synsec
+Group=synsec
+WorkingDirectory=/opt/synsec/current
+LoadCredential=postgres.url:/etc/synsec/secrets/postgres.url
+Environment=SYNSEC_POSTGRES_URL_FILE=%d/postgres.url
+ExecStart=/usr/bin/node /opt/synsec/current/scripts/github-app-worker-host.mjs --profile /etc/synsec/worker-profile.json --conformance /etc/synsec/shared-state-conformance.json --config /etc/synsec/worker-config.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=90s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/synsec/workspaces
+
+# The worker must be given only the minimum host-side OCI runtime access needed by
+# scannerRuntimeCommand. Do not add Docker/Podman control sockets here blindly:
+# such access is a privileged host orchestration boundary even though scanner
+# containers themselves run with SynSec's enforced isolation profile.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,8 +1,8 @@
 {
   "name": "synsec",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Repository-first security scanning and vulnerability correlation platform",
+  "description": "Repository-first security scanning, correlation, reporting, and optional AI triage",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -14,11 +14,18 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --pretty false",
     "test": "node --test",
+    "release:check": "node scripts/release-readiness.mjs",
+    "release:check:json": "node scripts/release-readiness.mjs --json",
+    "release:ready": "node scripts/release-readiness.mjs --strict",
+    "github-app:intake-host": "npm run build && node scripts/github-app-intake-host.mjs",
+    "github-app:worker-host": "npm run build && node scripts/github-app-worker-host.mjs",
     "synsec": "npm run build && node --enable-source-maps apps/cli/dist/index.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "pg": "^8.16.3",
     "typescript": "^5.9.0"
   }
 }

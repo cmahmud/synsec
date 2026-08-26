@@ -9,16 +9,21 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 24]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm install
@@ -26,5 +31,54 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Test
         run: npm test
+
+      - name: Release readiness assessment
+        run: npm run release:check
+
+  postgres-shared-state:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: synsec
+          POSTGRES_USER: synsec
+          POSTGRES_PASSWORD: synsec-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U synsec -d synsec"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      SYNSEC_TEST_POSTGRES_URL: postgresql://synsec:synsec-ci-only@127.0.0.1:5432/synsec
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: PostgreSQL shared-state, ownership, and canonical conformance
+        run: node --test --test-concurrency=1 tests/postgres-shared-state.test.mjs tests/postgres-shared-state-conformance.test.mjs tests/postgres-shared-backend.test.mjs tests/postgres-lease-observer.test.mjs tests/postgres-hosted-installation-ownership.test.mjs
+
+      - name: Enforced OCI scanner sandbox integration
+        run: |
+          OCI_IMAGE="$(docker image inspect postgres:16-alpine --format '{{index .RepoDigests 0}}')"
+          test -n "$OCI_IMAGE"
+          SYNSEC_TEST_OCI_IMAGE="$OCI_IMAGE" node --test tests/oci-scanner-sandbox.test.mjs

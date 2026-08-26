@@ -1,0 +1,97 @@
+# GitHub App shared-state conformance runner
+
+SynSec's shared-state capability declaration and versioned backend contract describe what a horizontally scaled backend must guarantee. They do not prove that a database adapter actually preserves those guarantees under concurrency.
+
+`@synsec/github/shared-state-conformance-runner` provides the executable boundary for that proof. Adapter authors supply one callback for every canonical adversarial scenario, a `reset()` hook that isolates scenario state, and the same bounded `backendId` plus `implementationVersion` used by the versioned backend contract. SynSec executes the matrix in stable order, bounds each scenario by a timeout, and produces a schema-versioned result containing only adapter identity, scenario ids, status, duration, and capability coverage.
+
+## Adapter shape
+
+```ts
+import {
+  runGitHubAppSharedStateConformance,
+} from "@synsec/github/shared-state-conformance-runner";
+
+const report = await runGitHubAppSharedStateConformance({
+  backendId: "postgres-v1",
+  implementationVersion: "0.2.0-build.42",
+  async reset() {
+    await testDatabase.resetFixtures();
+  },
+  scenarios: {
+    "replay.concurrent-duplicate-claim": async () => {
+      // Race independent adapter clients against one delivery id and assert <= 1 accepted claim.
+    },
+    "queue.concurrent-idempotent-insert": async () => {
+      // Race idempotent inserts and assert one durable logical job identity.
+    },
+    "queue.concurrent-claim-fence": async () => {
+      // Race workers and assert one current lease plus a fresh fence per successful claim.
+    },
+    "queue.stale-fence-renewal": async () => {
+      // Supersede a lease, then assert the stale fence cannot renew it.
+    },
+    "queue.stale-fence-terminal-transitions": async () => {
+      // Assert a stale fence cannot release, fail, or complete newer work.
+    },
+    "installation.concurrent-selection-mutation": async () => {
+      // Race installation/repository-selection mutations and reject partial authorization state.
+    },
+    "authorization.cross-replica-revocation": async () => {
+      // Revoke authorization through one client and prove independent replicas fail closed.
+    },
+  },
+});
+
+if (!report.complete) process.exitCode = 1;
+```
+
+The runner requires exactly the canonical scenario ids. Missing callbacks and invented extra ids are rejected before execution, preventing a test harness from manufacturing coverage by renaming or omitting required cases. Adapter identity fields use the same bounded, non-secret identifier shape as the backend evidence contract, so connection strings and arbitrary free-form metadata cannot enter the portable report.
+
+## Fail-closed execution
+
+Scenarios run sequentially so failures are attributable and adapter-owned fixtures can be reset between adversarial cases. `reset()` runs before every scenario. A reset failure fails that scenario and the runner continues with the remaining matrix.
+
+The default per-scenario timeout is 15 seconds. Adapter suites may select an integer from 100 ms through 120 seconds. A timeout is a failed conformance result; a hung database operation cannot count as evidence.
+
+The report deliberately excludes thrown error text. Database exceptions frequently contain hostnames, SQL, connection strings, credentials, or tenant data. Adapter CI may retain its own separately sanitized diagnostics, but SynSec's portable conformance artifact only records bounded structural results.
+
+## Evidence binding gate
+
+Use `assessGitHubAppSharedStateConformanceEvidence()` from `@synsec/github/shared-state-evidence` before accepting a stored conformance artifact as deployment evidence.
+
+The assessor validates the versioned backend contract, parses the report as untrusted input, requires exactly one canonical result per scenario, recomputes coverage from those results, verifies the derived coverage object matches that recomputation, and requires `backendId` plus `implementationVersion` to match the backend contract exactly. Duplicate ids, invented scenarios, unsupported fields, inconsistent `complete` claims, tampered coverage arrays, malformed durations, and identity mismatches fail closed.
+
+```ts
+import {
+  assessGitHubAppSharedStateConformanceEvidence,
+} from "@synsec/github/shared-state-evidence";
+
+const assessment = assessGitHubAppSharedStateConformanceEvidence(
+  backendContract,
+  JSON.parse(conformanceArtifact),
+);
+
+if (!assessment.ready) {
+  throw new Error("Shared-state backend evidence is not ready for horizontal deployment.");
+}
+```
+
+The returned issues use bounded issue codes and fixed messages rather than backend-provided text. This keeps the policy surface safe for startup logs and CI summaries even when the rejected artifact or database error originally contained credentials, internal hostnames, SQL, or tenant data.
+
+## What a pass means
+
+A complete report means every canonical callback completed successfully within its bound. It does **not** certify a storage product by itself. Production evidence should bind all of the following to the same tested revision:
+
+- exact `backendId` and `implementationVersion` in both the conformance report and versioned backend contract;
+- exact backend/database version and relevant isolation configuration in CI provenance;
+- the versioned `shared-state-contract` evidence document;
+- the schema-versioned conformance report;
+- CI provenance showing the scenarios ran against a real database, preferably with independent connections/processes where the invariant requires cross-replica behavior.
+
+Do not replace the adversarial operations with mocks of the adapter itself. The purpose of this runner is to make real-backend concurrency tests uniform and reviewable while keeping credentials and backend-specific internals outside SynSec's reports.
+
+## Relationship to deployment readiness
+
+`validateGitHubAppDeployment()` still fails multi-replica configurations closed unless every required capability is declared. The conformance runner and evidence gate add proof structure; they do not bypass deployment validation, automatically enable horizontal scaling, or turn the built-in filesystem stores into distributed infrastructure.
+
+A production shared-state adapter remains responsible for implementing atomic replay claims, idempotent queue insertion, fenced ownership and terminal transitions, compare-and-set lease renewal, transactional installation state, and shared durable authorization using primitives provided by the selected backend.

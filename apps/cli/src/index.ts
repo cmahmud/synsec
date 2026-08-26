@@ -1,117 +1,619 @@
 #!/usr/bin/env node
 
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
-import { correlateFindings, type Finding } from "@synsec/core";
-import { builtInScanners } from "@synsec/scanners";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { reviewFinding, type AiFindingReview } from "@synsec/ai";
+import { reviewFindingWithConsensus, type MultiReviewConsensusResult } from "@synsec/ai/consensus";
+import {
+  loadConfig,
+  resolveReportPaths,
+  SYNSEC_CONFIG_FILENAME,
+  writeDefaultConfig,
+  type SynSecConfig,
+} from "@synsec/config";
+import type { CorrelatedFinding } from "@synsec/core";
+import { runScanEngine, scannerStatuses } from "@synsec/engine";
+import {
+  buildReport,
+  readReport,
+  renderHtml,
+  toSarif,
+  writeHtml,
+  writeReport,
+  writeSarif,
+  type SynSecReport,
+} from "@synsec/report";
+import { writeMarkdown } from "@synsec/report/markdown";
+import { getFindingContext } from "@synsec/repository";
+import { writeRepositoryIndex } from "@synsec/repository/analysis";
+import { parseSarifJson } from "@synsec/scanners";
+import {
+  assertWorkflowSourceContextAllowed,
+  builtInWorkflows,
+  getWorkflow,
+  workflowFindings,
+  type WorkflowDefinition,
+} from "@synsec/workflows";
+import { resolveAiReviewSelection } from "./ai-options.js";
+import { reconcileLifecycleFile, runTriage, runVerification } from "./lifecycle.js";
 
+const VERSION = "0.2.0";
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
 
+type AiReviewValue = AiFindingReview | MultiReviewConsensusResult;
+
+interface AiReviewBundle {
+  mode: "single" | "consensus";
+  models: string[];
+  reviews: Record<string, AiReviewValue>;
+}
+
+function option(name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index >= 0) return args[index + 1];
+  const prefix = `${name}=`;
+  const inline = args.find((value) => value.startsWith(prefix));
+  return inline?.slice(prefix.length);
+}
+
+function flag(name: string): boolean {
+  return args.includes(name);
+}
+
+function integerOption(name: string): number | undefined {
+  const raw = option(name);
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive integer.`);
+  return value;
+}
+
+function severityOption(name: string): SynSecConfig["failOn"] | undefined {
+  const value = option(name);
+  if (value === undefined) return undefined;
+  if (
+    value === "critical" ||
+    value === "high" ||
+    value === "medium" ||
+    value === "low" ||
+    value === "info" ||
+    value === "unknown" ||
+    value === "none"
+  ) return value;
+  throw new Error(`${name} must be one of critical, high, medium, low, info, unknown, none.`);
+}
+
+function workflowOption(): WorkflowDefinition | undefined {
+  const id = option("--workflow");
+  if (!id) return undefined;
+  const workflow = getWorkflow(id);
+  if (!workflow) {
+    throw new Error(
+      `Unknown workflow ${id}. Available workflows: ${builtInWorkflows().map((item) => item.id).join(", ")}`,
+    );
+  }
+  return workflow;
+}
+
 function printHelp(): void {
-  console.log(`SynSec v0.1.0
+  console.log(`SynSec v${VERSION} — repository-first security scanning
 
 Usage:
-  synsec doctor
-  synsec scan <path> [--json]
+  synsec init [path]
+  synsec doctor [path] [--config <file>]
+  synsec scan <path> [options]
+  synsec review <report.json> [options]
+  synsec triage <report.json> --list [--store <file>]
+  synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>]
+  synsec verify <before.json> <after.json> [--fingerprint <id>] [--output <file>]
+  synsec import-sarif <input.sarif> [options]
+  synsec workflows
+  synsec render <report.json> [--html <file>] [--sarif <file>] [--markdown <file>]
+  synsec baseline <report.json> [destination]
+  synsec version
 
-Commands:
-  doctor   Show which scanner engines are available.
-  scan     Scan a local repository with all available built-in scanners.
+Scan options:
+  --config <file>          Use an explicit synsec.config.json.
+  --scanners <a,b,c>      Override enabled scanners for this run.
+  --parallel <n>           Maximum scanners running at once.
+  --timeout <seconds>      Per-scanner timeout.
+  --changed                Keep findings in files changed since a Git base ref.
+  --changed-base <ref>     Base ref for --changed (default: PR base or HEAD~1).
+  --fail-on <severity>     Exit non-zero when this severity or higher is found.
+  --baseline <report>      Compare against a previous SynSec report.
+  --json                   Print the report JSON to stdout.
+  --no-write               Do not write reports, lifecycle state, or the repository index.
+  --ai                     Run optional AI triage after deterministic scanning.
+  --workflow <id>          Restrict AI triage to a built-in defensive workflow.
+  --ai-source              Allow source excerpts when the selected workflow permits it.
+  --ai-limit <n>           Maximum findings to review (default: 10).
+  --ai-base-url <url>      OpenAI-compatible API base URL.
+  --ai-model <model>       Single model ID for AI triage.
+  --ai-models <a,b,c>      Two to ten unique model IDs for consensus review.
+  --ai-min-reviewers <n>   Minimum successful reviewers required for consensus (default: 2).
+  --ai-review-concurrency <n>  Concurrent model reviews, maximum 4 (default: 2).
+
+Review options:
+  --root <path>            Repository root when it differs from the saved report path.
+  --output <file>          AI review output path.
+  --workflow <id>          Restrict review to a built-in defensive workflow.
+  --ai-source              Allow bounded source excerpts when the workflow permits it.
+  --ai-limit <n>           Maximum findings to review.
+  --ai-base-url <url>      OpenAI-compatible API base URL.
+  --ai-model <model>       Single model ID.
+  --ai-models <a,b,c>      Two to ten unique model IDs for consensus review.
+  --ai-min-reviewers <n>   Minimum successful reviewers required for consensus (default: 2).
+  --ai-review-concurrency <n>  Concurrent model reviews, maximum 4 (default: 2).
+
+Triage states:
+  new, confirmed, false-positive, accepted-risk, fixed, regressed
+
+Verify options:
+  --fingerprint <id>       Verify one finding fingerprint.
+  --fingerprints <a,b,c>   Verify a specific set of finding fingerprints.
+  --output <file>          Write machine-readable verification JSON.
+
+SARIF import options:
+  --root <path>            Repository root represented by the imported findings (default: .).
+  --output <file>          SynSec JSON report path (default: .synsec/imported-report.json).
+  --html <file>            HTML report path (default: next to the JSON report).
+  --scanner <name>         Override the source scanner name for all imported findings.
+
+AI environment variables:
+  SYNSEC_AI_BASE_URL
+  SYNSEC_AI_API_KEY
+  SYNSEC_AI_MODEL
+
+SynSec never enables AI review by default. Source excerpts are only sent when
+sendSourceContext is enabled in config or --ai-source is explicitly supplied.
+Workflow capability rules can further prohibit source context. Multi-model consensus
+is model inference only and is never promoted to deterministic scanner evidence.
 `);
 }
 
-async function doctor(): Promise<void> {
-  console.log("SynSec scanner availability\n");
+async function ensureDirectory(path: string): Promise<string> {
+  const root = resolve(path);
+  const info = await stat(root).catch(() => undefined);
+  if (!info?.isDirectory()) throw new Error(`Not a directory: ${root}`);
+  return root;
+}
 
-  for (const scanner of builtInScanners()) {
-    const status = await scanner.checkAvailability();
-    const marker = status.available ? "OK" : "MISSING";
-    const detail = status.version ?? status.reason ?? "";
-    console.log(`${marker.padEnd(8)} ${scanner.displayName.padEnd(18)} ${detail}`);
+async function configFor(root: string): Promise<{ config: SynSecConfig; path?: string }> {
+  const loaded = await loadConfig(root, option("--config"));
+  const config = structuredClone(loaded.config);
+
+  const scanners = option("--scanners");
+  if (scanners) config.scanners = scanners.split(",").map((value) => value.trim()).filter(Boolean);
+
+  const parallelism = integerOption("--parallel");
+  if (parallelism) config.parallelism = parallelism;
+
+  const timeoutSeconds = integerOption("--timeout");
+  if (timeoutSeconds) config.timeoutMs = timeoutSeconds * 1000;
+
+  const failOn = severityOption("--fail-on");
+  if (failOn) config.failOn = failOn;
+
+  if (flag("--ai")) config.ai.enabled = true;
+  if (flag("--ai-source")) config.ai.sendSourceContext = true;
+  const baseUrl = option("--ai-base-url");
+  if (baseUrl) config.ai.baseUrl = baseUrl;
+  const model = option("--ai-model");
+  if (model) config.ai.model = model;
+
+  return loaded.path ? { config, path: loaded.path } : { config };
+}
+
+async function init(): Promise<void> {
+  const root = await ensureDirectory(args[1] && !args[1].startsWith("--") ? args[1] : ".");
+  const path = resolve(root, SYNSEC_CONFIG_FILENAME);
+  try {
+    await writeDefaultConfig(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code === "EEXIST") throw new Error(`${path} already exists.`);
+    throw error;
+  }
+  console.log(`Created ${path}`);
+}
+
+async function doctor(): Promise<void> {
+  const root = await ensureDirectory(args[1] && !args[1].startsWith("--") ? args[1] : ".");
+  const { config, path } = await configFor(root);
+  console.log(`SynSec v${VERSION}`);
+  console.log(`Config: ${path ?? "defaults"}`);
+  console.log(`Parallelism: ${config.parallelism}\n`);
+
+  const statuses = await scannerStatuses(config);
+  for (const status of statuses) {
+    const marker = !status.selected ? "DISABLED" : status.availability.available ? "OK" : "MISSING";
+    const detail = status.availability.version ?? status.availability.reason ?? "";
+    console.log(`${marker.padEnd(9)} ${status.displayName.padEnd(20)} ${detail}`);
+  }
+
+  console.log("\nAI review:");
+  console.log(`  ${config.ai.enabled ? "enabled" : "disabled"} (source context ${config.ai.sendSourceContext ? "allowed" : "not allowed"})`);
+}
+
+function listWorkflows(): void {
+  console.log("SynSec defensive workflows\n");
+  for (const workflow of builtInWorkflows()) {
+    const categories = workflow.categories === "all" ? "all findings" : workflow.categories.join(", ");
+    console.log(`${workflow.id}`);
+    console.log(`  ${workflow.description}`);
+    console.log(`  categories: ${categories}`);
+    console.log(`  source context: ${workflow.sourceContextAllowed ? "may be explicitly enabled" : "prohibited"}`);
+    console.log(`  external network assessment: ${workflow.externalNetworkAssessment}\n`);
   }
 }
 
-function printFinding(finding: Finding): void {
+function printFinding(group: CorrelatedFinding): void {
+  const finding = group.primary;
   const location = finding.location
     ? `${finding.location.path}${finding.location.startLine ? `:${finding.location.startLine}` : ""}`
     : "repository";
-
+  const sources = group.sources.map((source) => source.name).join(", ");
   console.log(`[${finding.severity.toUpperCase()}] ${finding.title}`);
   console.log(`  ${location}`);
-  console.log(`  source: ${finding.scanner.name}${finding.scanner.ruleId ? ` / ${finding.scanner.ruleId}` : ""}`);
+  console.log(`  sources: ${sources}`);
   if (finding.remediation) console.log(`  fix: ${finding.remediation}`);
   console.log("");
 }
 
+async function reviewGroups(
+  report: SynSecReport,
+  root: string,
+  config: SynSecConfig,
+  limit: number,
+  workflow?: WorkflowDefinition,
+): Promise<AiReviewBundle> {
+  if (workflow) assertWorkflowSourceContextAllowed(workflow, config.ai.sendSourceContext);
+  const reviews: Record<string, AiReviewValue> = {};
+  const eligible = workflow ? workflowFindings(report.findings, workflow) : report.findings;
+  const candidates = eligible.slice(0, limit);
+  if (candidates.length === 0) return { mode: "single", models: [], reviews };
+
+  const selection = resolveAiReviewSelection({
+    singleModel: option("--ai-model"),
+    multipleModels: option("--ai-models"),
+    configuredModel: config.ai.model,
+    environmentModel: process.env.SYNSEC_AI_MODEL,
+    baseUrl: config.ai.baseUrl ?? process.env.SYNSEC_AI_BASE_URL,
+    apiKey: process.env.SYNSEC_AI_API_KEY,
+    minimumReviewers: integerOption("--ai-min-reviewers"),
+    concurrency: integerOption("--ai-review-concurrency"),
+  });
+  const singleProvider = selection.mode === "single" ? selection.providers[0] : undefined;
+  if (selection.mode === "single" && !singleProvider) throw new Error("AI review model selection produced no provider.");
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const group = candidates[index];
+    if (!group) continue;
+    const workflowLabel = workflow ? ` [${workflow.id}]` : "";
+    const modeLabel = selection.mode === "consensus" ? ` consensus (${selection.models.length} models)` : "";
+    console.error(`AI${modeLabel} review${workflowLabel} ${index + 1}/${candidates.length}: ${group.primary.title}`);
+    const context = config.ai.sendSourceContext
+      ? await getFindingContext(root, group.primary)
+      : undefined;
+    if (selection.mode === "single") {
+      reviews[group.fingerprint] = await reviewFinding(
+        group.primary,
+        singleProvider as NonNullable<typeof singleProvider>,
+        context,
+        workflow?.reviewInstructions,
+      );
+    } else {
+      reviews[group.fingerprint] = await reviewFindingWithConsensus(
+        group.primary,
+        selection.providers,
+        context,
+        workflow?.reviewInstructions,
+        {
+          minimumReviewers: selection.minimumReviewers,
+          concurrency: selection.concurrency,
+        },
+      );
+    }
+  }
+  return { mode: selection.mode, models: selection.models, reviews };
+}
+
+async function writeAiReviews(
+  path: string,
+  report: SynSecReport,
+  bundle: AiReviewBundle,
+  workflow?: WorkflowDefinition,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const base = {
+    reportId: report.reportId,
+    generatedAt: new Date().toISOString(),
+    workflow: workflow ? { id: workflow.id, version: workflow.version } : null,
+  };
+  const payload = bundle.mode === "consensus"
+    ? {
+        schemaVersion: 2,
+        ...base,
+        reviewMode: "consensus",
+        models: bundle.models,
+        interpretation: "model-consensus-not-scanner-evidence",
+        reviews: bundle.reviews,
+      }
+    : {
+        schemaVersion: 1,
+        ...base,
+        reviews: bundle.reviews,
+      };
+  await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
 async function scan(): Promise<void> {
   const targetArg = args[1];
-  if (!targetArg || targetArg.startsWith("--")) {
-    throw new Error("Usage: synsec scan <path> [--json]");
+  if (!targetArg || targetArg.startsWith("--")) throw new Error("Usage: synsec scan <path> [options]");
+  const root = await ensureDirectory(targetArg);
+  const { config, path: configPath } = await configFor(root);
+
+  const baselinePath = option("--baseline") ?? config.baseline;
+  const baseline = baselinePath ? await readReport(resolve(root, baselinePath)) : undefined;
+
+  if (!flag("--json")) {
+    console.error(`SynSec v${VERSION}`);
+    console.error(`Target: ${root}`);
+    console.error(`Config: ${configPath ?? "defaults"}`);
+    console.error(`Scanners: ${config.scanners.join(", ")}\n`);
   }
 
-  const targetPath = resolve(targetArg);
-  const info = await stat(targetPath).catch(() => undefined);
-  if (!info?.isDirectory()) {
-    throw new Error(`Scan target is not a directory: ${targetPath}`);
+  const outcome = await runScanEngine({
+    rootPath: root,
+    config,
+    baseline,
+    toolVersion: VERSION,
+    changedOnly: flag("--changed"),
+    changedBase: option("--changed-base"),
+  });
+
+  const paths = resolveReportPaths(root, config);
+  const repositoryIndexPath = resolve(root, ".synsec/repository-index.json");
+  const persist = !flag("--no-write");
+  const lifecycle = await reconcileLifecycleFile(outcome.report, root, persist);
+
+  if (persist) {
+    await Promise.all([
+      writeReport(paths.json, outcome.report),
+      writeHtml(paths.html, outcome.report),
+      writeSarif(paths.sarif, outcome.report),
+      writeMarkdown(paths.markdown, outcome.report),
+      writeRepositoryIndex(repositoryIndexPath, outcome.repositoryIndex),
+    ]);
   }
 
-  const scanners = builtInScanners();
-  const available = [];
+  if (config.ai.enabled) {
+    const limit = integerOption("--ai-limit") ?? 10;
+    const workflow = workflowOption();
+    const reviewBundle = await reviewGroups(outcome.report, root, config, limit, workflow);
+    const aiPath = resolve(root, ".synsec/ai-review.json");
+    await writeAiReviews(aiPath, outcome.report, reviewBundle, workflow);
+    if (!flag("--json")) console.error(`AI reviews: ${aiPath}`);
+  } else if (option("--workflow")) {
+    throw new Error("--workflow is an AI review option. Enable review with --ai or in synsec.config.json.");
+  }
 
-  for (const scanner of scanners) {
-    const status = await scanner.checkAvailability();
-    if (status.available) {
-      available.push(scanner);
-    } else if (!args.includes("--json")) {
-      console.error(`Skipping ${scanner.displayName}: ${status.reason ?? "not installed"}`);
+  if (flag("--json")) {
+    process.stdout.write(`${JSON.stringify(outcome.report, null, 2)}\n`);
+  } else {
+    console.log(`Security score: ${outcome.report.securityScore}/100`);
+    console.log(
+      `Findings: ${outcome.report.findingCount} correlated (${outcome.report.rawFindingCount} raw) — ` +
+      `${outcome.report.summary.critical} critical, ${outcome.report.summary.high} high, ` +
+      `${outcome.report.summary.medium} medium, ${outcome.report.summary.low} low\n`,
+    );
+    console.log(
+      `Lifecycle: ${lifecycle.summary.new} new, ${lifecycle.summary.confirmed} confirmed, ` +
+      `${lifecycle.summary.falsePositive} false positive, ${lifecycle.summary.acceptedRisk} accepted risk, ` +
+      `${lifecycle.summary.fixed} fixed, ${lifecycle.summary.regressed} regressed\n`,
+    );
+    if (outcome.changedFiles) {
+      console.log(`Changed-file scope: ${outcome.changedFiles.length} file(s) since ${outcome.changedBase ?? "base"}\n`);
+    }
+    const sbomPackages = (outcome.report.artifacts ?? [])
+      .filter((artifact) => artifact.type === "sbom")
+      .reduce((total, artifact) => total + artifact.packageCount, 0);
+    if (sbomPackages > 0) console.log(`SBOM: ${sbomPackages} package(s) inventoried\n`);
+    console.log(
+      `Repository index: ${outcome.repositoryIndex.indexedFileCount} file(s), ` +
+      `${outcome.repositoryIndex.moduleEdges.length} module edge(s), ${outcome.repositoryIndex.routes.length} route signal(s), ` +
+      `${outcome.repositoryIndex.authSignals.length} auth signal(s), ${outcome.repositoryIndex.sinks.length} sink signal(s)\n`,
+    );
+
+    if (outcome.report.baseline) {
+      console.log(
+        `Since baseline: ${outcome.report.baseline.new.length} new, ${outcome.report.baseline.fixed.length} fixed, ${outcome.report.baseline.persisting.length} persisting\n`,
+      );
+    }
+
+    for (const group of outcome.report.findings) printFinding(group);
+
+    for (const failure of outcome.failures) {
+      console.error(`Scanner failed: ${failure.scanner}: ${failure.message}`);
+    }
+    const missing = outcome.statuses.filter((status) => status.selected && !status.availability.available);
+    for (const status of missing) {
+      console.error(`Scanner unavailable: ${status.displayName}: ${status.availability.reason ?? "not installed"}`);
+    }
+
+    if (persist) {
+      console.log(`JSON:      ${paths.json}`);
+      console.log(`HTML:      ${paths.html}`);
+      console.log(`SARIF:     ${paths.sarif}`);
+      console.log(`MARKDOWN:  ${paths.markdown}`);
+      console.log(`INDEX:     ${repositoryIndexPath}`);
+      console.log(`LIFECYCLE: ${lifecycle.path}`);
     }
   }
 
-  if (available.length === 0) {
-    throw new Error("No supported scanner engines are available. Run `synsec doctor` for details.");
+  if (outcome.shouldFail) process.exitCode = 2;
+}
+
+async function review(): Promise<void> {
+  const reportArg = args[1];
+  if (!reportArg || reportArg.startsWith("--")) throw new Error("Usage: synsec review <report.json> [options]");
+  const reportPath = resolve(reportArg);
+  const report = await readReport(reportPath);
+  const root = await ensureDirectory(option("--root") ?? report.target.path);
+  const { config } = await configFor(root);
+  config.ai.enabled = true;
+  if (flag("--ai-source")) config.ai.sendSourceContext = true;
+  const baseUrl = option("--ai-base-url");
+  if (baseUrl) config.ai.baseUrl = baseUrl;
+  const model = option("--ai-model");
+  if (model) config.ai.model = model;
+  const workflow = workflowOption();
+  const limit = integerOption("--ai-limit") ?? report.findings.length;
+  const reviewBundle = await reviewGroups(report, root, config, limit, workflow);
+  const explicitOutput = option("--output");
+  const outputPath = explicitOutput ? resolve(explicitOutput) : resolve(dirname(reportPath), "ai-review.json");
+  await writeAiReviews(outputPath, report, reviewBundle, workflow);
+  const label = reviewBundle.mode === "consensus" ? "AI consensus review" : "AI review";
+  console.log(`Wrote ${Object.keys(reviewBundle.reviews).length} ${label}(s) to ${outputPath}`);
+}
+
+async function triage(): Promise<void> {
+  const reportArg = args[1];
+  if (!reportArg || reportArg.startsWith("--")) {
+    throw new Error("Usage: synsec triage <report.json> --list or synsec triage <report.json> <fingerprint> <state> [--note <text>] [--store <file>]");
   }
+  const lines = await runTriage({
+    reportPath: reportArg,
+    fingerprint: args[2] && !args[2].startsWith("--") ? args[2] : undefined,
+    state: args[3] && !args[3].startsWith("--") ? args[3] : undefined,
+    note: option("--note"),
+    storePath: option("--store"),
+    listOnly: flag("--list"),
+  });
+  for (const line of lines) console.log(line);
+}
 
-  const findings: Finding[] = [];
-  const scans = [];
-
-  for (const scanner of available) {
-    if (!args.includes("--json")) console.error(`Running ${scanner.displayName}...`);
-    const result = await scanner.scan({ target: { path: targetPath } });
-    scans.push(result);
-    findings.push(...result.findings);
+async function verify(): Promise<void> {
+  const beforeArg = args[1];
+  const afterArg = args[2];
+  if (!beforeArg || beforeArg.startsWith("--") || !afterArg || afterArg.startsWith("--")) {
+    throw new Error("Usage: synsec verify <before.json> <after.json> [--fingerprint <id>] [--fingerprints <a,b,c>] [--output <file>]");
   }
+  const requested = [
+    ...(option("--fingerprint") ? [option("--fingerprint") as string] : []),
+    ...(option("--fingerprints")?.split(",").map((value) => value.trim()).filter(Boolean) ?? []),
+  ];
+  const result = await runVerification({
+    beforeReportPath: beforeArg,
+    afterReportPath: afterArg,
+    fingerprints: requested.length > 0 ? requested : undefined,
+    outputPath: option("--output"),
+  });
+  for (const line of result.lines) console.log(line);
+  if (result.verification.summary.persisting > 0) process.exitCode = 2;
+  else if (result.verification.summary.inconclusive > 0 || result.verification.summary.missingBaseline > 0) process.exitCode = 3;
+}
 
-  const correlated = correlateFindings(findings);
-
-  if (args.includes("--json")) {
-    console.log(
-      JSON.stringify(
-        {
-          target: targetPath,
-          scanners: scans.map((result) => result.scanner),
-          rawFindingCount: findings.length,
-          correlatedFindingCount: correlated.length,
-          findings: correlated,
-        },
-        null,
-        2,
-      ),
-    );
-    return;
+async function importSarif(): Promise<void> {
+  const inputArg = args[1];
+  if (!inputArg || inputArg.startsWith("--")) {
+    throw new Error("Usage: synsec import-sarif <input.sarif> [--root <path>] [--output <file>] [--scanner <name>]");
   }
+  const inputPath = resolve(inputArg);
+  const root = await ensureDirectory(option("--root") ?? ".");
+  const raw = await readFile(inputPath, "utf8");
+  const scannerOverride = option("--scanner");
+  const findings = parseSarifJson(raw, scannerOverride);
+  const now = new Date().toISOString();
+  const report = buildReport({
+    target: { path: root },
+    scans: [{
+      scanner: scannerOverride ?? "sarif-import",
+      startedAt: now,
+      completedAt: now,
+      target: { path: root },
+      findings,
+      diagnostics: [],
+    }],
+    toolVersion: VERSION,
+  });
 
-  console.log(`\n${correlated.length} correlated finding(s) (${findings.length} raw)\n`);
-  for (const finding of correlated) printFinding(finding.primary);
+  const outputPath = resolve(option("--output") ?? resolve(root, ".synsec/imported-report.json"));
+  const htmlPath = resolve(option("--html") ?? outputPath.replace(/\.json$/i, ".html"));
+  await Promise.all([
+    writeReport(outputPath, report),
+    writeHtml(htmlPath, report),
+  ]);
+  console.log(`Imported ${findings.length} SARIF finding(s).`);
+  console.log(`JSON: ${outputPath}`);
+  console.log(`HTML: ${htmlPath}`);
+}
+
+async function render(): Promise<void> {
+  const reportArg = args[1];
+  if (!reportArg || reportArg.startsWith("--")) throw new Error("Usage: synsec render <report.json> [--html <file>] [--sarif <file>] [--markdown <file>]");
+  const reportPath = resolve(reportArg);
+  const report = await readReport(reportPath);
+  const htmlPath = resolve(option("--html") ?? reportPath.replace(/\.json$/i, ".html"));
+  const sarifPath = resolve(option("--sarif") ?? reportPath.replace(/\.json$/i, ".sarif"));
+  const markdownPath = resolve(option("--markdown") ?? reportPath.replace(/\.json$/i, ".md"));
+  await Promise.all([
+    mkdir(dirname(htmlPath), { recursive: true }).then(() => writeFile(htmlPath, renderHtml(report), "utf8")),
+    mkdir(dirname(sarifPath), { recursive: true }).then(() => writeFile(sarifPath, `${JSON.stringify(toSarif(report), null, 2)}\n`, "utf8")),
+    writeMarkdown(markdownPath, report),
+  ]);
+  console.log(`HTML:     ${htmlPath}`);
+  console.log(`SARIF:    ${sarifPath}`);
+  console.log(`MARKDOWN: ${markdownPath}`);
+}
+
+async function baseline(): Promise<void> {
+  const source = args[1];
+  if (!source || source.startsWith("--")) throw new Error("Usage: synsec baseline <report.json> [destination]");
+  await readReport(resolve(source));
+  const destination = resolve(args[2] && !args[2].startsWith("--") ? args[2] : ".synsec/baseline.json");
+  await mkdir(dirname(destination), { recursive: true });
+  await copyFile(resolve(source), destination);
+  console.log(`Baseline saved to ${destination}`);
 }
 
 async function main(): Promise<void> {
   switch (command) {
+    case "init":
+      await init();
+      break;
     case "doctor":
       await doctor();
       break;
     case "scan":
       await scan();
+      break;
+    case "review":
+      await review();
+      break;
+    case "triage":
+      await triage();
+      break;
+    case "verify":
+      await verify();
+      break;
+    case "import-sarif":
+      await importSarif();
+      break;
+    case "workflows":
+      listWorkflows();
+      break;
+    case "render":
+      await render();
+      break;
+    case "baseline":
+      await baseline();
+      break;
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(VERSION);
       break;
     case "help":
     case "--help":

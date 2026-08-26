@@ -1,201 +1,107 @@
-import { randomUUID } from "node:crypto";
-import type { Finding, ScanResult, Severity } from "@synsec/core";
-import type {
-  ScannerAdapter,
-  ScannerAvailability,
-  ScannerContext,
-} from "@synsec/scanner-sdk";
-import { runProcess } from "@synsec/scanner-sdk";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { ScannerAdapter } from "@synsec/scanner-sdk";
+import { BetterleaksAdapter } from "./betterleaks.js";
+import { CheckovAdapter } from "./checkov.js";
+import { GitleaksAdapter } from "./gitleaks.js";
+import { GrypeAdapter } from "./grype.js";
+import { OpengrepAdapter } from "./opengrep.js";
+import { OsvScannerAdapter } from "./osv.js";
+import { ScorecardAdapter } from "./scorecard.js";
+import { SyftAdapter } from "./syft.js";
+import { TrivyAdapter } from "./trivy.js";
 
-type UnknownRecord = Record<string, unknown>;
+export { BetterleaksAdapter, parseBetterleaksJson } from "./betterleaks.js";
+export { CheckovAdapter, buildCheckovArguments, parseCheckovJson } from "./checkov.js";
+export { GitleaksAdapter, normalizeGitleaksChangedFiles, parseGitleaksJson } from "./gitleaks.js";
+export { GrypeAdapter, parseGrypeJson } from "./grype.js";
+export { OpengrepAdapter, parseOpengrepJson } from "./opengrep.js";
+export { OsvScannerAdapter, buildOsvArguments, parseOsvJson } from "./osv.js";
+export { parseSarifJson } from "./sarif.js";
+export { ScorecardAdapter, parseScorecardJson } from "./scorecard.js";
+export { SyftAdapter, parseSyftJson } from "./syft.js";
+export { TrivyAdapter, normalizeTrivyChangedFiles, parseTrivyJson } from "./trivy.js";
+export {
+  createOciIsolatedScanners,
+  createOciIsolatedDependencyScanners,
+  type OciIsolatedScannerOptions,
+  type OciIsolatedDependencyScannerOptions,
+} from "./oci-isolated.js";
 
-function asRecord(value: unknown): UnknownRecord | undefined {
-  return typeof value === "object" && value !== null ? (value as UnknownRecord) : undefined;
+const NATIVE_CHANGED_FILE_SCANNERS = new Set([
+  "opengrep",
+  "betterleaks",
+  "gitleaks",
+  "checkov",
+  "trivy",
+  "osv-scanner",
+]);
+
+export type BuiltInScannerFactory = () => ScannerAdapter[];
+const scopedScannerFactory = new AsyncLocalStorage<BuiltInScannerFactory>();
+
+/**
+ * Whether a built-in adapter can ask its underlying scanner to execute against a bounded
+ * changed-file target rather than scanning the whole repository and filtering findings later.
+ * Individual adapters may still fail closed to repository execution for ambiguous local inputs.
+ */
+export function scannerSupportsNativeChangedFiles(scannerId: string): boolean {
+  return NATIVE_CHANGED_FILE_SCANNERS.has(scannerId);
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+function defaultBuiltInScanners(): ScannerAdapter[] {
+  return [
+    new OpengrepAdapter(),
+    new BetterleaksAdapter(),
+    new GitleaksAdapter(),
+    new OsvScannerAdapter(),
+    new TrivyAdapter(),
+    new GrypeAdapter(),
+    new CheckovAdapter(),
+    new SyftAdapter(),
+    new ScorecardAdapter(),
+  ];
 }
 
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function normalizeSeverity(value: unknown): Severity {
-  const severity = asString(value)?.toLowerCase();
-  if (
-    severity === "critical" ||
-    severity === "high" ||
-    severity === "medium" ||
-    severity === "low" ||
-    severity === "info"
-  ) {
-    return severity;
+function validateFactoryOutput(scanners: ScannerAdapter[]): ScannerAdapter[] {
+  if (!Array.isArray(scanners) || scanners.length === 0) {
+    throw new Error("Scoped scanner factory must provide at least one scanner adapter.");
   }
-  return "unknown";
-}
-
-function trivyLocation(target: string | undefined, line?: number) {
-  if (!target) return undefined;
-  return line ? { path: target, startLine: line } : { path: target };
-}
-
-function parseTrivyVulnerability(item: UnknownRecord, target?: string): Finding {
-  const cve = asString(item.VulnerabilityID);
-  const title = asString(item.Title) ?? cve ?? "Dependency vulnerability";
-  const pkg = asString(item.PkgName);
-  const installed = asString(item.InstalledVersion);
-  const fixed = asString(item.FixedVersion);
-
-  const remediation = fixed
-    ? `Upgrade ${pkg ?? "the affected dependency"} to ${fixed} or later.`
-    : undefined;
-
-  return {
-    id: randomUUID(),
-    title: pkg ? `${title} in ${pkg}` : title,
-    description: asString(item.Description),
-    category: "dependency",
-    severity: normalizeSeverity(item.Severity),
-    confidence: 0.95,
-    scanner: {
-      name: "trivy",
-      ruleId: cve,
-    },
-    location: trivyLocation(target),
-    identifiers: cve ? { cve: [cve] } : undefined,
-    remediation,
-    metadata: {
-      package: pkg,
-      installedVersion: installed,
-      fixedVersion: fixed,
-      primaryUrl: asString(item.PrimaryURL),
-    },
-  };
-}
-
-function parseTrivySecret(item: UnknownRecord, target?: string): Finding {
-  const ruleId = asString(item.RuleID);
-  const startLine = asNumber(item.StartLine);
-  return {
-    id: randomUUID(),
-    title: asString(item.Title) ?? ruleId ?? "Potential secret detected",
-    description: asString(item.Category),
-    category: "secret",
-    severity: normalizeSeverity(item.Severity),
-    confidence: 0.9,
-    scanner: {
-      name: "trivy",
-      ruleId,
-    },
-    location: trivyLocation(target, startLine),
-    evidence: asString(item.Match),
-    remediation: "Revoke or rotate the exposed credential, then remove it from the repository and history where appropriate.",
-  };
-}
-
-function parseTrivyMisconfiguration(item: UnknownRecord, target?: string): Finding {
-  const ruleId = asString(item.ID) ?? asString(item.AVDID);
-  return {
-    id: randomUUID(),
-    title: asString(item.Title) ?? ruleId ?? "Configuration issue",
-    description: asString(item.Description) ?? asString(item.Message),
-    category: "misconfiguration",
-    severity: normalizeSeverity(item.Severity),
-    confidence: 0.9,
-    scanner: {
-      name: "trivy",
-      ruleId,
-    },
-    location: trivyLocation(target),
-    remediation: asString(item.Resolution),
-    metadata: {
-      namespace: asString(item.Namespace),
-      primaryUrl: asString(item.PrimaryURL),
-    },
-  };
-}
-
-function parseTrivyJson(raw: string): Finding[] {
-  const parsed = asRecord(JSON.parse(raw));
-  if (!parsed) return [];
-
-  const findings: Finding[] = [];
-
-  for (const resultValue of asArray(parsed.Results)) {
-    const result = asRecord(resultValue);
-    if (!result) continue;
-    const target = asString(result.Target);
-
-    for (const value of asArray(result.Vulnerabilities)) {
-      const item = asRecord(value);
-      if (item) findings.push(parseTrivyVulnerability(item, target));
+  const ids = new Set<string>();
+  for (const scanner of scanners) {
+    if (!scanner || typeof scanner.id !== "string" || !scanner.id.trim()) {
+      throw new Error("Scoped scanner factory returned an invalid scanner adapter.");
     }
-
-    for (const value of asArray(result.Secrets)) {
-      const item = asRecord(value);
-      if (item) findings.push(parseTrivySecret(item, target));
-    }
-
-    for (const value of asArray(result.Misconfigurations)) {
-      const item = asRecord(value);
-      if (item) findings.push(parseTrivyMisconfiguration(item, target));
-    }
+    if (ids.has(scanner.id)) throw new Error("Scoped scanner factory returned duplicate scanner ids.");
+    ids.add(scanner.id);
   }
-
-  return findings;
+  return scanners;
 }
 
-export class TrivyAdapter implements ScannerAdapter {
-  readonly id = "trivy";
-  readonly displayName = "Trivy";
-  readonly capabilities = ["dependency", "secret", "iac", "container"] as const;
-
-  async checkAvailability(): Promise<ScannerAvailability> {
-    try {
-      const output = await runProcess("trivy", ["--version"], { timeoutMs: 10_000 });
-      if (output.exitCode !== 0) {
-        return { available: false, reason: output.stderr.trim() || "Trivy returned a non-zero exit code." };
-      }
-      return { available: true, version: output.stdout.trim() };
-    } catch (error) {
-      return {
-        available: false,
-        reason: error instanceof Error ? error.message : "Trivy is not available.",
-      };
-    }
-  }
-
-  async scan(context: ScannerContext): Promise<ScanResult> {
-    const startedAt = new Date().toISOString();
-    const output = await runProcess(
-      "trivy",
-      ["fs", "--format", "json", "--scanners", "vuln,secret,misconfig", context.target.path],
-      {
-        timeoutMs: context.timeoutMs ?? 10 * 60_000,
-        signal: context.signal,
-      },
-    );
-
-    if (output.exitCode !== 0) {
-      throw new Error(`Trivy scan failed (${output.exitCode}): ${output.stderr.trim()}`);
-    }
-
-    return {
-      scanner: this.id,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      target: context.target,
-      findings: parseTrivyJson(output.stdout),
-      diagnostics: output.stderr.trim() ? [output.stderr.trim()] : [],
-    };
-  }
-}
-
+/**
+ * Return the scanner set active for the current asynchronous execution context.
+ *
+ * Normal CLI/local scans continue to use the host-backed built-ins. Production hosting code can
+ * establish a narrower process-boundary-specific factory for one asynchronous operation without
+ * mutating global adapter state or bleeding configuration into concurrent scans.
+ */
 export function builtInScanners(): ScannerAdapter[] {
-  return [new TrivyAdapter()];
+  const factory = scopedScannerFactory.getStore();
+  return factory ? validateFactoryOutput(factory()) : defaultBuiltInScanners();
+}
+
+/**
+ * Run one asynchronous operation with a context-local scanner factory.
+ *
+ * This is an execution-composition primitive, not an isolation assertion by itself. Callers are
+ * responsible for supplying adapters whose process runner actually enforces the claimed boundary.
+ * AsyncLocalStorage keeps concurrent hosted jobs from replacing one another's scanner set.
+ */
+export function withBuiltInScannerFactory<T>(
+  factory: BuiltInScannerFactory,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (typeof factory !== "function" || typeof operation !== "function") {
+    throw new Error("Scoped scanner factory and operation are required.");
+  }
+  return scopedScannerFactory.run(factory, operation);
 }

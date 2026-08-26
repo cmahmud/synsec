@@ -1,10 +1,16 @@
 {
   "name": "@synsec/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "bin": {
-    "synsec": "dist/index.js"
+    "synsec": "dist/index.js",
+    "synsec-github-app": "dist/github-app-cli.js",
+    "synsec-github-app-provision": "dist/github-app-provision-cli.js",
+    "synsec-github-app-evidence": "dist/github-app-shared-state-evidence-cli.js",
+    "synsec-github-app-reload": "dist/github-app-credential-reload-cli.js",
+    "synsec-lifecycle-reviews": "dist/lifecycle-review-deadlines-cli.js",
+    "synsec-scanner-isolation": "dist/scanner-isolation-profile-cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -12,8 +18,15 @@
     "start": "node --enable-source-maps dist/index.js"
   },
   "dependencies": {
+    "@synsec/ai": "0.2.0",
+    "@synsec/config": "0.2.0",
     "@synsec/core": "0.1.0",
-    "@synsec/scanner-sdk": "0.1.0",
-    "@synsec/scanners": "0.1.0"
+    "@synsec/engine": "0.2.0",
+    "@synsec/github": "0.2.0",
+    "@synsec/lifecycle": "0.2.0",
+    "@synsec/report": "0.2.0",
+    "@synsec/repository": "0.2.0",
+    "@synsec/scanners": "0.1.0",
+    "@synsec/workflows": "0.2.0"
   }
 }

@@ -47,15 +47,49 @@ export interface Finding {
   identifiers?: FindingIdentifiers;
   evidence?: string;
   remediation?: string;
+  /** Native scanner fingerprint when one exists. SynSec computes its own correlation fingerprint. */
   fingerprint?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface SbomPackage {
+  name: string;
+  version?: string;
+  type?: string;
+  purl?: string;
+  licenses?: string[];
+  locations?: string[];
+}
+
+export interface SbomArtifact {
+  type: "sbom";
+  format: "syft-json";
+  producer: string;
+  generatedAt: string;
+  packageCount: number;
+  packages: SbomPackage[];
+  metadata?: Record<string, unknown>;
+}
+
+export type ScanArtifact = SbomArtifact;
 
 export interface ScanTarget {
   path: string;
   repositoryUrl?: string;
   commitSha?: string;
   branch?: string;
+}
+
+export type ScannerExecutionMode =
+  | "repository"
+  | "changed-files-native"
+  | "repository-then-filtered";
+
+export interface ScannerExecutionScope {
+  mode: ScannerExecutionMode;
+  changedFileCount?: number;
+  /** Execution mode is provenance for scanner work, not proof that unselected code is unaffected. */
+  interpretation: "scanner-execution-scope-not-coverage-proof";
 }
 
 export interface ScanResult {
@@ -65,9 +99,12 @@ export interface ScanResult {
   target: ScanTarget;
   findings: Finding[];
   diagnostics: string[];
+  artifacts?: ScanArtifact[];
+  executionScope?: ScannerExecutionScope;
 }
 
 export interface CorrelatedFinding {
+  /** Stable SynSec correlation fingerprint, independent of the source scanner fingerprint. */
   fingerprint: string;
   primary: Finding;
   duplicates: Finding[];
@@ -83,35 +120,99 @@ const severityWeight: Record<Severity, number> = {
   unknown: 0,
 };
 
-function normalizedIdentifierSet(finding: Finding): string {
-  const ids = finding.identifiers;
-  if (!ids) return "";
+function normalizedValues(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))].sort();
+}
 
-  return [
+function normalizedIdentifierSet(finding: Finding): string[] {
+  const ids = finding.identifiers;
+  if (!ids) return [];
+  return normalizedValues([
     ...(ids.cwe ?? []),
     ...(ids.cve ?? []),
     ...(ids.osv ?? []),
     ...(ids.ghsa ?? []),
-  ]
-    .map((value) => value.trim().toLowerCase())
-    .sort()
-    .join(",");
+  ]);
 }
 
-export function findingFingerprint(finding: Finding): string {
-  if (finding.fingerprint) return finding.fingerprint;
+function strongVulnerabilityIdentifiers(finding: Finding): string[] {
+  const ids = finding.identifiers;
+  if (!ids) return [];
 
-  const location = finding.location;
-  const canonical = [
+  // Prefer globally interoperable aliases when a scanner gives us several
+  // names for the same advisory. This lets an OSV/GHSA-centric scanner and a
+  // CVE-centric scanner converge on the same SynSec key instead of diverging
+  // merely because one result contains more aliases.
+  const cve = normalizedValues(ids.cve ?? []);
+  if (cve.length > 0) return cve;
+  const ghsa = normalizedValues(ids.ghsa ?? []);
+  if (ghsa.length > 0) return ghsa;
+  return normalizedValues(ids.osv ?? []);
+}
+
+function normalizedPath(finding: Finding): string {
+  return (finding.location?.path ?? "")
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .toLowerCase();
+}
+
+function normalizedTitle(finding: Finding): string {
+  return finding.title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function metadataString(finding: Finding, key: string): string {
+  const value = finding.metadata?.[key];
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function packageIdentity(finding: Finding): string {
+  return metadataString(finding, "purl") || metadataString(finding, "package");
+}
+
+function correlationCanonical(finding: Finding): string {
+  const path = normalizedPath(finding);
+  const line = finding.location?.startLine?.toString() ?? "";
+  const strongIds = strongVulnerabilityIdentifiers(finding);
+
+  // Dependency engines frequently use different rule IDs and titles for the
+  // same advisory. Advisory IDs plus package identity are substantially more
+  // reliable than scanner-specific fingerprints for cross-tool correlation.
+  if ((finding.category === "dependency" || finding.category === "container" || finding.category === "supply-chain") && strongIds.length > 0) {
+    return ["advisory", finding.category, strongIds.join(","), packageIdentity(finding) || path].join("|");
+  }
+
+  // Secret scanners use different rule names for the same value. SynSec never
+  // hashes the secret itself; a shared source location is the safest common
+  // deterministic signal we can use without retaining credentials.
+  if (finding.category === "secret" && path && line) {
+    return ["secret-location", path, line].join("|");
+  }
+
+  // Two SAST engines that agree on the same CWE at the same source location
+  // should normally be presented as corroborating evidence for one issue.
+  const cwes = normalizedValues(finding.identifiers?.cwe ?? []);
+  if (finding.category === "sast" && path && line && cwes.length > 0) {
+    return ["sast-location-cwe", path, line, cwes.join(",")].join("|");
+  }
+
+  // Fall back to a conservative scanner-aware key when there is not enough
+  // evidence to safely merge alerts from unrelated engines.
+  return [
+    "exact",
     finding.category,
-    finding.scanner.ruleId ?? "",
-    location?.path.toLowerCase() ?? "",
-    location?.startLine?.toString() ?? "",
-    normalizedIdentifierSet(finding),
-    finding.title.trim().toLowerCase(),
+    finding.scanner.name.toLowerCase(),
+    (finding.scanner.ruleId ?? "").toLowerCase(),
+    path,
+    line,
+    normalizedIdentifierSet(finding).join(","),
+    normalizedTitle(finding),
   ].join("|");
+}
 
-  return createHash("sha256").update(canonical).digest("hex");
+/** Compute SynSec's correlation fingerprint. Native scanner fingerprints remain on Finding.fingerprint. */
+export function findingFingerprint(finding: Finding): string {
+  return createHash("sha256").update(correlationCanonical(finding)).digest("hex");
 }
 
 function shouldReplacePrimary(current: Finding, candidate: Finding): boolean {

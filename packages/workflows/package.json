@@ -1,0 +1,20 @@
+{
+  "name": "@synsec/workflows",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./routing": "./dist/routing.js",
+    "./user-defined": "./dist/user-defined.js",
+    "./remediation": "./dist/remediation.js"
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@synsec/core": "0.1.0"
+  }
+}

@@ -1,0 +1,92 @@
+# Cross-module call evidence
+
+SynSec's lexical call graph deliberately resolves only unambiguous same-file function calls. Cross-module call evidence is a separate, stricter layer so repository intelligence can improve without turning import syntax into a claim of runtime reachability.
+
+## Supported evidence
+
+`@synsec/repository/import-call-links` can connect an unresolved lexical call to another indexed repository file only when all of the following are true:
+
+1. the repository module graph already resolved the import to exactly one local file;
+2. the source line contains an explicit supported import binding;
+3. the call uses that exact local binding;
+4. the imported function name maps to exactly one lexical function node in the resolved target file;
+5. the imported local binding has not been conservatively detected as shadowed inside the calling function before the call; and
+6. the operation remains inside the configured file, source-size, binding, and link bounds.
+
+The initial supported forms are deliberately narrow:
+
+- JavaScript/TypeScript named imports, including `as` aliases;
+- JavaScript/TypeScript namespace imports followed by one direct member call;
+- CommonJS destructured `require()` bindings;
+- Python `from ... import ...` bindings, including `as` aliases; and
+- Python module imports followed by one direct member call when the module graph has already proven the module is repository-local.
+
+Default imports, star imports, re-export chains, computed member access, nested member chains, dynamic import bindings, ambiguous local aliases, ambiguous target functions, and unresolved/external modules are omitted rather than guessed. Local declarations, assignments, and function parameters that can shadow a supported import binding also cause that call link to be omitted. The shadowing check intentionally prefers false negatives over manufacturing a repository-local call edge.
+
+## Imported Node route handlers
+
+The composed route-flow analyzer can also resolve a simple named Node HTTP route handler when the handler is imported from another repository-local file. This applies only after ordinary same-file route-handler resolution has failed.
+
+The imported route-handler path is narrower than general JavaScript module semantics. It currently accepts only:
+
+- ES named imports, including a single `as` alias; and
+- destructured CommonJS `require()` bindings, including a simple property alias.
+
+The module graph must already resolve the import to exactly one repository file, the imported name must map to exactly one lexical function node in that file, and the target module must contain explicit matching named-export evidence. For ES modules SynSec accepts a direct named export or a same-name export list; for CommonJS it requires a matching `exports.<name>` / `module.exports.<name>` assignment or a same-name object export. A merely same-named unexported local function is not sufficient evidence.
+
+SynSec must also not observe a declaration, assignment, or function parameter that could shadow the imported local name before the route registration. Multiple viable targets remain unresolved.
+
+Default imports, namespace-member route handlers, re-exports, dynamic expressions, external packages, unresolved module targets, missing export evidence, and ambiguous target functions are intentionally not inferred. Resolved imported handlers are labeled `imported-named-function`; that label denotes static repository evidence only.
+
+This lets a pattern such as an Express router importing `listUsers` from a handlers module participate in route-to-sink analysis without pretending that arbitrary framework wiring or dependency injection has been resolved.
+
+## Composed analysis
+
+`@synsec/repository/route-flow-analysis` is the composition API for callers that need route-flow context. Given an existing repository index and module graph, it builds the bounded lexical call graph, explicit local import-call links, route entrypoints, and route-to-sink contexts using one consistent call-depth/node budget.
+
+Before lexical source analysis, the composition layer independently revalidates the supplied file list against the repository root. It accepts only regular non-symlink files inside the root and uses the actual filesystem size instead of trusting caller-supplied size metadata. The aggregate result records `inputFileCount`, `analyzedFileCount`, `skippedUnsafeFileCount`, and `truncatedFileCount`.
+
+File coverage is also explicit:
+
+- `complete-input` means every supplied inventory entry was considered within the configured file-count bound, although unsafe entries may still have been rejected and are separately counted;
+- `bounded-input` means one or more supplied inventory entries were outside the configured analysis bound and were not lexically analyzed.
+
+The default and absolute `maxFiles` ceiling is 5,000. Callers may choose a lower positive bound, but invalid or excessive bounds fail closed instead of being silently clamped. A `bounded-input` result must not be presented as proof that the entire repository was analyzed. This is especially important when route-flow evidence is used for finding prioritization.
+
+This preflight is defense in depth for integrations that do not obtain their file inventory through SynSec's normal repository walker. The composition API performs no network access and does not execute repository code. A caller is still responsible for passing an index and module graph derived from the same repository revision and inventory.
+
+## Scan-engine integration
+
+The normal `runScanEngine()` enrichment path now uses the composed route-flow analyzer whenever the repository index contains both routes and sinks. That means exact sink findings can receive bounded evidence through supported explicit repository-local imports instead of being limited to same-file lexical calls.
+
+The engine still treats this as additive context only. It does not lower scanner findings because a route link is absent, and it does not convert structural evidence into a claim of exploitability or runtime reachability. Secret findings remain excluded from repository-context enrichment entirely.
+
+## Route-to-sink use
+
+`@synsec/repository/route-sink-flow` may optionally consume the import-call graph. When it does, bounded route traversal can cross one of the explicit local import links and then continue through ordinary same-file lexical calls in the imported module.
+
+Route-flow output records `callScope` as either:
+
+- `same-file`; or
+- `same-file-and-explicit-imports`.
+
+Finding enrichment still requires an exact repository path and sink line match. Source text, import source text, scanner diagnostics, and credentials are not copied into the route-flow metadata.
+
+## Security interpretation
+
+All of this remains static structural evidence. The interpretation strings are intentionally explicit:
+
+- `cross-module-import-call-evidence-only`;
+- `repository-structural-route-flow-evidence-only`; and
+- `structural-route-call-sink-evidence-only`.
+
+A linked import/call or imported route handler does **not** prove that:
+
+- the route is deployed or internet-accessible;
+- a request can reach the call at runtime;
+- attacker-controlled data reaches the sink;
+- branch conditions permit the path;
+- dependency injection or monkey-patching did not replace the target; or
+- the sink is exploitable.
+
+SynSec must not use this evidence to authorize live-target probing, exploitation, secret retrieval, persistence, or expansion beyond the repository scan target. Its purpose is defensive review prioritization and more useful repository-local context.

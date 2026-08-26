@@ -1,0 +1,74 @@
+name: SynSec Repository Security
+description: Defensive repository security scanning with GitHub check annotations and optional SARIF upload.
+author: SynSec
+inputs:
+  github-token:
+    description: GitHub token used only for check/SARIF publication.
+    required: true
+  config-path:
+    description: Optional path to synsec.config.json relative to the checked-out repository.
+    required: false
+    default: ""
+  baseline-path:
+    description: Optional local SynSec baseline report, validated against the pull-request base commit.
+    required: false
+    default: ""
+  auto-baseline:
+    description: For pull requests without baseline-path, scan the exact local base commit in a detached worktree. Requires that commit to be present in the checkout (for example actions/checkout with fetch-depth 0).
+    required: false
+    default: "true"
+  changed-only:
+    description: auto (PR changed files, push full repo), true, or false.
+    required: false
+    default: auto
+  publish-sarif:
+    description: Upload the completed report to GitHub code scanning.
+    required: false
+    default: "false"
+outputs:
+  security-score:
+    description: Latest SynSec security score.
+    value: ${{ steps.scan.outputs.security-score }}
+  finding-count:
+    description: Number of correlated findings in the completed scan.
+    value: ${{ steps.scan.outputs.finding-count }}
+  check-run-id:
+    description: Published GitHub check-run id.
+    value: ${{ steps.scan.outputs.check-run-id }}
+  sarif-upload-id:
+    description: GitHub SARIF upload id when publish-sarif is enabled.
+    value: ${{ steps.scan.outputs.sarif-upload-id }}
+  baseline-source:
+    description: Baseline provenance used for the scan (base-scan, file, provided, or none).
+    value: ${{ steps.scan.outputs.baseline-source }}
+  report-path:
+    description: Local path to the completed JSON report in RUNNER_TEMP for optional artifact retention.
+    value: ${{ steps.scan.outputs.report-path }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: "20"
+    - name: Build SynSec action runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GITHUB_ACTION_PATH"
+        npm install --ignore-scripts --no-audit --no-fund
+        npm run build
+    - name: Scan repository
+      id: scan
+      shell: bash
+      env:
+        SYNSEC_GITHUB_TOKEN: ${{ inputs.github-token }}
+        SYNSEC_CONFIG_PATH: ${{ inputs.config-path }}
+        SYNSEC_BASELINE_PATH: ${{ inputs.baseline-path }}
+        SYNSEC_AUTO_BASELINE: ${{ inputs.auto-baseline }}
+        SYNSEC_CHANGED_ONLY: ${{ inputs.changed-only }}
+        SYNSEC_PUBLISH_SARIF: ${{ inputs.publish-sarif }}
+      run: node "$GITHUB_ACTION_PATH/apps/github-action/dist/index.js"
+branding:
+  icon: shield
+  color: blue

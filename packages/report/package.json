@@ -1,0 +1,44 @@
+{
+  "name": "@synsec/report",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown.d.ts",
+      "import": "./dist/markdown.js"
+    },
+    "./baseline": {
+      "types": "./dist/baseline.d.ts",
+      "import": "./dist/baseline.js"
+    },
+    "./history": {
+      "types": "./dist/history.d.ts",
+      "import": "./dist/history.js"
+    },
+    "./history-store": {
+      "types": "./dist/history-store.d.ts",
+      "import": "./dist/history-store.js"
+    },
+    "./history-html": {
+      "types": "./dist/history-html.d.ts",
+      "import": "./dist/history-html.js"
+    },
+    "./sbom-html": {
+      "types": "./dist/sbom-html.d.ts",
+      "import": "./dist/sbom-html.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@synsec/core": "0.1.0"
+  }
+}

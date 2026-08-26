@@ -1,0 +1,77 @@
+# Incremental repository scan contract
+
+SynSec may reduce repository scan work only when it can preserve a defensible repository-first scope. Incremental execution is an optimization, not a claim that unselected files are safe or unreachable.
+
+## Local and GitHub Actions scans
+
+`runScanEngine()` can derive changed files from a local Git base or accept a caller-supplied changed-file set. Caller-supplied paths are accepted only when `changedOnly=true` and an explicit `changedBase` provenance identifier is present. Paths must be bounded, repository-relative, free of traversal/control characters, and are normalized/deduplicated before scanner execution.
+
+The engine then builds the existing repository index and resolved local module graph before choosing a scope. `buildIncrementalScanPlan()` always includes direct changes and may add bounded local dependents. It falls back to a full repository scan for high-impact repository/configuration files, unsafe paths, excessive change sets, changed analyzable source missing from the graph, or dependent expansion that would exceed its bound. A no-op targeted request also becomes a full scan rather than relying on adapter-specific empty-scope behavior.
+
+The planner interpretation is deliberately `coverage-heuristic-not-proof-of-unaffected-code`. Resolved import relationships are structural evidence only; they do not prove runtime reachability.
+
+## Native adapter narrowing
+
+Adapters may use the planner's final changed-file list to reduce scanner work only when the underlying scanner exposes a file-scoped mode that preserves repository-local target boundaries.
+
+Opengrep and Betterleaks narrow execution directly to changed files. Checkov uses its supported repeated `-f/--file` mode for a bounded changed-file scope, runs from the authorized repository working directory, deduplicates paths, and independently rejects absolute or traversal-shaped file names. If no changed-file scope is supplied, Checkov retains its normal directory scan.
+
+Gitleaks uses one staged temporary directory for targeted scans rather than passing an arbitrary list of positional targets to `gitleaks dir`. The adapter independently validates and deduplicates at most 500 repository-relative paths, copies only changed regular files while preserving their relative directory layout, and copies a regular repository-local `.gitleaks.toml` when present so configuration semantics remain available to the staged scan. Findings are remapped from the temporary root back to repository-relative paths before normalization.
+
+Trivy follows the same fail-closed staging principle for source-only targeted scans. Trivy's filesystem command accepts one filesystem path, so SynSec stages the selected regular files into one temporary directory, preserves their repository-relative layout, runs Trivy from the authorized repository working directory so repository-local Trivy configuration remains discoverable, and remaps result targets back to repository-relative locations. Dependency manifests, Dockerfiles, Terraform, workflows, and other high-impact configuration paths already force the planner to full-repository mode before this adapter narrowing is considered.
+
+OSV-Scanner uses its supported repeated `--lockfile` input only when the entire planner-selected scope is dependency artifacts that OSV can parse directly. SynSec independently normalizes and deduplicates those paths, requires regular non-symlink files under the authorized repository root, and caps native OSV scope at 100 changed paths. Recognized inputs include supported lockfile names, requirements variants, and SPDX/CycloneDX SBOM filenames. A mixed source/dependency scope, manifest or OSV configuration change, unsupported filename, missing file, symlink, path ambiguity, or oversized scope keeps OSV on its recursive repository scan. This deliberately prefers broader repository coverage over claiming a dependency-only optimization is complete.
+
+Gitleaks and Trivy staging deliberately fail closed. If a requested path is missing, a symlink, non-regular, or escapes the repository, the adapter discards the targeted optimization and runs its normal full repository scan instead. Gitleaks additionally falls back when its repository-local configuration is ambiguous. Neither adapter follows a changed-file symlink into an external path or silently drops an unsafe changed path.
+
+Checkov, Gitleaks, and Trivy each impose an adapter-level 500-file limit even though the engine normally applies a tighter planner bound. OSV-Scanner imposes a 100-path native dependency-input limit. These adapter checks are defense in depth for direct SDK use. Oversized requests are never silently truncated; adapters either reject them under their existing contract or fall back to repository execution.
+
+Other scanner adapters may still perform their normal repository analysis before SynSec filters file-located findings. A scanner is not described as natively incremental until its adapter explicitly narrows the underlying scanner command safely.
+
+## Per-scanner execution provenance
+
+A report-level changed-file scope does not imply that every scanner executed the same way. Each scanner summary can therefore carry an `executionScope` object with one of three modes:
+
+- `repository`: the scanner ran against the repository scope because the overall scan was full-repository;
+- `changed-files-native`: the underlying scanner command was actually narrowed to the planner-selected files; or
+- `repository-then-filtered`: the scanner still analyzed repository scope and SynSec filtered file-located findings afterward.
+
+`changedFileCount` records the selected path count for changed-file modes. The fixed interpretation string is `scanner-execution-scope-not-coverage-proof`: execution provenance describes how work was performed, not evidence that unselected code is unaffected.
+
+Opengrep, Betterleaks, Checkov, Gitleaks, Trivy, and OSV-Scanner are classified as native changed-file adapters. OSV-Scanner earns that classification only for dependency-artifact-only scopes that satisfy its adapter checks. Grype, Syft, and Scorecard intentionally remain repository-wide because dependency inventory, SBOM generation, or repository-posture semantics would be weakened by pretending they are file-local. Their changed-file reports therefore use `repository-then-filtered` when the overall engine scope is targeted.
+
+Adapters override their default classification when the actual execution differs. Gitleaks and Trivy record `repository-then-filtered` if staged-file safety checks force their normal full scan. OSV-Scanner does the same whenever its selected paths cannot all be represented as safe direct dependency inputs. This makes fallback machine-readable instead of relying on a diagnostic string or implying that the targeted optimization succeeded.
+
+The field is additive and optional so existing/imported schema-version-1 reports remain readable. New engine-generated reports populate it for scanner runs.
+
+## Hosted GitHub App pull requests
+
+Hosted App workers already acquire the exact queued base and head commits into separate detached workspaces. `deriveExactChangedFiles()` compares those two local Git trees using bounded `git ls-tree` output. It does not trust branch names, webhook clone URLs, default branches, scanner-suggested targets, or an unbounded history fetch.
+
+Only changed blob paths that exist in the head can become targeted scanner input. The comparison falls back to a full repository scan when:
+
+- either tree cannot be read within the configured time/output bounds;
+- tree output is malformed or contains unsafe paths;
+- repository/tree entry counts or changed-file counts exceed bounds;
+- a changed entry is not a normal blob (for example a submodule entry); or
+- any path was deleted.
+
+Deletions intentionally force a full scan because targeted scanner adapters must not receive absent paths and SynSec does not manufacture a partial deletion-remediation proof.
+
+When the exact tree comparison succeeds, the resulting direct paths still pass through the engine's conservative incremental planner before scanner execution. Therefore high-impact or structurally ambiguous changes can still expand to a full repository scan.
+
+## Baseline and remediation semantics
+
+An incremental report cannot treat every baseline finding missing from the partial result as fixed. `applyEvidenceAwareBaseline()` marks an absent baseline finding fixed only when the current report covered that finding path and at least one scanner that previously detected it ran again. Findings outside a changed-file scope, findings without a path in a partial scan, and findings whose detecting scanner did not rerun are not reported as fixed merely because they are absent.
+
+New and persisting findings continue to use the stable normalized SynSec fingerprint. The same evidence rule protects full scans from calling a finding fixed when its detecting scanner was omitted from the current scanner set.
+
+## SARIF safety
+
+Hosted App workers currently keep SARIF-enabled pull-request jobs on full-repository head scans even when an exact changed-file plan is available. Publishing a partial SARIF analysis as the latest code-scanning analysis can make untouched alerts appear absent, so SynSec does not use partial hosted SARIF until it has an explicit merge-safe publication contract.
+
+Checks publication can use the changed-file report because annotations are report-local and baseline-aware. Publication still requires the completed report commit to equal the queued GitHub head SHA.
+
+## Security boundary
+
+Incremental planning never authorizes network assessment or target expansion. The only targets are files inside the already-authorized repository checkout. Scanner subprocess credential minimization, fixed-host GitHub acquisition/publication, installation authorization checks, exact commit binding, and existing workflow capability restrictions remain unchanged.
