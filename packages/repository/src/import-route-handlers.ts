@@ -6,6 +6,7 @@ import type { ModuleGraph, ResolvedModuleEdge } from "./module-graph.js";
 import type { RouteEntrypoint } from "./route-entrypoints.js";
 
 const MAX_SOURCE_BYTES = 512_000;
+const IMPORT_RESOLVABLE_NODE_ROUTE_HINTS = new Set(["Node HTTP router", "Koa router"]);
 
 interface ImportBinding {
   localName: string;
@@ -110,12 +111,13 @@ function hasNamedExportEvidence(content: string, binding: ImportBinding): boolea
 }
 
 /**
- * Resolve unresolved Node router handlers through explicit repository-local named imports.
+ * Resolve unresolved Node-family router handlers through explicit repository-local named imports.
  *
- * Only ES named imports and destructured CommonJS require bindings are supported. Default imports,
- * namespace members, re-exports, dynamic expressions, shadowed bindings, missing export evidence,
- * ambiguous module targets, and ambiguous target functions remain unresolved. This is structural
- * evidence only.
+ * Only route families whose strict composer/index has already established a supported Node route
+ * identity are eligible. ES named imports and destructured CommonJS require bindings are supported.
+ * Default imports, namespace members, re-exports, dynamic expressions, shadowed bindings, missing
+ * export evidence, ambiguous module targets, and ambiguous target functions remain unresolved. This
+ * is structural evidence only and preserves the route's existing framework identity.
  */
 export async function resolveImportedNodeRouteEntrypoints(
   rootPath: string,
@@ -144,7 +146,8 @@ export async function resolveImportedNodeRouteEntrypoints(
     const route = entrypoint.route;
     if (
       entrypoint.resolution !== "unresolved" ||
-      route.frameworkHint !== "Node HTTP router" ||
+      !route.frameworkHint ||
+      !IMPORT_RESOLVABLE_NODE_ROUTE_HINTS.has(route.frameworkHint) ||
       !route.handler
     ) {
       output.push(entrypoint);
