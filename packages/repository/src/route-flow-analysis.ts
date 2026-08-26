@@ -30,6 +30,10 @@ import {
   type KoaRouteRequestInputFlowContext,
 } from "./koa-request-input-flow.js";
 import {
+  buildKoaRouteRequestInputForwardingContexts,
+  type KoaRouteRequestInputForwardingContext,
+} from "./koa-request-input-forwarding.js";
+import {
   composeKoaRouterEntrypoints,
   type KoaRouteMiddlewareContext,
 } from "./koa-router-composition.js";
@@ -86,6 +90,7 @@ export interface RepositoryRouteFlowAnalysis {
   ginRequestInputForwardingFlows: GinRouteRequestInputForwardingContext[];
   koaMiddlewareContexts: KoaRouteMiddlewareContext[];
   koaRequestInputFlows: KoaRouteRequestInputFlowContext[];
+  koaRequestInputForwardingFlows: KoaRouteRequestInputForwardingContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
   routeFlows: RouteSinkFlowContext[];
@@ -113,6 +118,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRequestInputForwardLines?: number;
   maxRequestInputReturnForwardLines?: number;
   maxGinRequestInputForwardLines?: number;
+  maxKoaRequestInputForwardLines?: number;
   maxDjangoIncludeDepth?: number;
   maxDjangoComposedRoutes?: number;
   maxExpressMountDepth?: number;
@@ -300,6 +306,12 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
   });
+  const koaRequestInputForwardingFlows = await buildKoaRouteRequestInputForwardingContexts(rootPath, routeFlows, callGraph, {
+    maxFiles,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxKoaRequestInputForwardLines !== undefined ? { maxForwardLines: options.maxKoaRequestInputForwardLines } : {}),
+  });
   const requestInputFlows = repositoryRouteRequestInputFlowContexts(index, requestInputs, entrypoints, callGraph, {
     importCallLinks,
     maxCallNodes,
@@ -332,6 +344,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     ginRequestInputForwardingFlows,
     koaMiddlewareContexts,
     koaRequestInputFlows,
+    koaRequestInputForwardingFlows,
     fastApiDependencyContexts,
     nestJsGuardContexts,
     routeFlows,
