@@ -16,6 +16,10 @@ import {
   type GinRouteRequestInputFlowContext,
 } from "./gin-request-input-flow.js";
 import {
+  buildGinRouteRequestInputForwardingContexts,
+  type GinRouteRequestInputForwardingContext,
+} from "./gin-request-input-forwarding.js";
+import {
   composeGinRouterEntrypoints,
   type GinRouteMiddlewareContext,
 } from "./gin-router-composition.js";
@@ -75,6 +79,7 @@ export interface RepositoryRouteFlowAnalysis {
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
   ginMiddlewareContexts: GinRouteMiddlewareContext[];
   ginRequestInputFlows: GinRouteRequestInputFlowContext[];
+  ginRequestInputForwardingFlows: GinRouteRequestInputForwardingContext[];
   koaMiddlewareContexts: KoaRouteMiddlewareContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
@@ -102,6 +107,7 @@ export interface RepositoryRouteFlowAnalysisOptions {
   maxRequestInputSignals?: number;
   maxRequestInputForwardLines?: number;
   maxRequestInputReturnForwardLines?: number;
+  maxGinRequestInputForwardLines?: number;
   maxDjangoIncludeDepth?: number;
   maxDjangoComposedRoutes?: number;
   maxExpressMountDepth?: number;
@@ -278,6 +284,12 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
   });
+  const ginRequestInputForwardingFlows = await buildGinRouteRequestInputForwardingContexts(rootPath, routeFlows, callGraph, {
+    maxFiles,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+    ...(options.maxGinRequestInputForwardLines !== undefined ? { maxForwardLines: options.maxGinRequestInputForwardLines } : {}),
+  });
   const requestInputFlows = repositoryRouteRequestInputFlowContexts(index, requestInputs, entrypoints, callGraph, {
     importCallLinks,
     maxCallNodes,
@@ -307,6 +319,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     routeMiddlewareContexts,
     ginMiddlewareContexts,
     ginRequestInputFlows,
+    ginRequestInputForwardingFlows,
     koaMiddlewareContexts,
     fastApiDependencyContexts,
     nestJsGuardContexts,
