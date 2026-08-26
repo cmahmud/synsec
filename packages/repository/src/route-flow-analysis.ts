@@ -12,6 +12,10 @@ import {
 import { composeFastApiRouterEntrypoints } from "./fastapi-router-composition.js";
 import { composeFlaskBlueprintEntrypoints } from "./flask-blueprint-composition.js";
 import {
+  buildGinRouteRequestInputFlowContexts,
+  type GinRouteRequestInputFlowContext,
+} from "./gin-request-input-flow.js";
+import {
   composeGinRouterEntrypoints,
   type GinRouteMiddlewareContext,
 } from "./gin-router-composition.js";
@@ -70,6 +74,7 @@ export interface RepositoryRouteFlowAnalysis {
   entrypoints: RouteEntrypoint[];
   routeMiddlewareContexts: RouteMiddlewareCompositionContext[];
   ginMiddlewareContexts: GinRouteMiddlewareContext[];
+  ginRequestInputFlows: GinRouteRequestInputFlowContext[];
   koaMiddlewareContexts: KoaRouteMiddlewareContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
@@ -268,6 +273,11 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
   };
   const routeFlows = repositoryRouteSinkFlowContexts(index, entrypoints, callGraph, flowOptions);
+  const ginRequestInputFlows = await buildGinRouteRequestInputFlowContexts(rootPath, routeFlows, callGraph, {
+    maxFiles,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+  });
   const requestInputFlows = repositoryRouteRequestInputFlowContexts(index, requestInputs, entrypoints, callGraph, {
     importCallLinks,
     maxCallNodes,
@@ -296,6 +306,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     entrypoints,
     routeMiddlewareContexts,
     ginMiddlewareContexts,
+    ginRequestInputFlows,
     koaMiddlewareContexts,
     fastApiDependencyContexts,
     nestJsGuardContexts,
