@@ -1,0 +1,36 @@
+[Unit]
+Description=SynSec GitHub App intake
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=synsec
+Group=synsec
+WorkingDirectory=/opt/synsec/current
+LoadCredential=postgres.url:/etc/synsec/secrets/postgres.url
+Environment=SYNSEC_POSTGRES_URL_FILE=%d/postgres.url
+ExecStart=/usr/bin/node /opt/synsec/current/scripts/github-app-intake-host.mjs --profile /etc/synsec/intake-profile.json --conformance /etc/synsec/shared-state-conformance.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/synsec/workspaces
+
+[Install]
+WantedBy=multi-user.target
