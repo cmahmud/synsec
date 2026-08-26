@@ -1,5 +1,5 @@
 import { lstat, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { SinkSignal } from "./analysis.js";
 import type { CallGraph, CallGraphNode } from "./call-graph.js";
 import type { RouteSinkFlowContext } from "./route-sink-flow.js";
@@ -87,10 +87,17 @@ function insideRoot(root: string, candidate: string): boolean {
 }
 
 function hasUnaliasedGinImport(source: string): boolean {
-  const quoted = /(?:^|\s)"github\.com\/gin-gonic\/gin"(?:\s|$)/m.test(source);
-  if (!quoted) return false;
-  const aliased = new RegExp(`(?:^|\\n)\\s*(?:[A-Za-z_][\\w]*|\\.|_)\\s+"${GIN_IMPORT.replaceAll("/", "\\/")}"`, "m");
-  return !aliased.test(source);
+  let found = false;
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.includes(`"${GIN_IMPORT}"`)) continue;
+    if (trimmed === `import "${GIN_IMPORT}"` || trimmed === `"${GIN_IMPORT}"`) {
+      found = true;
+      continue;
+    }
+    return false;
+  }
+  return found;
 }
 
 function ginContextParameter(node: CallGraphNode, lines: readonly string[]): string | undefined {
@@ -142,14 +149,6 @@ async function readSafeGoFiles(
     output.set(comparisonPath(path), source.split(/\r?\n/));
   }
   return output;
-}
-
-function owningFunction(graph: CallGraph, path: string, line: number): CallGraphNode | undefined {
-  const normalized = comparisonPath(path);
-  const candidates = graph.nodes.filter(
-    (node) => comparisonPath(node.path) === normalized && line >= node.line && line <= node.endLine,
-  );
-  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 function directTargets(graph: CallGraph, ownerId: string, line: number): string[] {
