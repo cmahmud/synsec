@@ -26,6 +26,10 @@ import {
 import { buildImportCallLinkGraph, type ImportCallLinkGraph } from "./import-call-links.js";
 import { resolveImportedNodeRouteEntrypoints } from "./import-route-handlers.js";
 import {
+  buildKoaRouteRequestInputFlowContexts,
+  type KoaRouteRequestInputFlowContext,
+} from "./koa-request-input-flow.js";
+import {
   composeKoaRouterEntrypoints,
   type KoaRouteMiddlewareContext,
 } from "./koa-router-composition.js";
@@ -81,6 +85,7 @@ export interface RepositoryRouteFlowAnalysis {
   ginRequestInputFlows: GinRouteRequestInputFlowContext[];
   ginRequestInputForwardingFlows: GinRouteRequestInputForwardingContext[];
   koaMiddlewareContexts: KoaRouteMiddlewareContext[];
+  koaRequestInputFlows: KoaRouteRequestInputFlowContext[];
   fastApiDependencyContexts: FastApiRouteDependencyContext[];
   nestJsGuardContexts: NestJsGuardContext[];
   routeFlows: RouteSinkFlowContext[];
@@ -290,6 +295,11 @@ export async function buildRepositoryRouteFlowAnalysis(
     ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
     ...(options.maxGinRequestInputForwardLines !== undefined ? { maxForwardLines: options.maxGinRequestInputForwardLines } : {}),
   });
+  const koaRequestInputFlows = await buildKoaRouteRequestInputFlowContexts(rootPath, routeFlows, callGraph, {
+    maxFiles,
+    ...(options.maxEvidence !== undefined ? { maxEvidence: options.maxEvidence } : {}),
+    ...(options.maxRoutes !== undefined ? { maxRoutes: options.maxRoutes } : {}),
+  });
   const requestInputFlows = repositoryRouteRequestInputFlowContexts(index, requestInputs, entrypoints, callGraph, {
     importCallLinks,
     maxCallNodes,
@@ -321,6 +331,7 @@ export async function buildRepositoryRouteFlowAnalysis(
     ginRequestInputFlows,
     ginRequestInputForwardingFlows,
     koaMiddlewareContexts,
+    koaRequestInputFlows,
     fastApiDependencyContexts,
     nestJsGuardContexts,
     routeFlows,
