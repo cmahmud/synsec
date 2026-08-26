@@ -107,6 +107,16 @@ function requestAccesses(line: string, contextName: string): Array<{ kind: GinRe
   return output;
 }
 
+function hasIndependentSameLineSink(line: string, contextName: string, kind: SinkSignal["kind"]): boolean {
+  if (kind !== "database") return true;
+  const escaped = contextName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutGinQuery = line.replace(
+    new RegExp(`\\b${escaped}\\.Query\\s*\\(`, "g"),
+    "__synsec_gin_request_query(",
+  );
+  return /\b(query|execute|executemany|raw|rawQuery|createQueryRunner)\s*\(/i.test(withoutGinQuery);
+}
+
 async function readSafeGoFiles(
   rootPath: string,
   graph: CallGraph,
@@ -143,10 +153,11 @@ function directTargets(graph: CallGraph, ownerId: string, line: number): string[
 /**
  * Build deliberately narrow Gin request-source evidence from route flows already resolved by the
  * strict Gin router composer. The source must be an explicit accessor on the exact `*gin.Context`
- * parameter of a reachable Go function. The source line must either contain the exact sink itself
- * or a direct call-graph edge to the sink-owning function. Bound-object APIs such as
- * ShouldBind/BindJSON are intentionally excluded because proving the resulting variable flow would
- * require a broader data-flow model.
+ * parameter of a reachable Go function. The source line must either contain an independent exact
+ * sink itself or a direct call-graph edge to the sink-owning function. Generic lexical `Query(` sink
+ * matching is explicitly filtered when the apparent database sink is only `gin.Context.Query`.
+ * Bound-object APIs such as ShouldBind/BindJSON are intentionally excluded because proving the
+ * resulting variable flow would require a broader data-flow model.
  */
 export async function buildGinRouteRequestInputFlowContexts(
   rootPath: string,
@@ -172,13 +183,15 @@ export async function buildGinRouteRequestInputFlowContexts(
       if (!contextName) continue;
 
       for (let lineNumber = node.line; lineNumber <= node.endLine && evidence.length < maxEvidence; lineNumber += 1) {
-        const accesses = requestAccesses(lines[lineNumber - 1] ?? "", contextName);
+        const line = lines[lineNumber - 1] ?? "";
+        const accesses = requestAccesses(line, contextName);
         if (accesses.length === 0) continue;
         const targets = new Set(directTargets(graph, node.id, lineNumber));
 
         for (const sink of routeFlow.evidence) {
-          const distance: 0 | 1 | undefined = sink.functionId === node.id && sink.line === lineNumber
-            ? 0
+          const sameLineSink = sink.functionId === node.id && sink.line === lineNumber;
+          const distance: 0 | 1 | undefined = sameLineSink
+            ? hasIndependentSameLineSink(line, contextName, sink.kind) ? 0 : undefined
             : targets.has(sink.functionId) ? 1 : undefined;
           if (distance === undefined) continue;
           for (const source of accesses) {
