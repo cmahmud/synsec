@@ -5,9 +5,9 @@ import pg from "pg";
 import { parseConfig } from "@synsec/config";
 import { parseGitHubAppHostProfile } from "@synsec/github/app-host-profile";
 import { createSynSecGitHubAppWorkerHost } from "@synsec/github/app-worker-host";
+import { secretValueFromEnvironmentOrFile } from "./host-secret-source.mjs";
 
 const MAX_JSON_BYTES = 1024 * 1024;
-const MAX_DATABASE_URL_BYTES = 8192;
 const IDLE_DELAY_MS = 1_000;
 
 function usage() {
@@ -51,13 +51,14 @@ async function readJson(pathValue, label) {
   }
 }
 
-function databaseUrlFromEnvironment(profile) {
-  const value = process.env[profile.postgresUrlEnvironment];
-  if (typeof value !== "string" || !value || Buffer.byteLength(value, "utf8") > MAX_DATABASE_URL_BYTES) {
-    throw new Error("Configured PostgreSQL connection environment variable is missing or invalid.");
-  }
+async function databaseUrlFromEnvironment(profile) {
+  const value = await secretValueFromEnvironmentOrFile(
+    process.env,
+    profile.postgresUrlEnvironment,
+    "Configured PostgreSQL connection credential",
+  );
   if (!/^postgres(?:ql)?:\/\//i.test(value)) {
-    throw new Error("Configured PostgreSQL connection environment variable must contain a PostgreSQL URL.");
+    throw new Error("Configured PostgreSQL connection credential must contain a PostgreSQL URL.");
   }
   return value;
 }
@@ -76,7 +77,7 @@ async function main() {
   const profile = parseGitHubAppHostProfile(profileInput);
   const config = parseConfig(configInput);
   const pool = new pg.Pool({
-    connectionString: databaseUrlFromEnvironment(profile),
+    connectionString: await databaseUrlFromEnvironment(profile),
     max: Math.max(4, Math.min(32, profile.replicaCount * 4)),
     application_name: `synsec-worker:${profile.replicaId}`,
   });
