@@ -126,6 +126,7 @@ test("Koa imported handlers retain framework identity and direct request-flow ev
     const analysis = await analyze(repo);
     const flow = analysis.koaRequestInputFlows.find((item) => item.route.route === "/run");
     assert.equal(flow?.resolution, "imported-named-function");
+    assert.equal(flow?.route.frameworkHint, "Koa router");
     assert.deepEqual(flow?.evidence.map((item) => [item.source.kind, item.source.path, item.sink.path, item.callDistance]), [
       ["path", "handlers.ts", "handlers.ts", 0],
     ]);
@@ -150,6 +151,25 @@ test("Koa request flow fails closed on locals and wider forwarding", async () =>
   const repo = await makeRepository({ "routes.ts": source });
   try {
     const analysis = await analyze(repo);
+    assert.deepEqual(analysis.koaRequestInputFlows, []);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("Koa response body is not promoted into request-source evidence", async () => {
+  const source = [
+    'import Router from "@koa/router";',
+    "const router = new Router();",
+    "function render(ctx) {",
+    "  child_process.exec(ctx.body.command);",
+    "}",
+    'router.get("/render", render);',
+  ].join("\n");
+  const repo = await makeRepository({ "routes.ts": source });
+  try {
+    const analysis = await analyze(repo);
+    assert.equal(analysis.routeFlows.some((item) => item.route.route === "/render"), true);
     assert.deepEqual(analysis.koaRequestInputFlows, []);
   } finally {
     await repo.cleanup();
