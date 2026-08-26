@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { buildRepositoryIndex } from "@synsec/repository/analysis";
-import { findingKoaRequestInputFlowEvidence } from "@synsec/repository/koa-request-input-flow";
+import { buildCallGraph } from "@synsec/repository/call-graph";
+import {
+  buildKoaRouteRequestInputFlowContexts,
+  findingKoaRequestInputFlowEvidence,
+} from "@synsec/repository/koa-request-input-flow";
 import { buildModuleGraph } from "@synsec/repository/module-graph";
 import { buildRepositoryRouteFlowAnalysis } from "@synsec/repository/route-flow-analysis";
 
@@ -193,7 +197,7 @@ test("Koa request flow does not promote generic Node routes with ctx-looking par
   }
 });
 
-test("Koa request flow validates evidence bounds", async () => {
+test("Koa request flow validates its own evidence bounds", async () => {
   const source = [
     'import Router from "@koa/router";',
     "const router = new Router();",
@@ -202,10 +206,10 @@ test("Koa request flow validates evidence bounds", async () => {
   ].join("\n");
   const repo = await makeRepository({ "routes.ts": source });
   try {
-    const index = await buildRepositoryIndex(repo.root, repo.files);
+    const graph = await buildCallGraph(repo.root, repo.files);
     await assert.rejects(
-      buildRepositoryRouteFlowAnalysis(repo.root, repo.files, index, buildModuleGraph(index, repo.files), { maxEvidence: 0 }),
-      /maxEvidence must be an integer between 1 and 50/,
+      buildKoaRouteRequestInputFlowContexts(repo.root, [], graph, { maxEvidence: 0 }),
+      /Koa request-flow maxEvidence must be an integer between 1 and 50/,
     );
   } finally {
     await repo.cleanup();
