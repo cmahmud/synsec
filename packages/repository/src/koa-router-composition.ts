@@ -137,7 +137,7 @@ function localHandler(graph: CallGraph, path: string, name: string): CallGraphNo
 }
 
 function routeKey(entrypoint: RouteEntrypoint): string {
-  return [normalizePath(entrypoint.route.path), entrypoint.route.line, entrypoint.route.method, entrypoint.route.route, entrypoint.route.handler ?? "", entrypoint.handler?.id ?? ""].join("\0");
+  return [normalizePath(entrypoint.route.path), entrypoint.route.line, entrypoint.route.method, entrypoint.route.route, entrypoint.route.frameworkHint ?? "", entrypoint.route.handler ?? "", entrypoint.handler?.id ?? ""].join("\0");
 }
 
 /**
@@ -203,7 +203,7 @@ export async function composeKoaRouterEntrypoints(
         line: index + 1,
         method: httpMethod,
         route: composeRoute(router.prefix, normalizeRoute(match[4])),
-        frameworkHint: "Node HTTP router",
+        frameworkHint: "Koa router",
         handler: handlerName,
       };
       const handler = localHandler(graph, path, handlerName);
