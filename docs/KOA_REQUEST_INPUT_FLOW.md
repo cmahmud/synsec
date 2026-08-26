@@ -8,11 +8,13 @@ A Koa route must first satisfy the existing router-composition constraints: one 
 
 For a resolved Koa route handler, SynSec treats only the handler's first plain identifier parameter as the structural Koa context. It recognizes these explicit accesses:
 
-- `ctx.request.body` or `ctx.body` as body evidence;
+- `ctx.request.body` as body evidence;
 - `ctx.query` or `ctx.request.query` as query evidence;
-- `ctx.params` or `ctx.request.params` as path evidence;
+- `ctx.params` as path evidence;
 - `ctx.headers`, `ctx.request.headers`, or `ctx.get(...)` as header evidence;
 - `ctx.cookies.get(...)` as cookie evidence.
+
+`ctx.body` is deliberately excluded because Koa uses that property for the response body rather than request input.
 
 The access must occur either on the exact sink line or on the same line as one directly resolved call into the sink-owning function. Exact finding correlation returns only route/method, aggregate source and sink kinds, function names, and direct call distance. Request keys, values, and source text are not copied into finding evidence.
 
@@ -26,6 +28,7 @@ The Koa-specific layer intentionally does not infer flow through:
 - calls more than one direct edge beyond the source line;
 - inline/dynamic router callbacks rejected by the Koa composer;
 - generic Express/Node routes that merely use a variable named `ctx`;
+- response-only properties such as `ctx.body`;
 - unsafe paths, symlinks, oversized source files, or unsupported file types.
 
 Those shapes require separate, bounded analyses. They are not silently promoted into a directional data-flow claim.
