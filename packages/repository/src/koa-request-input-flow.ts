@@ -108,19 +108,18 @@ function handlerContextParameter(node: CallGraphNode, lines: readonly string[]):
 function requestAccesses(line: string, contextName: string): Array<{ kind: KoaRequestInputKind; access: string }> {
   const escaped = contextName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const output: Array<{ kind: KoaRequestInputKind; access: string }> = [];
-  const property = new RegExp(`\\b${escaped}\\.(?:request\\.)?(body|query|params|headers)\\b`, "g");
-  for (let match = property.exec(line); match; match = property.exec(line)) {
-    const member = match[1];
-    if (member === "body") output.push({ kind: "body", access: "koa.Context.request.body" });
-    else if (member === "query") output.push({ kind: "query", access: "koa.Context.query" });
-    else if (member === "params") output.push({ kind: "path", access: "koa.Context.params" });
-    else if (member === "headers") output.push({ kind: "header", access: "koa.Context.headers" });
-  }
-  if (new RegExp(`\\b${escaped}\\.get\\s*\\(`).test(line)) {
-    output.push({ kind: "header", access: "koa.Context.get" });
-  }
-  if (new RegExp(`\\b${escaped}\\.cookies\\.get\\s*\\(`).test(line)) {
-    output.push({ kind: "cookie", access: "koa.Context.cookies.get" });
+  const candidates: Array<[KoaRequestInputKind, string, RegExp]> = [
+    ["body", "koa.Context.request.body", new RegExp(`\\b${escaped}\\.request\\.body\\b`)],
+    ["query", "koa.Context.query", new RegExp(`\\b${escaped}\\.query\\b`)],
+    ["query", "koa.Context.request.query", new RegExp(`\\b${escaped}\\.request\\.query\\b`)],
+    ["path", "koa.Context.params", new RegExp(`\\b${escaped}\\.params\\b`)],
+    ["header", "koa.Context.headers", new RegExp(`\\b${escaped}\\.headers\\b`)],
+    ["header", "koa.Context.request.headers", new RegExp(`\\b${escaped}\\.request\\.headers\\b`)],
+    ["header", "koa.Context.get", new RegExp(`\\b${escaped}\\.get\\s*\\(`)],
+    ["cookie", "koa.Context.cookies.get", new RegExp(`\\b${escaped}\\.cookies\\.get\\s*\\(`)],
+  ];
+  for (const [kind, access, pattern] of candidates) {
+    if (pattern.test(line)) output.push({ kind, access });
   }
   return output;
 }
@@ -165,7 +164,8 @@ function directTargets(graph: CallGraph, ownerId: string, line: number): string[
  * Build deliberately narrow Koa request-source evidence from routes produced by the strict Koa
  * router composer. Only the resolved route handler's first plain identifier parameter is treated as
  * the structural Koa context. A recognized access must occur on the exact sink line or on the same
- * line as one direct call-graph edge to the sink-owning function. Locals, aliasing, transformations,
+ * line as one direct call-graph edge to the sink-owning function. `ctx.body` is intentionally not a
+ * request source because Koa uses it as the response body. Locals, aliasing, transformations,
  * destructuring, middleware propagation, and deeper argument flow are intentionally excluded.
  */
 export async function buildKoaRouteRequestInputFlowContexts(
