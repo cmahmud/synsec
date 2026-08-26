@@ -1,6 +1,6 @@
 # Gin request-input flow evidence
 
-SynSec exposes a deliberately narrow Go/Gin request-source analysis through `@synsec/repository/gin-request-input-flow`.
+SynSec exposes a deliberately narrow Go/Gin request-source analysis through `@synsec/repository/gin-request-input-flow`. The same evidence is also produced by the default `buildRepositoryRouteFlowAnalysis()` path as `ginRequestInputFlows`, so callers do not need to invoke a separate analyzer to receive it.
 
 ## What it can establish
 
