@@ -127,7 +127,15 @@ function samePackageHandler(graph: CallGraph, path: string, name: string): CallG
 }
 
 function routeKey(entrypoint: RouteEntrypoint): string {
-  return [normalizePath(entrypoint.route.path), entrypoint.route.line, entrypoint.route.method, entrypoint.route.route, entrypoint.route.handler ?? "", entrypoint.handler?.id ?? ""].join("\0");
+  return [
+    normalizePath(entrypoint.route.path),
+    entrypoint.route.line,
+    entrypoint.route.method,
+    entrypoint.route.route,
+    entrypoint.route.frameworkHint ?? "",
+    entrypoint.route.handler ?? "",
+    entrypoint.handler?.id ?? "",
+  ].join("\0");
 }
 
 function bindingReassigned(lines: readonly string[], name: string, declarationLine: number, useLine: number): boolean {
