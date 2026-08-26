@@ -63,7 +63,6 @@ const DEFAULT_MAX_EVIDENCE = 12;
 const MAX_EVIDENCE = 50;
 const DEFAULT_MAX_ROUTES = 1_000;
 const MAX_ROUTES = 5_000;
-const GIN_IMPORT = "github.com/gin-gonic/gin";
 
 function boundedInteger(value: number | undefined, fallback: number, maximum: number, label: string): number {
   const resolved = value ?? fallback;
@@ -86,20 +85,6 @@ function insideRoot(root: string, candidate: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
-function hasUnaliasedGinImport(source: string): boolean {
-  let found = false;
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.includes(`"${GIN_IMPORT}"`)) continue;
-    if (trimmed === `import "${GIN_IMPORT}"` || trimmed === `"${GIN_IMPORT}"`) {
-      found = true;
-      continue;
-    }
-    return false;
-  }
-  return found;
-}
-
 function ginContextParameter(node: CallGraphNode, lines: readonly string[]): string | undefined {
   const declaration = lines[node.line - 1] ?? "";
   if (!/^\s*func\b/.test(declaration)) return undefined;
@@ -108,11 +93,11 @@ function ginContextParameter(node: CallGraphNode, lines: readonly string[]): str
 }
 
 function requestAccesses(line: string, contextName: string): Array<{ kind: GinRequestInputKind; access: string }> {
-  const escaped = contextName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`\\b${escaped}\\.(Query|PostForm|Param|GetHeader|Cookie)\\s*\\(`, "g");
   const output: Array<{ kind: GinRequestInputKind; access: string }> = [];
+  const regex = /\b([A-Za-z_][\w]*)\.(Query|PostForm|Param|GetHeader|Cookie)\s*\(/g;
   for (let match = regex.exec(line); match; match = regex.exec(line)) {
-    const member = match[1];
+    if (match[1] !== contextName) continue;
+    const member = match[2];
     if (member === "Query") output.push({ kind: "query", access: "gin.Context.Query" });
     else if (member === "PostForm") output.push({ kind: "body", access: "gin.Context.PostForm" });
     else if (member === "Param") output.push({ kind: "path", access: "gin.Context.Param" });
@@ -145,7 +130,7 @@ async function readSafeGoFiles(
     const info = await lstat(absolute).catch(() => undefined);
     if (!info?.isFile() || info.isSymbolicLink() || info.size > maxSourceBytes) continue;
     const source = await readFile(absolute, "utf8").catch(() => undefined);
-    if (!source || source.includes("\u0000") || !hasUnaliasedGinImport(source)) continue;
+    if (!source || source.includes("\u0000")) continue;
     output.set(comparisonPath(path), source.split(/\r?\n/));
   }
   return output;
@@ -156,11 +141,12 @@ function directTargets(graph: CallGraph, ownerId: string, line: number): string[
 }
 
 /**
- * Build deliberately narrow Gin request-source evidence. A source must be an explicit direct
- * `*gin.Context` accessor in a function whose declaration line uniquely contains one `*gin.Context`
- * parameter. The source line must either contain the exact sink itself or a direct same-call-graph
- * call to the sink-owning function. Bound-object APIs such as ShouldBind/BindJSON are intentionally
- * excluded because proving the resulting variable flow would require a broader data-flow model.
+ * Build deliberately narrow Gin request-source evidence from route flows already resolved by the
+ * strict Gin router composer. The source must be an explicit accessor on the exact `*gin.Context`
+ * parameter of a reachable Go function. The source line must either contain the exact sink itself
+ * or a direct call-graph edge to the sink-owning function. Bound-object APIs such as
+ * ShouldBind/BindJSON are intentionally excluded because proving the resulting variable flow would
+ * require a broader data-flow model.
  */
 export async function buildGinRouteRequestInputFlowContexts(
   rootPath: string,
@@ -179,7 +165,7 @@ export async function buildGinRouteRequestInputFlowContexts(
     const evidence: GinRequestInputEvidence[] = [];
 
     for (const node of graph.nodes) {
-      if (!reachableIds.has(node.id)) continue;
+      if (!reachableIds.has(node.id) || node.kind !== "go-function") continue;
       const lines = files.get(comparisonPath(node.path));
       if (!lines) continue;
       const contextName = ginContextParameter(node, lines);
