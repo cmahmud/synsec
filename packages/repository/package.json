@@ -17,6 +17,7 @@
     "./request-input-return-alias-flow": "./dist/request-input-return-alias-flow.js",
     "./gin-request-input-flow": "./dist/gin-request-input-flow.js",
     "./gin-request-input-forwarding": "./dist/gin-request-input-forwarding.js",
+    "./koa-request-input-flow": "./dist/koa-request-input-flow.js",
     "./route-entrypoints": "./dist/route-entrypoints.js",
     "./django-route-handlers": "./dist/django-route-handlers.js",
     "./django-urlconf-composition": "./dist/django-urlconf-composition.js",
